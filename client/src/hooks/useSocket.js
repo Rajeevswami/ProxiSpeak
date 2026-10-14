@@ -3,7 +3,8 @@ import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config.js';
 
 /**
- * Socket.io connection + world state (Day 4).
+ * Socket.io connection + world state (Day 4; Day 5 adds `emitMove` and
+ * the epoch the movement controller re-syncs on).
  *
  * The world (room blueprint + every avatar's position) lives in a ref,
  * NOT in React state: `user:moved` can arrive many times a second and
@@ -15,6 +16,7 @@ import { SERVER_URL } from '../config.js';
  *
  * Events (Day 3 contract):
  *   emit  join        { roomId, name }
+ *   emit  move        { x, y }            (Day 5, via emitMove)
  *   on    joined      { selfId, room, users: [{ id, name, x, y }] }
  *   on    user:joined { id, name, x, y }
  *   on    user:moved  { id, x, y }
@@ -26,10 +28,23 @@ export function createWorldState() {
   return {
     /** { roomId, name, width, height, obstacles: [] } from `joined`, else null. */
     room: null,
-    /** Map<socketId, { id, name, x, y }> — every avatar in the room, self included. */
+    /**
+     * Map<socketId, { id, name, x, y, tx, ty }> — every avatar in the
+     * room, self included. For remote avatars, x/y is where the avatar
+     * is currently drawn and tx/ty the last position the server
+     * reported; the movement controller glides x/y toward tx/ty every
+     * frame (Day 5). The local avatar's x/y is the predicted position.
+     */
     users: new Map(),
     /** This client's socket id, from `joined.selfId`. */
     selfId: null,
+    /**
+     * Bumped every time a `joined` snapshot (re)builds the world. The
+     * Day 5 movement controller watches it to drop held keys and stale
+     * click targets across a re-join, instead of fighting the
+     * server-provided positions.
+     */
+    epoch: 0,
   };
 }
 
@@ -111,12 +126,17 @@ export function useSocket() {
               user.name ??
               existing?.name ??
               (user.id === world.selfId ? (pendingJoinRef.current?.name ?? null) : null),
+            // A snapshot is authoritative: drawn position and target both
+            // come from the server (remote avatars snap, then glide again).
             x: user.x,
             y: user.y,
+            tx: user.x,
+            ty: user.y,
           });
         }
         setError(null);
         setStatus('joined');
+        world.epoch += 1; // a fresh snapshot: movement state re-syncs to it
         setJoinedInfo({
           roomId: payload.room?.roomId ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
           roomName: payload.room?.name ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
@@ -132,6 +152,8 @@ export function useSocket() {
           name: user.name ?? null,
           x: user.x,
           y: user.y,
+          tx: user.x,
+          ty: user.y,
         });
       });
 
@@ -140,10 +162,22 @@ export function useSocket() {
         const world = worldRef.current;
         const existing = world.users.get(user.id);
         if (existing) {
-          existing.x = user.x;
-          existing.y = user.y;
+          // Only the target moves (Day 5): the controller interpolates the
+          // drawn x/y toward it every frame, so peers glide instead of
+          // teleporting between the 10 Hz reports.
+          existing.tx = user.x;
+          existing.ty = user.y;
         } else {
-          world.users.set(user.id, { id: user.id, name: user.name ?? null, x: user.x, y: user.y });
+          // Not seen before (or missed the join): start exactly where the
+          // server says, no glide from a position we never had.
+          world.users.set(user.id, {
+            id: user.id,
+            name: user.name ?? null,
+            x: user.x,
+            y: user.y,
+            tx: user.x,
+            ty: user.y,
+          });
         }
       });
 
@@ -172,11 +206,22 @@ export function useSocket() {
     [teardownSocket],
   );
 
+  /**
+   * Send a position to the server (Day 5). Only used by the movement
+   * controller's 10 Hz throttle; skipped while the socket is down so a
+   * buffered emit can never hit a reconnected (not-yet-joined) session
+   * and produce a spurious `not_joined` error.
+   */
+  const emitMove = useCallback((x, y) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) socket.emit('move', { x, y });
+  }, []);
+
   // Clean disconnect on unmount: no socket (and no presence document
   // server-side) outlives the component that opened it.
   useEffect(() => teardownSocket, [teardownSocket]);
 
-  return { world: worldRef, status, error, joinedInfo, join };
+  return { world: worldRef, status, error, joinedInfo, join, emitMove };
 }
 
 export default useSocket;

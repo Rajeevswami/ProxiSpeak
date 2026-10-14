@@ -113,7 +113,7 @@ export default function JoinScreen({ onJoin, status, error }) {
           {connecting ? 'Joining…' : 'Join room'}
         </button>
 
-        <p className="join-hint">Day 4: you will see the room and everyone in it. Movement arrives on Day 5.</p>
+        <p className="join-hint">Walk with WASD or the arrow keys, or click the floor to walk there.</p>
       </form>
     </main>
   );
