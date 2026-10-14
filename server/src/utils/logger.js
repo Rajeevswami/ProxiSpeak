@@ -1,4 +1,6 @@
 /** Minimal levelled logger with instance tagging (no external dependency). */
+import config from '../config/index.js';
+
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 
 const COLORS = { error: '\u001b[31m', warn: '\u001b[33m', info: '\u001b[36m', debug: '\u001b[90m' };
@@ -24,6 +26,8 @@ function createLogger(level = 'info', tag = 'proxispeak') {
   };
 }
 
-export const logger = createLogger(process.env.LOG_LEVEL || 'info');
+// The level comes from config (LOG_LEVEL env var or .env file), keeping the
+// "nothing outside config reads process.env" contract.
+export const logger = createLogger(config.logLevel);
 export { createLogger };
 export default logger;
