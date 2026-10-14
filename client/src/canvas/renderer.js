@@ -105,6 +105,12 @@ export default drawRoom;
 /** Stable per-user colour so the same avatar looks the same in every tab. */
 const AVATAR_PALETTE = ['#4f8cff', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#22d3ee', '#fb7185', '#a3e635'];
 
+/**
+ * Reused for every avatar, every frame: the render loop must not allocate
+ * per entity (the same rule the room painter follows).
+ */
+const scratchCentre = { x: 0, y: 0 };
+
 export function avatarColor(user) {
   const key = String(user?.id ?? user?.name ?? '');
   let hash = 0;
@@ -139,10 +145,9 @@ export function drawAvatars(ctx, world, viewport) {
 
   for (const user of world.users.values()) {
     if (!Number.isFinite(user?.x) || !Number.isFinite(user?.y)) continue;
-    const centre = {
-      x: viewport.offsetX + user.x * viewport.scale,
-      y: viewport.offsetY + user.y * viewport.scale,
-    };
+    const centre = scratchCentre;
+    centre.x = viewport.offsetX + user.x * viewport.scale;
+    centre.y = viewport.offsetY + user.y * viewport.scale;
     const isSelf = user.id === world.selfId;
     const label = avatarLabel(user, world.selfId);
 
