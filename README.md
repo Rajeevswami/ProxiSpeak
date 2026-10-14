@@ -335,8 +335,15 @@ curl -i http://localhost:4000/health
   `client/` (join screen, Socket.io world-state hook, DPR-aware canvas with
   floor/grid/obstacle/avatar rendering, coordinate-helper unit tests). No
   movement input yet (Day 5).
+* **Day 5 status: movement and broadcasting done** — delta-time WASD/arrow
+  and click-to-move walking at a constant 300 px/s with normalised
+  diagonals and room-bounds clamping, client-side prediction with zero
+  React renders per frame, `move` broadcasting throttled to 10 Hz
+  (changed positions only, plus the exact resting position after a stop),
+  and smooth frame-rate-independent interpolation of remote avatars with a
+  reconnect snap. No server change was needed (see the limit check below).
 * Redis, WebRTC, the proximity queries (`$near` / `$geoWithin` / `$geoNear`),
-  audio and collision/occlusion are intentionally **not** part of Days 1–4;
+  audio and collision/occlusion are intentionally **not** part of Days 1–5;
   they land with their own days/weeks above.
 
 ## Day 4: Client and world rendering
@@ -422,3 +429,130 @@ framework:
 ```bash
 npm test --prefix client        # node --test: letterboxing, inverse mapping, validation
 ```
+
+## Day 5: Movement and broadcasting
+
+Day 5 makes the world walkable. The local avatar moves the moment you
+touch a key (client-side prediction), the position lives in the world
+ref — never in React state — and the single Day 4 `requestAnimationFrame`
+loop advances the world before painting it, so movement costs **zero
+React renders per frame**. The server hears about movement at most 10
+times a second; remote avatars glide between the reports.
+
+### Controls
+
+| Input | Effect |
+| --- | --- |
+| `W` `A` `S` `D` | Walk up / left / down / right (world pixels). |
+| Arrow keys | Same as WASD. |
+| Any diagonal (e.g. `W`+`D`) | Walks diagonally at the **same** speed — the direction vector is normalised, so diagonals are never faster. |
+| Click on the floor | Walks to the clicked point (screen→world with the Day 4 helpers) and stops exactly on it. |
+| Any movement key | Cancels a pending click target. |
+| Typing | Ignored: while the join screen or any text input has focus, movement keys do nothing. |
+| Window loses focus | Every held key is cleared, so a key cannot stay "stuck down" while you are away. |
+
+`Ctrl`/`Meta`/`Alt` + key combinations are left to the browser —
+shortcuts stay shortcuts.
+
+### Movement model
+
+* **Speed** — a constant **300 world px per second** (the lobby is
+  1920×1080, so ~6.4 s to cross it). Speed is measured in world pixels,
+  so it looks identical on every window size; the canvas scale only
+  affects how large it appears.
+* **Delta time** — every frame advances `speed × elapsedSeconds`.
+  Movement is identical on a 60 Hz and a 144 Hz display; the unit tests
+  prove 60 Hz and 144 Hz cover the same distance in the same time.
+* **Bounds** — positions are clamped into the room on every step, the
+  same clamp the server applies, so prediction and authority agree.
+* **Frame cap** — one frame's delta time is capped at 100 ms, so a tab
+  resuming after being hidden advances at most 30 px instead of
+  teleporting (and can never outrun the server's step cap).
+* Obstacles are still **visual only** — collision/occlusion is a later
+  day, by design.
+
+### Broadcasting
+
+The avatar moves every frame, but `move { x, y }` is emitted through a
+throttle (`client/src/movement/throttle.js`):
+
+* **At most 10 Hz** — one emit per 100 ms at most, at any frame rate.
+* **Only when changed** — an emit happens only if the position actually
+  moved since the last one; a resting avatar sends nothing (a fresh
+  `joined` snapshot rebases the throttle on the server-provided
+  position, so joining alone never emits).
+* **Exact resting position** — when movement stops, the next tick sends
+  the final position (≤ 100 ms later), so peers see precisely where the
+  avatar came to rest.
+
+At 300 px/s and 10 Hz, one event travels **30 px** — a quarter of the
+server's 120 px step cap — and 10 events/s is a third of the 30 events/s
+rate limit, so a legitimate client is never dropped or corrected.
+
+### Server limit check (no change needed)
+
+The two server guards from Day 3, and how the Day 5 client relates to
+them:
+
+* **`SOCKET_MOVE_EPS` = 30** — a token bucket per socket: at most 30
+  accepted `move` events per second (bursts up to 30, then refill at
+  30/s). Above it, events are **dropped silently**.
+* **`SOCKET_MAX_STEP_PX` = 120** — the largest distance one accepted
+  `move` may travel; longer steps are **shortened along the requested
+  direction** (never a teleport), and out-of-bounds coordinates are
+  clamped into the room.
+
+A legitimate Day 5 client (300 px/s, 10 Hz) was simulated for 10
+seconds against both:
+
+| Simulation | Sent | Accepted | Dropped | Step-capped / clamped |
+| --- | --- | --- | --- | --- |
+| Deterministic walk through the real limiter + validator (exact 100 ms ticks) | 100 | 100 | **0 (0.0%)** | **0 (0.0%)** |
+| End-to-end: real Socket.io server + two `socket.io-client` peers, the mover driven by the actual client controller at 60 fps | 88 | 88 | **0 (0.0%)** | **0 (0.0%)** |
+
+The end-to-end run also confirmed a maximum delivered step of 34.5 px
+(cap 120), a maximum gap of 115 ms between emits, a final resting
+position matching the broadcast within 0.004 px, and `user:left` on
+close. 0% ≪ the ~5% threshold, so **`server/` was not changed** — the
+existing limits already accept a legitimate 10 Hz client with room to
+spare.
+
+### Remote avatars
+
+`user:moved` only moves a remote avatar's *target* (`tx`/`ty`); the
+render loop glides the drawn position toward it every frame with the
+exponential step `1 − exp(−12·dt)` — frame-rate independent, so the
+glide is identical at any refresh rate and converges on the exact
+reported position. A remote avatar more than 200 px from its target
+(a reconnect, or a re-served `joined` snapshot) **snaps** instead of
+sweeping across the floor. Server `error` events never break the
+client, and positions the server provides (the `joined` snapshot) are
+always accepted as the baseline.
+
+### How to test with two tabs
+
+1. Start MongoDB, the server and the client as on Day 4
+   (`npm run seed`, `npm start`, `npm run dev:client`).
+2. Open `http://localhost:5173` in **two tabs**, join the lobby with
+   different names.
+3. In tab A, hold `D`: your avatar moves immediately and smoothly; in
+   tab B the same avatar **glides** — no snapping between updates.
+4. Walk diagonally (`W`+`D`): the speed matches the straight-line speed.
+5. Click a spot on the floor in tab A: the avatar walks there and stops
+   exactly on it; press any key mid-walk to cancel.
+6. Stop moving: within a tenth of a second tab B shows your **exact**
+   resting position (compare both avatars — they match within a pixel).
+7. Close tab A: its avatar disappears from tab B immediately.
+
+### Tests
+
+The pure movement maths (`client/src/movement/movement.js`), the
+throttle and the framework-free controller are unit-tested with Node's
+built-in runner — no new framework, no React, no DOM:
+
+```bash
+npm test --prefix client        # 46 tests: keys, speed, diagonals, clamping,
+                                # click arrival, 60-vs-144 Hz, throttle ≤ 10 Hz,
+                                # final resting emit, interpolation, snap, epoch reset
+```
+
