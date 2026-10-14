@@ -381,3 +381,162 @@ test('update is a no-op before join and ignores junk arguments', () => {
   controller.handleWorldClick({ x: 100, y: 100 }); // no room yet: ignored
   assert.equal(world.users.size, 0);
 });
+
+// --------------------------------------------------------- move throttling ---
+
+import { MOVE_SEND_INTERVAL_MS, MOVE_BROADCAST_HZ } from '../src/movement/movement.js';
+import { createMoveThrottle } from '../src/movement/throttle.js';
+
+/** A throttle driven by a fake clock, reporting every emit with its time. */
+function fakeThrottle() {
+  let clock = 0;
+  const sent = [];
+  const throttle = createMoveThrottle({
+    emit: (x, y) => sent.push({ x, y, at: clock }),
+    now: () => clock,
+  });
+  return { throttle, sent, tick: (ms) => (clock += ms) };
+}
+
+test('the throttle emits at most 10 moves per second while moving', () => {
+  const { throttle, sent, tick } = fakeThrottle();
+
+  // A moving avatar at 60 fps for 10 seconds (5 px per frame).
+  for (let frame = 0; frame < 60 * 10; frame += 1) {
+    tick(1000 / 60);
+    throttle.update(frame * 5, 0);
+  }
+
+  assert.ok(sent.length >= 85 && sent.length <= 100, `emitted ${sent.length} times in 10 s`);
+  for (let i = 1; i < sent.length; i += 1) {
+    assert.ok(
+      sent[i].at - sent[i - 1].at >= MOVE_SEND_INTERVAL_MS - 1e-9,
+      `gap ${sent[i].at - sent[i - 1].at} ms`,
+    );
+  }
+  // No sliding one-second window ever sees more than 10 emits.
+  for (let i = 0; i < sent.length; i += 1) {
+    const inWindow = sent.filter((s) => s.at > sent[i].at && s.at <= sent[i].at + 1000).length;
+    assert.ok(inWindow <= MOVE_BROADCAST_HZ, `${inWindow} emits within one second of t=${sent[i].at}`);
+  }
+  // The same holds at 144 fps.
+  const fast = fakeThrottle();
+  for (let frame = 0; frame < 144 * 10; frame += 1) {
+    fast.tick(1000 / 144);
+    fast.throttle.update(frame * 5, 0);
+  }
+  assert.ok(fast.sent.length >= 85 && fast.sent.length <= 100, `144 Hz emitted ${fast.sent.length}`);
+});
+
+test('a resting avatar emits nothing — only real change is sent', () => {
+  const { throttle, sent, tick } = fakeThrottle();
+  throttle.reset(100, 100); // the server-provided position is the baseline
+  for (let frame = 0; frame < 60 * 3; frame += 1) {
+    tick(1000 / 60);
+    throttle.update(100, 100); // never moves
+  }
+  assert.equal(sent.length, 0);
+});
+
+test('after movement stops, exactly one more emit carries the resting position', () => {
+  const { throttle, sent, tick } = fakeThrottle();
+
+  for (let frame = 0; frame < 21; frame += 1) {
+    tick(1000 / 60);
+    throttle.update(frame * 5, 0); // 0.35 s of walking
+  }
+  const duringMove = sent.length;
+  assert.ok(duringMove >= 1, 'movement itself was reported');
+
+  const resting = { x: 21 * 5, y: 0 };
+  for (let frame = 0; frame < 60 * 1.5; frame += 1) {
+    tick(1000 / 60);
+    throttle.update(resting.x, resting.y); // stopped: position frozen
+  }
+  assert.equal(sent.length, duringMove + 1, 'exactly one final emit after stopping');
+  assert.deepEqual({ x: sent[sent.length - 1].x, y: sent[sent.length - 1].y }, resting);
+  assert.ok(sent[sent.length - 1].at <= 350 + MOVE_SEND_INTERVAL_MS + 1, 'it goes out on the next tick');
+});
+
+test('reset rebases on a known position and never bursts', () => {
+  const { throttle, sent, tick } = fakeThrottle();
+  tick(1000); // created at t=0, so t=1000 is the first possible emit
+  throttle.update(50, 50);
+  assert.equal(sent.length, 1);
+
+  throttle.reset(); // baseline unknown again
+  tick(10);
+  throttle.update(400, 400); // changed, but only 10 ms since the reset
+  assert.equal(sent.length, 1, 'no burst right after a reset');
+  tick(100);
+  throttle.update(400, 400);
+  assert.equal(sent.length, 2);
+
+  throttle.reset(400, 400); // baseline known: nothing to say
+  tick(1000);
+  throttle.update(400, 400);
+  assert.equal(sent.length, 2, 'an unchanged baseline emits nothing');
+});
+
+test('non-finite positions are refused, not emitted', () => {
+  const { throttle, sent, tick } = fakeThrottle();
+  tick(1000);
+  throttle.update(Number.NaN, 0);
+  throttle.update(10, Number.POSITIVE_INFINITY);
+  assert.equal(sent.length, 0);
+});
+
+test('the controller broadcasts its predicted position through the throttle', () => {
+  const world = makeWorld();
+  const sent = [];
+  let clock = 0;
+  const controller = createMovementController({
+    world,
+    emitMove: (x, y) => sent.push({ x, y, at: clock }),
+    now: () => clock,
+  });
+
+  controller.pressKey('KeyD');
+  for (let frame = 0; frame < 60 * 2; frame += 1) {
+    clock += 1000 / 60;
+    controller.update(1 / 60);
+  }
+
+  const self = world.users.get('self');
+  assert.ok(sent.length >= 15 && sent.length <= 20, `emits: ${sent.length}`);
+  for (let i = 1; i < sent.length; i += 1) {
+    assert.ok(sent[i].at - sent[i - 1].at >= MOVE_SEND_INTERVAL_MS - 1e-9);
+  }
+  for (const s of sent) {
+    near(s.x, 960 + MOVEMENT_SPEED_PX_PER_SEC * (s.at / 1000), 0.1); // the predicted position at emit time
+    near(s.y, 540, 1e-9);
+  }
+  // Stopping flushes the exact resting position on the next tick.
+  controller.releaseKey('KeyD');
+  const before = sent.length;
+  for (let frame = 0; frame < 60; frame += 1) {
+    clock += 1000 / 60;
+    controller.update(1 / 60);
+  }
+  assert.equal(sent.length, before + 1);
+  assert.equal(sent[sent.length - 1].x, self.x, 'peers see the exact resting position');
+  assert.equal(sent[sent.length - 1].y, self.y);
+});
+
+test('a freshly joined avatar that never moves broadcasts nothing', () => {
+  const world = makeWorld();
+  const sent = [];
+  let clock = 0;
+  const controller = createMovementController({
+    world,
+    emitMove: (x, y) => sent.push({ x, y }),
+    now: () => clock,
+  });
+
+  world.epoch += 1; // the `joined` snapshot that produced this world
+  for (let frame = 0; frame < 60 * 3; frame += 1) {
+    clock += 1000 / 60;
+    controller.update(1 / 60);
+  }
+  assert.equal(sent.length, 0, 'the server already knows the position it assigned');
+});

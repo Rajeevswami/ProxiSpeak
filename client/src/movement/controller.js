@@ -1,8 +1,8 @@
 /**
  * Per-frame movement controller (Day 5). Owns everything that changes
- * between two rendered frames: the held keys, the click-to-walk target
- * and — added with the broadcasting and interpolation commits — the
- * 10 Hz `move` throttle and the remote avatars' glide.
+ * between two rendered frames: the held keys, the click-to-walk target,
+ * the 10 Hz `move` broadcast and — with the interpolation commit — the
+ * remote avatars' glide.
  *
  * The controller is deliberately framework-free: it is handed the
  * socket hook's world state object (a plain mutable structure that is
@@ -21,6 +21,7 @@ import {
   moveTowardTarget,
   stepByDeltaTime,
 } from './movement.js';
+import { createMoveThrottle } from './throttle.js';
 
 /**
  * @param {object} options
@@ -44,11 +45,8 @@ export function createMovementController({ world, emitMove, now = Date.now } = {
   let epoch = world.epoch ?? 0;
   /** Reused every frame so the loop allocates nothing per frame. */
   const direction = { x: 0, y: 0 };
-
-  const syncWithWorld = () => {
-    heldKeys.clear();
-    clickTarget = null;
-  };
+  /** 10 Hz `move` broadcast: emits only when the position changed. */
+  const throttle = createMoveThrottle({ emit: emitMove, now });
 
   /**
    * Advance the world by one frame. Called by the render loop with the
@@ -59,16 +57,18 @@ export function createMovementController({ world, emitMove, now = Date.now } = {
     const state = world;
     if (!state || !state.room || !state.selfId) return;
 
-    // A fresh `joined` (first join or a re-served snapshot) restarts the
-    // world from server-provided positions: drop stale input instead of
-    // fighting the server's authority.
-    if (epoch !== state.epoch) {
-      epoch = state.epoch;
-      syncWithWorld();
-    }
-
     const self = state.users.get(state.selfId);
     if (!self || !Number.isFinite(self.x) || !Number.isFinite(self.y)) return;
+
+    // A fresh `joined` (first join or a re-served snapshot) restarts the
+    // world from server-provided positions: drop stale input and rebase
+    // the broadcast on the server's position instead of fighting it.
+    if (epoch !== state.epoch) {
+      epoch = state.epoch;
+      heldKeys.clear();
+      clickTarget = null;
+      throttle.reset(self.x, self.y);
+    }
 
     const dt = clampFrameDelta(deltaSeconds);
     const bounds = state.room;
@@ -84,6 +84,14 @@ export function createMovementController({ world, emitMove, now = Date.now } = {
       const walking = moveTowardTarget(self, clickTarget, dt, MOVEMENT_SPEED_PX_PER_SEC, bounds);
       if (!walking) clickTarget = null; // arrived (or walled in): stop
     }
+
+    // --- broadcast ---------------------------------------------------------
+    // At most 10 emits per second, only while the position actually
+    // differs from the last one sent; after a stop, the next tick
+    // carries the exact resting position. A 300 px/s avatar moves 30 px
+    // between two ticks — comfortably under the server's 120 px step
+    // cap, so a legitimate client is never corrected.
+    throttle.update(self.x, self.y);
   };
 
   return {
