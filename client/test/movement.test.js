@@ -189,6 +189,25 @@ test('a target already reached reports arrival immediately', () => {
   assert.deepEqual(position, { x: 150, y: 130 });
 });
 
+test('a zero-duration frame does not cancel a pending click target', () => {
+  const position = { x: 100, y: 100 };
+  const target = { x: 400, y: 100 };
+
+  assert.equal(moveTowardTarget(position, target, 1 / 60, MOVEMENT_SPEED_PX_PER_SEC, ROOM), true);
+  near(position.x, 105);
+
+  // Two rAF callbacks can share a timestamp: delta time 0 must keep the
+  // walk pending, not mistake "no time passed" for "walled in".
+  assert.equal(moveTowardTarget(position, target, 0, MOVEMENT_SPEED_PX_PER_SEC, ROOM), true);
+  assert.equal(position.x, 105, 'a 0 ms frame moves nothing');
+
+  for (let i = 0; i < 58; i += 1) {
+    assert.equal(moveTowardTarget(position, target, 1 / 60, MOVEMENT_SPEED_PX_PER_SEC, ROOM), true);
+  }
+  assert.equal(moveTowardTarget(position, target, 1 / 60, MOVEMENT_SPEED_PX_PER_SEC, ROOM), false);
+  assert.deepEqual(position, { x: 400, y: 100 }, 'the walk still completes');
+});
+
 test('a target behind a wall stops at the wall and reports arrival', () => {
   const position = { x: 1800, y: 500 };
   const target = { x: 5000, y: 500 }; // outside the room
@@ -325,9 +344,11 @@ test('a click walks the avatar to the target and stops exactly on it', () => {
   const self = world.users.get('self');
 
   controller.handleWorldClick({ x: 1260, y: 540 }); // 300 px to the right
-  for (let i = 0; i < 59; i += 1) controller.update(1 / 60);
+  controller.update(1 / 60);
+  controller.update(0); // a 0 ms frame must not cancel the walk
+  for (let i = 0; i < 58; i += 1) controller.update(1 / 60);
   assert.ok(self.x > 1200 && self.x < 1260, `still walking (${self.x})`);
-  controller.update(1 / 60); // frame 60: the last 5 px
+  controller.update(1 / 60); // the last few px
   assert.equal(self.x, 1260, 'arrival lands exactly on the target');
   assert.equal(self.y, 540);
   controller.update(1 / 60);

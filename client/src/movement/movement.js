@@ -147,6 +147,11 @@ export function moveTowardTarget(position, target, deltaSeconds, speedPxPerSec, 
     return false;
   }
 
+  // A frame with no elapsed time moves nothing: the target stays
+  // pending. (Without this, a 0 ms frame — two rAF callbacks sharing a
+  // timestamp — would look like "no progress" and cancel the walk.)
+  if (step <= 0) return true;
+
   const beforeX = position.x;
   const beforeY = position.y;
   position.x += (dx / distance) * step;

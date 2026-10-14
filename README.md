@@ -551,8 +551,9 @@ throttle and the framework-free controller are unit-tested with Node's
 built-in runner — no new framework, no React, no DOM:
 
 ```bash
-npm test --prefix client        # 46 tests: keys, speed, diagonals, clamping,
-                                # click arrival, 60-vs-144 Hz, throttle ≤ 10 Hz,
+npm test --prefix client        # 47 tests: keys, speed, diagonals, clamping,
+                                # click arrival (incl. zero-duration frames),
+                                # 60-vs-144 Hz, throttle ≤ 10 Hz,
                                 # final resting emit, interpolation, snap, epoch reset
 ```
 
