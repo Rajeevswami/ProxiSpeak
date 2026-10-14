@@ -1,8 +1,8 @@
 /**
  * Per-frame movement controller (Day 5). Owns everything that changes
  * between two rendered frames: the held keys, the click-to-walk target,
- * the 10 Hz `move` broadcast and — with the interpolation commit — the
- * remote avatars' glide.
+ * the 10 Hz `move` broadcast and the remote avatars' glide toward their
+ * last reported positions.
  *
  * The controller is deliberately framework-free: it is handed the
  * socket hook's world state object (a plain mutable structure that is
@@ -14,11 +14,14 @@
  */
 import {
   MOVEMENT_SPEED_PX_PER_SEC,
+  REMOTE_INTERPOLATION_RATE_PER_SEC,
   clampFrameDelta,
   clampToBounds,
   directionFromKeys,
+  interpolateToward,
   isMovementKey,
   moveTowardTarget,
+  needsSnap,
   stepByDeltaTime,
 } from './movement.js';
 import { createMoveThrottle } from './throttle.js';
@@ -83,6 +86,22 @@ export function createMovementController({ world, emitMove, now = Date.now } = {
     } else if (clickTarget) {
       const walking = moveTowardTarget(self, clickTarget, dt, MOVEMENT_SPEED_PX_PER_SEC, bounds);
       if (!walking) clickTarget = null; // arrived (or walled in): stop
+    }
+
+    // --- remote avatars ----------------------------------------------------
+    // Peers report their position at most 10 times a second; between two
+    // reports every avatar glides the frame-rate-independent fraction of
+    // the remaining way (no snapping, no teleporting). A remote that is
+    // far from its target — a reconnect, a re-served snapshot — snaps.
+    for (const user of state.users.values()) {
+      if (user.id === state.selfId) continue;
+      if (!Number.isFinite(user.tx) || !Number.isFinite(user.ty)) continue;
+      if (needsSnap(user, user.tx, user.ty)) {
+        user.x = user.tx;
+        user.y = user.ty;
+      } else {
+        interpolateToward(user, user.tx, user.ty, dt, REMOTE_INTERPOLATION_RATE_PER_SEC);
+      }
     }
 
     // --- broadcast ---------------------------------------------------------

@@ -540,3 +540,60 @@ test('a freshly joined avatar that never moves broadcasts nothing', () => {
   }
   assert.equal(sent.length, 0, 'the server already knows the position it assigned');
 });
+
+// ----------------------------------------------- remote avatar interpolation ---
+
+test('remote avatars glide toward their last reported position and land on it', () => {
+  const world = makeWorld();
+  // What the socket hook keeps after a user:moved: the drawn position
+  // stays put, the target moves.
+  world.users.set('remote', { id: 'remote', name: 'Remote', x: 900, y: 540, tx: 960, ty: 540 });
+  const controller = idleController(world);
+  const self = world.users.get('self');
+  const remote = world.users.get('remote');
+
+  controller.update(1 / 60);
+  assert.ok(remote.x > 900 && remote.x < 960, `gliding, not snapping (${remote.x})`);
+
+  for (let i = 0; i < 60 * 5; i += 1) controller.update(1 / 60); // 5 s of frames
+  assert.equal(remote.x, 960, 'lands exactly on the reported position');
+  assert.equal(remote.y, 540);
+  assert.deepEqual({ x: self.x, y: self.y }, { x: 960, y: 540 }, 'the local avatar is untouched');
+});
+
+test('a remote avatar far from its target snaps instead of gliding', () => {
+  const world = makeWorld();
+  world.users.set('remote', { id: 'remote', name: 'Remote', x: 0, y: 0, tx: 1000, ty: 0 });
+  const controller = idleController(world);
+  const remote = world.users.get('remote');
+
+  controller.update(1 / 60); // one frame, distance 1000 > snap threshold
+  assert.equal(remote.x, 1000, 'a reconnect-sized gap teleports, no sweep across the floor');
+  assert.equal(remote.y, 0);
+});
+
+test('remote entries without targets (or the local avatar) are skipped safely', () => {
+  const world = makeWorld();
+  world.users.set('half', { id: 'half', name: 'Half', x: 10, y: 10 }); // no tx/ty yet
+  const controller = idleController(world);
+  controller.update(1 / 60); // must not throw
+  assert.deepEqual({ x: world.users.get('half').x, y: world.users.get('half').y }, { x: 10, y: 10 });
+});
+
+test('a moving remote keeps receiving new targets and keeps gliding', () => {
+  const world = makeWorld();
+  world.users.set('remote', { id: 'remote', name: 'Remote', x: 900, y: 540, tx: 900, ty: 540 });
+  const controller = idleController(world);
+  const remote = world.users.get('remote');
+
+  // Ten seconds of a peer walking right at 300 px/s, reported at 10 Hz:
+  // every report moves the target 30 px ahead of the glide.
+  let reported = 900;
+  for (let tick = 0; tick < 100; tick += 1) {
+    for (let frame = 0; frame < 6; frame += 1) controller.update(1 / 60); // 100 ms of frames
+    reported += 30;
+    remote.tx = reported;
+  }
+  assert.ok(remote.x > reported - 60, `the glide keeps up with the reports (${remote.x} vs ${reported})`);
+  assert.ok(remote.x < reported, 'and never reaches ahead of the last report');
+});
