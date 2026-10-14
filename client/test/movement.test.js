@@ -265,3 +265,119 @@ test('needsSnap is true only beyond the snap threshold', () => {
   assert.equal(needsSnap({ x: 0, y: 0 }, 3, 4, 10), false); // distance 5, threshold 10
   assert.equal(needsSnap({ x: 0, y: 0 }, 3, 4, 4), true); // distance 5, threshold 4
 });
+
+// ------------------------------------------------------- movement controller ---
+// The controller is framework-free, so it is tested directly against a
+// hand-built world state — the same shape the socket hook maintains.
+
+import { createMovementController } from '../src/movement/controller.js';
+
+function makeWorld({ self = { x: 960, y: 540 } } = {}) {
+  const world = {
+    room: { roomId: 'lobby', name: 'Lobby', width: ROOM.width, height: ROOM.height, obstacles: [] },
+    users: new Map(),
+    selfId: 'self',
+    epoch: 1,
+  };
+  world.users.set('self', { id: 'self', name: 'Self', x: self.x, y: self.y });
+  return world;
+}
+
+const idleController = (world) => createMovementController({ world, emitMove: () => {}, now: () => 0 });
+
+test('held keys move the local avatar by delta time, clamped at the walls', () => {
+  const world = makeWorld({ self: { x: 1800, y: 1000 } });
+  const controller = idleController(world);
+  const self = world.users.get('self');
+
+  controller.pressKey('KeyD');
+  controller.pressKey('KeyS');
+  controller.update(1); // clamped to MAX_FRAME_DELTA_SECONDS -> 30 px diagonally
+  near(self.x, 1800 + MOVEMENT_SPEED_PX_PER_SEC * MAX_FRAME_DELTA_SECONDS * Math.SQRT1_2, 1e-9);
+  near(self.y, 1000 + MOVEMENT_SPEED_PX_PER_SEC * MAX_FRAME_DELTA_SECONDS * Math.SQRT1_2, 1e-9);
+
+  for (let i = 0; i < 100; i += 1) controller.update(0.1); // keep walking into the corner
+  assert.equal(self.x, ROOM.width);
+  assert.equal(self.y, ROOM.height);
+
+  controller.releaseKey('KeyD');
+  controller.releaseKey('KeyS');
+  controller.update(0.1);
+  assert.equal(self.x, ROOM.width, 'no keys held, no movement');
+  assert.equal(self.y, ROOM.height);
+});
+
+test('non-movement keys are ignored and a release without a press is a no-op', () => {
+  const world = makeWorld();
+  const controller = idleController(world);
+  controller.pressKey('KeyQ');
+  controller.pressKey('shift');
+  controller.update(1);
+  assert.deepEqual({ x: world.users.get('self').x, y: world.users.get('self').y }, { x: 960, y: 540 });
+  controller.releaseKey('KeyW'); // never pressed
+  controller.update(1);
+  assert.equal(world.users.get('self').x, 960);
+});
+
+test('a click walks the avatar to the target and stops exactly on it', () => {
+  const world = makeWorld();
+  const controller = idleController(world);
+  const self = world.users.get('self');
+
+  controller.handleWorldClick({ x: 1260, y: 540 }); // 300 px to the right
+  for (let i = 0; i < 59; i += 1) controller.update(1 / 60);
+  assert.ok(self.x > 1200 && self.x < 1260, `still walking (${self.x})`);
+  controller.update(1 / 60); // frame 60: the last 5 px
+  assert.equal(self.x, 1260, 'arrival lands exactly on the target');
+  assert.equal(self.y, 540);
+  controller.update(1 / 60);
+  assert.equal(self.x, 1260, 'and the avatar stays there');
+});
+
+test('a click outside the room walks to the nearest in-bounds point', () => {
+  const world = makeWorld();
+  const controller = idleController(world);
+  const self = world.users.get('self');
+
+  controller.handleWorldClick({ x: 99999, y: 540 }); // target clamped to (1920, 540)
+  for (let i = 0; i < 40; i += 1) controller.update(0.1); // 960 px = 32 frames of 30 px
+  assert.equal(self.x, ROOM.width);
+  assert.equal(self.y, 540);
+  controller.update(0.1);
+  assert.equal(self.x, ROOM.width, 'arrived at the wall, not grinding on it');
+});
+
+test('keyboard input cancels a pending click target', () => {
+  const world = makeWorld();
+  const controller = idleController(world);
+  const self = world.users.get('self');
+
+  controller.handleWorldClick({ x: 1260, y: 540 });
+  controller.pressKey('KeyW');
+  for (let i = 0; i < 30; i += 1) controller.update(1 / 60); // 0.5 s: 150 px up
+  assert.equal(self.x, 960);
+  assert.equal(self.y, 390);
+});
+
+test('a fresh joined snapshot (epoch bump) drops held keys and click targets', () => {
+  const world = makeWorld();
+  const controller = idleController(world);
+  const self = world.users.get('self');
+
+  controller.pressKey('KeyD');
+  controller.handleWorldClick({ x: 1500, y: 540 });
+  world.epoch += 1; // what the socket hook does on every `joined`
+  controller.update(1 / 60);
+  assert.deepEqual({ x: self.x, y: self.y }, { x: 960, y: 540 }, 'neither key nor click survived');
+});
+
+test('update is a no-op before join and ignores junk arguments', () => {
+  const world = { room: null, users: new Map(), selfId: null, epoch: 0 };
+  const controller = idleController(world);
+  controller.update(0.016); // no room, no self: must not throw
+  controller.update(Number.NaN);
+  controller.handleWorldClick(null);
+  controller.handleWorldClick({ x: Number.NaN, y: 1 });
+  controller.handleWorldClick({ x: 100, y: 100 }); // no room yet: ignored
+  assert.equal(world.users.size, 0);
+});

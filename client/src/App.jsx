@@ -1,25 +1,36 @@
 import JoinScreen from './components/JoinScreen.jsx';
 import WorldCanvas from './components/WorldCanvas.jsx';
 import { useSocket } from './hooks/useSocket.js';
+import { useMovement } from './hooks/useMovement.js';
 import { drawWorld } from './canvas/renderer.js';
 
 export default function App() {
-  const { world, status, error, joinedInfo, join } = useSocket();
+  const { world, status, error, joinedInfo, join, emitMove } = useSocket();
+  // Movement input + per-frame controller. Its `update` runs inside the
+  // canvas's single rAF loop and never touches React state, so walking
+  // around causes zero re-renders.
+  const movement = useMovement({ world, emitMove });
 
   // Until the server confirms `joined`, stay on the join screen so its
   // validation and server errors (room_not_found, invalid payload,
-  // connection failure) are what the user sees.
+  // connection failure) are what the user sees. The movement listeners
+  // are already attached but ignore keys while the form has focus.
   if (!joinedInfo) {
     return <JoinScreen onJoin={join} status={status} error={error} />;
   }
 
   return (
     <>
-      <WorldCanvas world={world} renderFrame={drawWorld} />
+      <WorldCanvas
+        world={world}
+        renderFrame={drawWorld}
+        updateFrame={movement.update}
+        onWorldClick={movement.handleWorldClick}
+      />
       <div className="world-hud">
         {joinedInfo.roomName} · joined as {joinedInfo.name}
         {status === 'disconnected' ? ' · disconnected (reload to rejoin)' : ''}
-        {' · Movement arrives on Day 5'}
+        {' · WASD / arrows to walk · click the floor to walk there'}
       </div>
     </>
   );
