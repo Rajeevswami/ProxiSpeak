@@ -71,6 +71,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  log.error('fatal startup error:', err);
+  // Message only. The actionable context is already logged where the
+  // failure happened (connectMongo explains a bad MONGO_URI, the listen
+  // error names the port); a raw stack plus driver dump is noise for an
+  // operator, not help.
+  log.error('fatal startup error:', err?.message ?? err);
   process.exit(1);
 });
