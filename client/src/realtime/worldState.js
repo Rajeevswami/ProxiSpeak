@@ -122,11 +122,20 @@ export function removeUser(world, user) {
  */
 export function applyJoinedSnapshot(world, payload, { selfId = null, name = null, announcedIds = null } = {}) {
   const nextSelfId = payload?.selfId ?? selfId ?? world.selfId ?? null;
+  /**
+   * Our own previous connection. After a reconnect the server still has that
+   * socket — it only reaps a dead transport when its ping times out (20 s by
+   * default) — so the old presence row is still in the snapshot while we are
+   * already joining again with a new id. Keeping it would draw our own ghost
+   * next to us, with the same name and no way to ever remove it.
+   */
+  const previousSelfId = world.selfId && world.selfId !== nextSelfId ? world.selfId : null;
   const users = new Map();
   const snapshot = Array.isArray(payload?.users) ? payload.users : [];
 
   for (const user of snapshot) {
     if (typeof user?.id !== 'string' || !isDrawable(user)) continue;
+    if (user.id === previousSelfId) continue;
     users.set(user.id, {
       id: user.id,
       // The server sends a name with every entry; the fallbacks only cover an

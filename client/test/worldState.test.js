@@ -201,3 +201,46 @@ test('hasJoinedConnection is true only for the connection that joined', () => {
   assert.equal(hasJoinedConnection(world, null), false);
   assert.equal(hasJoinedConnection(null, 'conn-1'), false);
 });
+
+test('a reconnecting client never draws its own ghost avatar', () => {
+  const world = createWorldState();
+  const announced = new Set();
+  applyJoinedSnapshot(
+    world,
+    { selfId: 'conn-1', room, users: [person('conn-1', 'Ada'), person('bob', 'Bob')] },
+    { selfId: 'conn-1', name: 'Ada', announcedIds: announced },
+  );
+
+  // The transport died and Socket.io reconnected with a new id. The server has
+  // not noticed the old socket yet (it reaps a dead transport on ping timeout),
+  // so its presence row for conn-1 is still in the new snapshot — same name,
+  // old id. It is this client's own previous connection, so it must be dropped.
+  applyJoinedSnapshot(
+    world,
+    {
+      selfId: 'conn-2',
+      room,
+      users: [person('conn-1', 'Ada', 200, 200), person('conn-2', 'Ada', 700, 700), person('bob', 'Bob')],
+    },
+    { selfId: 'conn-2', name: 'Ada', announcedIds: announced },
+  );
+
+  assert.deepEqual([...world.users.keys()].sort(), ['bob', 'conn-2'], 'exactly one avatar for Ada');
+  assert.equal(world.selfId, 'conn-2');
+});
+
+test('the ghost rule never touches anybody else', () => {
+  const world = createWorldState();
+  applyJoinedSnapshot(
+    world,
+    { selfId: 'ada-1', room, users: [person('ada-1', 'Ada'), person('bob', 'Bob')] },
+    { selfId: 'ada-1', name: 'Ada' },
+  );
+  // A snapshot where our own id did not change keeps every listed peer.
+  applyJoinedSnapshot(
+    world,
+    { selfId: 'ada-1', room, users: [person('ada-1', 'Ada'), person('bob', 'Bob'), person('carol', 'Carol')] },
+    { selfId: 'ada-1', name: 'Ada' },
+  );
+  assert.deepEqual([...world.users.keys()].sort(), ['ada-1', 'bob', 'carol']);
+});
