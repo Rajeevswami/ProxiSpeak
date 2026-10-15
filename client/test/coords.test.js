@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  MAX_BACKING_PIXELS,
   computeCanvasSize,
   computeViewport,
   screenToWorld,
@@ -134,5 +135,38 @@ test('computeCanvasSize uses the device pixel ratio and sanitises it', () => {
     assert.equal(canvasSize.dpr, 1, `dpr for ${dpr}`);
     assert.equal(canvasSize.backingWidth, 1000);
     assert.equal(canvasSize.backingHeight, 500);
+  }
+});
+
+test('computeCanvasSize never asks for a backing store the browser refuses', () => {
+  // 5120 x 1440 CSS px at DPR 2 is 29.5M device pixels — over Safari's budget,
+  // where the canvas would simply stay blank.
+  const ultrawide = computeCanvasSize(5120, 1440, 2);
+  assert.ok(
+    ultrawide.backingWidth * ultrawide.backingHeight <= MAX_BACKING_PIXELS,
+    `${ultrawide.backingWidth}x${ultrawide.backingHeight} exceeds the budget`,
+  );
+  assert.ok(ultrawide.dpr > 1, 'a large window still gets more than one device pixel per CSS pixel');
+
+  const eightK = computeCanvasSize(7680, 4320, 1);
+  assert.ok(eightK.backingWidth * eightK.backingHeight <= MAX_BACKING_PIXELS);
+  assert.equal(eightK.width, 7680, 'the CSS size the renderer works in is untouched');
+
+  const absurd = computeCanvasSize(20000, 20000, 2);
+  assert.ok(absurd.backingWidth * absurd.backingHeight <= MAX_BACKING_PIXELS);
+  assert.ok(absurd.backingWidth >= 1 && absurd.backingHeight >= 1);
+});
+
+test('computeCanvasSize leaves ordinary windows at their full device pixel ratio', () => {
+  for (const [width, height, dpr] of [
+    [1920, 1080, 1],
+    [1280, 720, 2], // retina laptop
+    [1440, 900, 2],
+    [2560, 1440, 2], // 14.7M device pixels: still inside the budget
+  ]) {
+    const canvasSize = computeCanvasSize(width, height, dpr);
+    assert.equal(canvasSize.dpr, dpr, `dpr for ${width}x${height}@${dpr}`);
+    assert.equal(canvasSize.backingWidth, width * dpr);
+    assert.equal(canvasSize.backingHeight, height * dpr);
   }
 });

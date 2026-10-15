@@ -18,6 +18,16 @@ function requirePositiveFinite(value, label) {
 export const MIN_CANVAS_SIZE_PX = 1;
 
 /**
+ * Largest canvas backing store we ever ask for, in device pixels (~16M).
+ * Browsers silently refuse to draw on a canvas above their per-canvas pixel
+ * budget — Safari caps at roughly 16.7M pixels — and a refused canvas stays
+ * blank for the whole session. A very large window (a 4K/5K display, an
+ * ultrawide, or a maximised window on a high-DPR screen) can reach that budget
+ * on its own: 5120 x 1440 CSS px at DPR 2 is already 29.5M device pixels.
+ */
+export const MAX_BACKING_PIXELS = 16_000_000;
+
+/**
  * Translate the browser's window/DPR numbers into a canvas backing store.
  *
  * `window.innerWidth` / `innerHeight` are not guaranteed to be usable numbers:
@@ -28,6 +38,11 @@ export const MIN_CANVAS_SIZE_PX = 1;
  * blank forever. Every value is therefore sanitised here, and the CSS size the
  * rest of the renderer works in is always at least 1 px.
  *
+ * When the requested backing store would exceed MAX_BACKING_PIXELS the device
+ * pixel ratio is reduced just enough to fit, so the room stays visible (slightly
+ * softer) instead of the canvas going blank. Ordinary windows are untouched:
+ * 2560x1440 at DPR 2 is 14.7M pixels and keeps its full ratio.
+ *
  * @param {number} cssWidth window width in CSS pixels
  * @param {number} cssHeight window height in CSS pixels
  * @param {number} [devicePixelRatio] window.devicePixelRatio
@@ -36,7 +51,10 @@ export const MIN_CANVAS_SIZE_PX = 1;
 export function computeCanvasSize(cssWidth, cssHeight, devicePixelRatio = 1) {
   const width = sanitizeLength(cssWidth);
   const height = sanitizeLength(cssHeight);
-  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const requestedDpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  // sqrt keeps the *area* inside the budget while preserving the aspect ratio.
+  const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (width * height));
+  const dpr = Math.min(requestedDpr, budgetDpr);
 
   return {
     width,
