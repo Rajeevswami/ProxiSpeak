@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config.js';
+import { CONNECTION_STATUS, statusAfter } from '../realtime/connectionStatus.js';
+import {
+  addUser,
+  applyJoinedSnapshot,
+  createWorldState,
+  hasJoinedConnection,
+  moveUser,
+  removeUser,
+} from '../realtime/worldState.js';
 
 /**
- * Socket.io connection + world state (Day 4; Day 5 adds `emitMove` and
- * the epoch the movement controller re-syncs on).
+ * Socket.io connection + world state (Day 4; Day 5 adds `emitMove` and the
+ * epoch the movement controller re-syncs on).
  *
- * The world (room blueprint + every avatar's position) lives in a ref,
- * NOT in React state: `user:moved` can arrive many times a second and
- * none of those updates should re-render React. The canvas reads the
- * ref directly on every animation frame. React state is reserved for
- * low-frequency facts only — connection status, the latest server
- * error, and a one-per-join summary — so joining, erroring and
- * disconnecting re-render, but avatar movement never does.
+ * This hook owns the connection and the React-visible facts (status, the latest
+ * server error, a one-per-join summary). The world itself — room blueprint and
+ * every avatar — lives in `realtime/worldState.js`: *what* the server told us is
+ * a pure, unit-tested data structure, *how* we hear it is this hook. The world
+ * sits in a ref, not in React state, because `user:moved` can arrive many times
+ * a second and none of those updates may re-render React; the canvas reads the
+ * ref directly on every animation frame.
  *
  * Events (Day 3 contract):
  *   emit  join        { roomId, name }
@@ -23,30 +32,6 @@ import { SERVER_URL } from '../config.js';
  *   on    user:left   { id }
  *   on    error       { code, message, field? }
  */
-
-export function createWorldState() {
-  return {
-    /** { roomId, name, width, height, obstacles: [] } from `joined`, else null. */
-    room: null,
-    /**
-     * Map<socketId, { id, name, x, y, tx, ty }> — every avatar in the
-     * room, self included. For remote avatars, x/y is where the avatar
-     * is currently drawn and tx/ty the last position the server
-     * reported; the movement controller glides x/y toward tx/ty every
-     * frame (Day 5). The local avatar's x/y is the predicted position.
-     */
-    users: new Map(),
-    /** This client's socket id, from `joined.selfId`. */
-    selfId: null,
-    /**
-     * Bumped every time a `joined` snapshot (re)builds the world. The
-     * Day 5 movement controller watches it to drop held keys and stale
-     * click targets across a re-join, instead of fighting the
-     * server-provided positions.
-     */
-    epoch: 0,
-  };
-}
 
 const toError = (err) => {
   if (err && typeof err === 'object' && typeof err.code === 'string') {
@@ -61,8 +46,16 @@ export function useSocket() {
 
   const socketRef = useRef(null);
   const pendingJoinRef = useRef(null);
+  /**
+   * Ids announced by `user:joined` on the current connection. Used by the
+   * snapshot merge: a user who announces themselves while our own join is in
+   * flight may be missing from the `joined` snapshot. Cleared on every connect
+   * (a reconnect starts a brand new connection) and after the snapshot.
+   */
+  const announcedRef = useRef(new Set());
 
-  const [status, setStatus] = useState('idle'); // idle | connecting | joined | disconnected | error
+  // idle | connecting | joined | disconnected | error — see connectionStatus.js
+  const [status, setStatus] = useState(CONNECTION_STATUS.IDLE);
   const [error, setError] = useState(null);
   // Set once per successful `joined` (never per move): { roomId, roomName, selfId, name }.
   const [joinedInfo, setJoinedInfo] = useState(null);
@@ -71,6 +64,7 @@ export function useSocket() {
     const socket = socketRef.current;
     socketRef.current = null;
     pendingJoinRef.current = null;
+    announcedRef.current.clear();
     if (socket) {
       socket.removeAllListeners();
       socket.disconnect();
@@ -90,7 +84,7 @@ export function useSocket() {
       world.selfId = null;
       setJoinedInfo(null);
       setError(null);
-      setStatus('connecting');
+      setStatus((prev) => statusAfter(prev, 'join-requested'));
 
       pendingJoinRef.current = { roomId: normalizedRoom, name: trimmedName };
 
@@ -98,11 +92,15 @@ export function useSocket() {
       // the page origin when no URL is passed.
       const socket = io(SERVER_URL || undefined, {
         autoConnect: true,
-        reconnectionAttempts: 5,
+        // Socket.io keeps reconnecting on its own — the client never has to
+        // reload the page to get back into the room. The HUD shows the
+        // reconnect while it happens (see statusAfter).
+        reconnectionAttempts: Infinity,
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
+        announcedRef.current.clear();
         const pending = pendingJoinRef.current;
         if (pending) socket.emit('join', pending);
       });
@@ -110,33 +108,14 @@ export function useSocket() {
       socket.on('joined', (payload) => {
         if (!payload || typeof payload !== 'object') return;
         const world = worldRef.current;
-        world.room = payload.room ?? null;
-        world.selfId = payload.selfId ?? socket.id ?? null;
-        // Snapshot known users BEFORE clearing, as a fallback for any
-        // entry whose name is missing; the server now sends `name` in
-        // every `joined.users` entry, and that name wins.
-        const previousById = new Map(world.users);
-        world.users.clear();
-        for (const user of payload.users ?? []) {
-          if (!user || typeof user.id !== 'string') continue;
-          const existing = previousById.get(user.id);
-          world.users.set(user.id, {
-            id: user.id,
-            name:
-              user.name ??
-              existing?.name ??
-              (user.id === world.selfId ? (pendingJoinRef.current?.name ?? null) : null),
-            // A snapshot is authoritative: drawn position and target both
-            // come from the server (remote avatars snap, then glide again).
-            x: user.x,
-            y: user.y,
-            tx: user.x,
-            ty: user.y,
-          });
-        }
+        applyJoinedSnapshot(world, payload, {
+          selfId: payload.selfId ?? socket.id ?? null,
+          name: pendingJoinRef.current?.name ?? null,
+          announcedIds: announcedRef.current,
+        });
+        announcedRef.current.clear();
         setError(null);
-        setStatus('joined');
-        world.epoch += 1; // a fresh snapshot: movement state re-syncs to it
+        setStatus((prev) => statusAfter(prev, 'joined'));
         setJoinedInfo({
           roomId: payload.room?.roomId ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
           roomName: payload.room?.name ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
@@ -146,61 +125,37 @@ export function useSocket() {
       });
 
       socket.on('user:joined', (user) => {
-        if (!user || typeof user.id !== 'string') return;
-        worldRef.current.users.set(user.id, {
-          id: user.id,
-          name: user.name ?? null,
-          x: user.x,
-          y: user.y,
-          tx: user.x,
-          ty: user.y,
-        });
+        if (addUser(worldRef.current, user)) announcedRef.current.add(user.id);
       });
 
       socket.on('user:moved', (user) => {
-        if (!user || typeof user.id !== 'string') return;
-        const world = worldRef.current;
-        const existing = world.users.get(user.id);
-        if (existing) {
-          // Only the target moves (Day 5): the controller interpolates the
-          // drawn x/y toward it every frame, so peers glide instead of
-          // teleporting between the 10 Hz reports.
-          existing.tx = user.x;
-          existing.ty = user.y;
-        } else {
-          // Not seen before (or missed the join): start exactly where the
-          // server says, no glide from a position we never had.
-          world.users.set(user.id, {
-            id: user.id,
-            name: user.name ?? null,
-            x: user.x,
-            y: user.y,
-            tx: user.x,
-            ty: user.y,
-          });
-        }
+        moveUser(worldRef.current, user);
       });
 
       socket.on('user:left', (user) => {
-        if (!user || typeof user.id !== 'string') return;
-        worldRef.current.users.delete(user.id);
+        removeUser(worldRef.current, user);
       });
 
       socket.on('error', (err) => {
         setError(toError(err));
-        // A rejected join leaves us connected but not in a room; the
-        // join screen reads `error` and stays up. Once joined, a later
-        // error is surfaced without tearing the world down.
-        setStatus((prev) => (prev === 'joined' ? prev : 'error'));
+        // A rejected join leaves us connected but not in a room; the join
+        // screen reads `error` and stays up. Once joined, a later error is
+        // surfaced in the HUD without tearing the world down.
+        setStatus((prev) => statusAfter(prev, 'error'));
       });
 
       socket.on('connect_error', (err) => {
         setError({ code: 'connection_failed', message: err?.message ?? 'could not reach the server' });
-        setStatus((prev) => (prev === 'joined' ? prev : 'error'));
+        setStatus((prev) => statusAfter(prev, 'connect-error'));
       });
 
-      socket.on('disconnect', () => {
-        setStatus((prev) => (prev === 'joined' ? 'disconnected' : prev));
+      socket.on('disconnect', (reason) => {
+        // Socket.io reconnects on its own, so a member stays in the world and
+        // the HUD reports the reconnect. A connection that drops *before* the
+        // join was acknowledged becomes a visible error instead of leaving the
+        // join form busy forever.
+        setError({ code: 'connection_lost', message: `the connection to the server was lost (${reason})` });
+        setStatus((prev) => statusAfter(prev, 'disconnected'));
       });
     },
     [teardownSocket],
@@ -209,12 +164,19 @@ export function useSocket() {
   /**
    * Send a position to the server (Day 5). Only used by the movement
    * controller's 10 Hz throttle; skipped while the socket is down so a
-   * buffered emit can never hit a reconnected (not-yet-joined) session
-   * and produce a spurious `not_joined` error.
+   * buffered emit can never hit a closed connection.
+   *
+   * `socket.connected` on its own is not enough: after an automatic reconnect
+   * the transport is up and the id is new, while the re-join is still in
+   * flight. A `move` sent in that window belongs to the *previous* connection's
+   * session, so the server answers `not_joined` — the gate stays shut until the
+   * server has acknowledged the new connection with `joined.selfId`.
    */
   const emitMove = useCallback((x, y) => {
     const socket = socketRef.current;
-    if (socket && socket.connected) socket.emit('move', { x, y });
+    if (socket?.connected && hasJoinedConnection(worldRef.current, socket.id)) {
+      socket.emit('move', { x, y });
+    }
   }, []);
 
   // Clean disconnect on unmount: no socket (and no presence document

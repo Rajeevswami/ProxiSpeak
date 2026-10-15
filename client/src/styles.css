@@ -5,8 +5,6 @@ body {
   background: #0b1020;
   color: #e5e9f0;
 }
-.app-shell { padding: 2rem; }
-
 .join-screen {
   min-height: 100vh;
   display: grid;
@@ -72,4 +70,12 @@ body {
   color: #c3cbdd;
   font-size: 0.9rem;
   pointer-events: none;
+}
+/* Connection state / server rejection, in the HUD — the join screen is gone
+   once you are in the world, so this is the only place left to say it. */
+.hud-notice {
+  display: block;
+  margin-top: 0.4rem;
+  color: #ffb4c0;
+  font-weight: 600;
 }

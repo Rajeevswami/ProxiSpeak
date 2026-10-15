@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeViewport, worldToScreen, screenToWorld } from '../src/canvas/coords.js';
+import {
+  MAX_BACKING_PIXELS,
+  computeCanvasSize,
+  computeViewport,
+  screenToWorld,
+  worldToScreen,
+} from '../src/canvas/coords.js';
 
 const EPS = 1e-9;
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < EPS, `${actual} ~= ${expected}`);
@@ -88,4 +94,79 @@ test('worldToScreen / screenToWorld reject non-finite points', () => {
   const vp = computeViewport(1920, 1080, 960, 540);
   assert.throws(() => worldToScreen({ x: Number.NaN, y: 0 }, vp), TypeError);
   assert.throws(() => screenToWorld({ x: 0 }, vp), TypeError);
+});
+
+test('computeCanvasSize keeps a broken window size drawable', () => {
+  // A minimised window / hidden iframe reports 0 — the render loop must not
+  // die on it, and the CSS size the renderer uses is never below 1 px.
+  for (const [width, height] of [
+    [0, 0],
+    [0, 720],
+    [-100, 400],
+    [Number.NaN, 720],
+    [Number.POSITIVE_INFINITY, 720],
+    ['1280', null],
+  ]) {
+    const canvasSize = computeCanvasSize(width, height, 2);
+    assert.ok(canvasSize.width >= 1, `width for ${width}`);
+    assert.ok(canvasSize.height >= 1, `height for ${height}`);
+    assert.ok(Number.isInteger(canvasSize.backingWidth) && canvasSize.backingWidth >= 1);
+    assert.ok(Number.isInteger(canvasSize.backingHeight) && canvasSize.backingHeight >= 1);
+    // Whatever size comes out of here must still be drawable.
+    assert.doesNotThrow(() => computeViewport(1920, 1080, canvasSize.width, canvasSize.height));
+  }
+});
+
+test('computeCanvasSize uses the device pixel ratio and sanitises it', () => {
+  const retina = computeCanvasSize(1280, 720, 2);
+  assert.equal(retina.width, 1280);
+  assert.equal(retina.height, 720);
+  assert.equal(retina.dpr, 2);
+  assert.equal(retina.backingWidth, 2560);
+  assert.equal(retina.backingHeight, 1440);
+
+  const standard = computeCanvasSize(1280, 720, 1);
+  assert.equal(standard.backingWidth, 1280);
+  assert.equal(standard.backingHeight, 720);
+
+  // A missing / broken devicePixelRatio falls back to 1, never to 0 or NaN.
+  for (const dpr of [undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const canvasSize = computeCanvasSize(1000, 500, dpr);
+    assert.equal(canvasSize.dpr, 1, `dpr for ${dpr}`);
+    assert.equal(canvasSize.backingWidth, 1000);
+    assert.equal(canvasSize.backingHeight, 500);
+  }
+});
+
+test('computeCanvasSize never asks for a backing store the browser refuses', () => {
+  // 5120 x 1440 CSS px at DPR 2 is 29.5M device pixels — over Safari's budget,
+  // where the canvas would simply stay blank.
+  const ultrawide = computeCanvasSize(5120, 1440, 2);
+  assert.ok(
+    ultrawide.backingWidth * ultrawide.backingHeight <= MAX_BACKING_PIXELS,
+    `${ultrawide.backingWidth}x${ultrawide.backingHeight} exceeds the budget`,
+  );
+  assert.ok(ultrawide.dpr > 1, 'a large window still gets more than one device pixel per CSS pixel');
+
+  const eightK = computeCanvasSize(7680, 4320, 1);
+  assert.ok(eightK.backingWidth * eightK.backingHeight <= MAX_BACKING_PIXELS);
+  assert.equal(eightK.width, 7680, 'the CSS size the renderer works in is untouched');
+
+  const absurd = computeCanvasSize(20000, 20000, 2);
+  assert.ok(absurd.backingWidth * absurd.backingHeight <= MAX_BACKING_PIXELS);
+  assert.ok(absurd.backingWidth >= 1 && absurd.backingHeight >= 1);
+});
+
+test('computeCanvasSize leaves ordinary windows at their full device pixel ratio', () => {
+  for (const [width, height, dpr] of [
+    [1920, 1080, 1],
+    [1280, 720, 2], // retina laptop
+    [1440, 900, 2],
+    [2560, 1440, 2], // 14.7M device pixels: still inside the budget
+  ]) {
+    const canvasSize = computeCanvasSize(width, height, dpr);
+    assert.equal(canvasSize.dpr, dpr, `dpr for ${width}x${height}@${dpr}`);
+    assert.equal(canvasSize.backingWidth, width * dpr);
+    assert.equal(canvasSize.backingHeight, height * dpr);
+  }
 });

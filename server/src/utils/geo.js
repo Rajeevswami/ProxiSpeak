@@ -99,10 +99,3 @@ export function haversineMeters(a, b) {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** Clamp a coordinate into the world bounds. */
-export function clampToWorld(x, y, world) {
-  return {
-    x: Math.min(Math.max(x, 0), world.width),
-    y: Math.min(Math.max(y, 0), world.height),
-  };
-}

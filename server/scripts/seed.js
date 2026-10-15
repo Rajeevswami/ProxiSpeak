@@ -51,7 +51,13 @@ async function main() {
 }
 
 main().catch(async (err) => {
-  log.error(err);
+  // Message only, exactly like the server's own startup failure: the
+  // actionable part is already logged above (connectMongo names the URI and
+  // what to do about it), while `log.error(err)` would dump the whole Mongoose
+  // topology — dozens of lines of driver internals between the operator and
+  // the one line that says what to fix. The stack stays available at debug.
+  log.error(`seed failed: ${err?.message ?? err}`);
+  if (err?.stack) log.debug(err.stack);
   if (err?.name === 'MongooseServerSelectionError') {
     log.error('Could not reach MongoDB. Check MONGO_URI (and the network access list for Atlas).');
   }

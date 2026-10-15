@@ -3,6 +3,7 @@ import WorldCanvas from './components/WorldCanvas.jsx';
 import { useSocket } from './hooks/useSocket.js';
 import { useMovement } from './hooks/useMovement.js';
 import { drawWorld } from './canvas/renderer.js';
+import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
   const { world, status, error, joinedInfo, join, emitMove } = useSocket();
@@ -19,6 +20,16 @@ export default function App() {
     return <JoinScreen onJoin={join} status={status} error={error} />;
   }
 
+  // In the world there is no join screen left to report problems, so the HUD
+  // does it: a lost connection (Socket.io is reconnecting on its own) and any
+  // server rejection, in the same words the join screen uses.
+  const notice =
+    status === 'disconnected'
+      ? 'Connection lost — reconnecting…'
+      : error
+        ? describeServerError(error)
+        : null;
+
   return (
     <>
       <WorldCanvas
@@ -29,8 +40,12 @@ export default function App() {
       />
       <div className="world-hud">
         {joinedInfo.roomName} · joined as {joinedInfo.name}
-        {status === 'disconnected' ? ' · disconnected (reload to rejoin)' : ''}
         {' · WASD / arrows to walk · click the floor to walk there'}
+        {notice ? (
+          <span className="hud-notice" role="status">
+            {notice}
+          </span>
+        ) : null}
       </div>
     </>
   );
