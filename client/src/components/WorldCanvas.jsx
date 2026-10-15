@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { computeViewport, screenToWorld } from '../canvas/coords.js';
+import { computeCanvasSize, computeViewport, screenToWorld } from '../canvas/coords.js';
 import { drawRoom } from '../canvas/renderer.js';
 
 /**
@@ -41,15 +41,19 @@ export default function WorldCanvas({
     let lastFrameTime = performance.now();
 
     const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      size.width = window.innerWidth;
-      size.height = window.innerHeight;
-      canvas.width = Math.max(1, Math.round(size.width * dpr));
-      canvas.height = Math.max(1, Math.round(size.height * dpr));
+      // Sizes come from the window (and can be 0 in a minimised window), so
+      // they are sanitised into a usable canvas here — a throw from inside the
+      // frame callback would end the render loop for good.
+      const canvasSize = computeCanvasSize(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
+      size.width = canvasSize.width;
+      size.height = canvasSize.height;
+      canvas.width = canvasSize.backingWidth;
+      canvas.height = canvasSize.backingHeight;
       canvas.style.width = `${size.width}px`;
       canvas.style.height = `${size.height}px`;
-      // Draw in CSS pixels; the DPR transform keeps lines sharp on retina.
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Draw in CSS pixels; the DPR transform keeps lines sharp on retina
+      // (resizing the canvas reset the transform, so it is set after every fit).
+      ctx.setTransform(canvasSize.dpr, 0, 0, canvasSize.dpr, 0, 0);
     };
 
     const frame = (now) => {

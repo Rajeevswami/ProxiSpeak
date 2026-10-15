@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeViewport, worldToScreen, screenToWorld } from '../src/canvas/coords.js';
+import {
+  computeCanvasSize,
+  computeViewport,
+  screenToWorld,
+  worldToScreen,
+} from '../src/canvas/coords.js';
 
 const EPS = 1e-9;
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < EPS, `${actual} ~= ${expected}`);
@@ -88,4 +93,46 @@ test('worldToScreen / screenToWorld reject non-finite points', () => {
   const vp = computeViewport(1920, 1080, 960, 540);
   assert.throws(() => worldToScreen({ x: Number.NaN, y: 0 }, vp), TypeError);
   assert.throws(() => screenToWorld({ x: 0 }, vp), TypeError);
+});
+
+test('computeCanvasSize keeps a broken window size drawable', () => {
+  // A minimised window / hidden iframe reports 0 — the render loop must not
+  // die on it, and the CSS size the renderer uses is never below 1 px.
+  for (const [width, height] of [
+    [0, 0],
+    [0, 720],
+    [-100, 400],
+    [Number.NaN, 720],
+    [Number.POSITIVE_INFINITY, 720],
+    ['1280', null],
+  ]) {
+    const canvasSize = computeCanvasSize(width, height, 2);
+    assert.ok(canvasSize.width >= 1, `width for ${width}`);
+    assert.ok(canvasSize.height >= 1, `height for ${height}`);
+    assert.ok(Number.isInteger(canvasSize.backingWidth) && canvasSize.backingWidth >= 1);
+    assert.ok(Number.isInteger(canvasSize.backingHeight) && canvasSize.backingHeight >= 1);
+    // Whatever size comes out of here must still be drawable.
+    assert.doesNotThrow(() => computeViewport(1920, 1080, canvasSize.width, canvasSize.height));
+  }
+});
+
+test('computeCanvasSize uses the device pixel ratio and sanitises it', () => {
+  const retina = computeCanvasSize(1280, 720, 2);
+  assert.equal(retina.width, 1280);
+  assert.equal(retina.height, 720);
+  assert.equal(retina.dpr, 2);
+  assert.equal(retina.backingWidth, 2560);
+  assert.equal(retina.backingHeight, 1440);
+
+  const standard = computeCanvasSize(1280, 720, 1);
+  assert.equal(standard.backingWidth, 1280);
+  assert.equal(standard.backingHeight, 720);
+
+  // A missing / broken devicePixelRatio falls back to 1, never to 0 or NaN.
+  for (const dpr of [undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const canvasSize = computeCanvasSize(1000, 500, dpr);
+    assert.equal(canvasSize.dpr, 1, `dpr for ${dpr}`);
+    assert.equal(canvasSize.backingWidth, 1000);
+    assert.equal(canvasSize.backingHeight, 500);
+  }
 });

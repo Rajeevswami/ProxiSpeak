@@ -14,6 +14,46 @@ function requirePositiveFinite(value, label) {
   }
 }
 
+/** A canvas is never zero-sized: 1 x 1 is the smallest thing we draw on. */
+export const MIN_CANVAS_SIZE_PX = 1;
+
+/**
+ * Translate the browser's window/DPR numbers into a canvas backing store.
+ *
+ * `window.innerWidth` / `innerHeight` are not guaranteed to be usable numbers:
+ * a minimised window, a `display: none` iframe or a window collapsed by the OS
+ * can report 0 (and a broken embed can report NaN). Handing that straight to
+ * `computeViewport` would throw inside the animation frame, and a throw inside
+ * the frame callback kills the render loop for good — the canvas would stay
+ * blank forever. Every value is therefore sanitised here, and the CSS size the
+ * rest of the renderer works in is always at least 1 px.
+ *
+ * @param {number} cssWidth window width in CSS pixels
+ * @param {number} cssHeight window height in CSS pixels
+ * @param {number} [devicePixelRatio] window.devicePixelRatio
+ * @returns {{width:number,height:number,dpr:number,backingWidth:number,backingHeight:number}}
+ */
+export function computeCanvasSize(cssWidth, cssHeight, devicePixelRatio = 1) {
+  const width = sanitizeLength(cssWidth);
+  const height = sanitizeLength(cssHeight);
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+
+  return {
+    width,
+    height,
+    dpr,
+    backingWidth: Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr)),
+    backingHeight: Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr)),
+  };
+}
+
+/** A window dimension that is finite and positive, else the 1 px minimum. */
+function sanitizeLength(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : MIN_CANVAS_SIZE_PX;
+}
+
 function requireFinite(value, label) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new TypeError(`${label} must be a finite number, got ${value}`);
