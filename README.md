@@ -49,6 +49,156 @@ database.
 | **Week 3** | Voice mesh & spatial audio | WebRTC signaling, peer graph hygiene, Web Audio proximity crossfade and occlusion | Week 3 review: audio opens/closes by distance, mute/occlusion works |
 | **Week 4** | Client & hardening | Full React/Canvas client, movement + audio UX, load testing, production hardening | Final review: end-to-end multi-user demo |
 
+## Week 1 — what is done (Day 1–6)
+
+A complete two-user slice of ProxiSpeak with **no audio yet**: you join a room
+from the browser, see the room and everyone in it on a canvas map, walk around
+with the keyboard or the mouse, and every other tab sees your avatar move.
+
+### Tech stack (Week 1)
+
+| Layer | Used in Week 1 | Later weeks |
+| --- | --- | --- |
+| Backend | Node.js, Express (health + JSON API), Socket.io, MongoDB via Mongoose (`2dsphere`) | Redis Pub/Sub adapter (Week 2) |
+| Frontend | React 18 + Vite, HTML5 Canvas 2D, `socket.io-client` | WebRTC (`getUserMedia`), Web Audio API (Week 3) |
+| Tooling | Node's built-in test runner (`node --test`), no test framework, no UI kit, no state library | — |
+
+### Key modules
+
+| Module | File(s) | What it does |
+| --- | --- | --- |
+| Boot & config | `server/src/index.js`, `server/src/config/index.js`, `server/src/utils/httpServer.js` | Config from `.env`, connect MongoDB, ensure indexes, one HTTP+WebSocket port, graceful shutdown, one-line listen errors |
+| HTTP surface | `server/src/app.js` | `GET /health`, JSON 404, error handler, CORS from `CLIENT_URL` |
+| Data layer | `server/src/db/mongo.js`, `server/src/models/UserPresence.js`, `server/src/models/Room.js` | Connection lifecycle, `2dsphere` index on `UserPresence.location`, room blueprints |
+| Projection | `server/src/utils/geo.js` | Pixel plane ⇄ GeoJSON (1 px = 0.1 m) for `$near` / `$geoWithin` on the day they arrive |
+| Realtime gateway | `server/src/sockets/index.js`, `server/src/sockets/validation.js` | `join` / `move` / disconnect, payload validation, bounds + step caps, rate limit, room-scoped fan-out |
+| Presence store | `server/src/services/presenceStore.js`, `server/src/services/roomService.js` | Upsert/delete presence documents, room lookup with an in-process cache |
+| World state | `client/src/realtime/worldState.js`, `client/src/realtime/connectionStatus.js` | What the server said (room + avatars, pure and unit-tested) and the connection status rules |
+| Socket hook | `client/src/hooks/useSocket.js` | Owns the connection; keeps the world in a ref so avatar updates never re-render React |
+| Movement | `client/src/movement/*.js`, `client/src/hooks/useMovement.js` | Keyboard/click-to-move maths, 10 Hz broadcast throttle, remote-avatar interpolation |
+| Rendering | `client/src/canvas/renderer.js`, `client/src/canvas/coords.js`, `client/src/components/WorldCanvas.jsx` | Letterboxed room, grid, obstacles, avatars; canvas sizing that survives tiny and huge windows |
+| Join screen | `client/src/components/JoinScreen.jsx`, `client/src/join/joinForm.js` | Name/room validation and the sentences shown for server and connection errors |
+
+### Folder structure
+
+```
+ProxiSpeak/
+├── package.json            # root scripts (install, dev, test, seed, build)
+├── scripts/run-tests.mjs   # runs the server suite, then the client suite
+├── .env.example            # PORT, MONGO_URI, CLIENT_URL, socket limits
+├── docs/
+│   ├── WEEK1.md            # Week 1 deliverables, events, data model, architecture
+│   └── DEMO_WEEK1.md       # 5-minute demo script + troubleshooting
+├── server/
+│   ├── package.json
+│   ├── scripts/seed.js     # creates the 2dsphere index + lobby/studio/lounge
+│   ├── src/
+│   │   ├── index.js        # boot: MongoDB -> HTTP -> Socket.io -> shutdown
+│   │   ├── app.js          # Express surface
+│   │   ├── config/index.js # every tunable, from .env
+│   │   ├── db/mongo.js     # connect / disconnect / ensureIndexes
+│   │   ├── models/         # UserPresence (2dsphere), Room (layout + obstacles)
+│   │   ├── services/       # presenceStore, roomService
+│   │   ├── sockets/        # gateway + payload validation
+│   │   └── utils/          # geo projection, logger, errors, rate limiter, listen helper
+│   └── test/               # node:test suites (unit + Socket.io integration)
+└── client/
+    ├── package.json
+    ├── vite.config.js      # dev proxy to :4000, optional extra dev hosts
+    ├── index.html
+    ├── src/
+    │   ├── main.jsx, App.jsx, styles.css
+    │   ├── canvas/         # coords + renderer
+    │   ├── components/     # JoinScreen, WorldCanvas
+    │   ├── hooks/          # useSocket, useMovement
+    │   ├── join/           # join-form rules and error sentences
+    │   ├── movement/       # movement maths, controller, throttle, input rules
+    │   └── realtime/       # world state + connection status
+    └── test/               # node:test suites (no browser needed)
+```
+
+### Setup
+
+Prerequisites: **Node.js ≥ 18.17** and a MongoDB (local or Atlas). No other
+service, no Redis, no Docker.
+
+```bash
+cp .env.example .env          # MONGO_URI + CLIENT_URL (defaults work locally)
+npm run install:all           # installs server/ and client/
+```
+
+* **Local MongoDB** — start `mongod --dbpath ./data` (or your service) and keep
+  the default `MONGO_URI=mongodb://127.0.0.1:27017/proxispeak`.
+* **Atlas** — set `MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/proxispeak?retryWrites=true&w=majority`
+  and allow your IP under *Network Access*. Details in [Day 2](#day-2-mongodb-setup).
+* `CLIENT_URL=http://localhost:5173` is the browser origin allowed to open the
+  socket; without it the websocket is same-origin only.
+
+### Run
+
+```bash
+npm run seed        # idempotent: 2dsphere index + lobby / studio / lounge
+npm start           # one process: HTTP + WebSocket on http://localhost:4000
+npm run dev:client  # Vite dev server on http://localhost:5173 (second terminal)
+```
+
+Root scripts:
+
+| Script | What it does |
+| --- | --- |
+| `npm run install:all` | `install:server` + `install:client` |
+| `npm start` / `npm run dev:server` | Server (once / with `node --watch`) |
+| `npm run dev:client` | Vite dev server for the client |
+| `npm run seed` | Creates the index and the default rooms (re-running is safe) |
+| `npm test` | **Both** suites: server first, then client; fails if either fails |
+| `npm run test:server` / `npm run test:client` | One suite on its own |
+| `npm run build` (alias `build:client`) | Production build into `client/dist/` |
+
+### Test
+
+```bash
+npm test
+```
+
+* Server suite — unit tests (projection, validation, rate limiter, CORS policy,
+  connection bookkeeping) plus Socket.io integration tests that run against
+  their own throwaway database. **Without a reachable MongoDB those tests report
+  themselves as skipped with a `NOT VERIFIED` banner instead of pretending to
+  pass** — so a green run is only complete when `skipped 0`.
+* Client suite — movement, canvas maths, renderer, world state, connection
+  status, join form, config. No browser and no DOM needed.
+* `MONGO_URI_TEST` overrides the database used by the integration tests.
+
+### Controls
+
+| Input | Effect |
+| --- | --- |
+| `W` `A` `S` `D` / arrow keys | Walk (diagonals are not faster) |
+| Click the floor | Walk to that point and stop |
+| Any movement key | Cancels a pending click target |
+| Typing in a field | Movement keys are ignored |
+| Window loses focus | Every held key is released |
+
+More detail: [Day 5 — Movement and broadcasting](#day-5-movement-and-broadcasting).
+
+### Known limitations / coming in Week 2–4
+
+* **No audio yet.** WebRTC, `getUserMedia` and the Web Audio proximity crossfade
+  are Week 3; nothing asks for microphone permission in Week 1.
+* **No proximity logic.** Earshot, `$near` / `$geoWithin`, and the peer graph are
+  Week 2. The projection (1 px = 0.1 m) and the `2dsphere` index they need are
+  already in place.
+* **Obstacles are visual only** — no collision or occlusion.
+* **A client that drops keeps its server-side presence row until the server
+  notices** (engine.io ping timeout, up to ~20 s), so peers can briefly see a
+  frozen avatar. The reconnecting client itself never draws its own ghost; the
+  presence lifecycle that removes the row immediately is Week 2.
+* **A reconnect respawns you at a free spawn point** (the server does not resume
+  your previous position) and you cannot switch rooms without reloading.
+* **Single instance.** Redis Pub/Sub and multi-instance rooms are Week 2; rooms
+  live in one process.
+* No rate limiting on joins, no auth, no persistence of movement history.
+
 ## Day 2: MongoDB setup
 
 Day 2 adds the data layer: the MongoDB connection lifecycle, the `UserPresence`
@@ -342,8 +492,15 @@ curl -i http://localhost:4000/health
   (changed positions only, plus the exact resting position after a stop),
   and smooth frame-rate-independent interpolation of remote avatars with a
   reconnect snap. No server change was needed (see the limit check below).
+* **Day 6 status: Week 1 polish done** — `README_backup.md` and the dead code
+  around it removed, root `npm test` runs both suites, the Week 1 bug hunt
+  (canvas sizing on tiny/huge windows, join-snapshot race, move-after-reconnect,
+  the reconnecting client's own ghost avatar, duplicated MongoDB listeners, the
+  busy-port stack trace) with tests, connection-lost/reconnect messaging on the
+  client, and the Week 1 documentation (`docs/WEEK1.md`, `docs/DEMO_WEEK1.md`,
+  `CHANGELOG.md`).
 * Redis, WebRTC, the proximity queries (`$near` / `$geoWithin` / `$geoNear`),
-  audio and collision/occlusion are intentionally **not** part of Days 1–5;
+  audio and collision/occlusion are intentionally **not** part of Days 1–6;
   they land with their own days/weeks above.
 
 ## Day 4: Client and world rendering
