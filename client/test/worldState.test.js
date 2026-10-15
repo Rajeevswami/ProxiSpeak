@@ -9,6 +9,7 @@ import {
   addUser,
   applyJoinedSnapshot,
   createWorldState,
+  hasJoinedConnection,
   moveUser,
   removeUser,
 } from '../src/realtime/worldState.js';
@@ -187,4 +188,16 @@ test('a reconnect cannot stack two avatars for one person', () => {
   assert.equal(world.users.size, 2, `expected 2 avatars, got ${[...world.users.keys()]}`);
   assert.deepEqual([...world.users.keys()].sort(), ['bob', 'conn-2']);
   assert.equal(world.selfId, 'conn-2');
+});
+
+test('hasJoinedConnection is true only for the connection that joined', () => {
+  const world = createWorldState();
+  assert.equal(hasJoinedConnection(world, 'conn-1'), false, 'nothing has joined yet');
+  applyJoinedSnapshot(world, { selfId: 'conn-1', room, users: [] }, { selfId: 'conn-1' });
+  assert.equal(hasJoinedConnection(world, 'conn-1'), true);
+  // A reconnect produces a brand new socket id, so the move gate closes again
+  // until the server acknowledges the new join.
+  assert.equal(hasJoinedConnection(world, 'conn-2'), false);
+  assert.equal(hasJoinedConnection(world, null), false);
+  assert.equal(hasJoinedConnection(null, 'conn-1'), false);
 });

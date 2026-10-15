@@ -34,6 +34,20 @@ export function createWorldState() {
 const isDrawable = (value) => Number.isFinite(value?.x) && Number.isFinite(value?.y);
 
 /**
+ * True when the server has acknowledged a join on *this* connection.
+ *
+ * `joined.selfId` is the socket id the server knows for the connection that
+ * joined, so comparing it with the live connection id answers "did this
+ * connection complete a join?". That matters right after a reconnect: Socket.io
+ * has already set `socket.connected = true` (with a new socket id) while the
+ * re-join is still in flight, and a `move` sent in that window is answered with
+ * `not_joined`.
+ */
+export function hasJoinedConnection(world, socketId) {
+  return Boolean(world?.selfId && socketId && world.selfId === socketId);
+}
+
+/**
  * `user:joined` — somebody walked into the room. Upserts by id, so a repeated
  * announcement can never produce a second avatar; positions come from the
  * server, so a re-announced avatar snaps rather than glides from a stale spot.

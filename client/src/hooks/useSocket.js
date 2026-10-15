@@ -5,6 +5,7 @@ import {
   addUser,
   applyJoinedSnapshot,
   createWorldState,
+  hasJoinedConnection,
   moveUser,
   removeUser,
 } from '../realtime/worldState.js';
@@ -153,12 +154,19 @@ export function useSocket() {
   /**
    * Send a position to the server (Day 5). Only used by the movement
    * controller's 10 Hz throttle; skipped while the socket is down so a
-   * buffered emit can never hit a reconnected (not-yet-joined) session
-   * and produce a spurious `not_joined` error.
+   * buffered emit can never hit a closed connection.
+   *
+   * `socket.connected` on its own is not enough: after an automatic reconnect
+   * the transport is up and the id is new, while the re-join is still in
+   * flight. A `move` sent in that window belongs to the *previous* connection's
+   * session, so the server answers `not_joined` — the gate stays shut until the
+   * server has acknowledged the new connection with `joined.selfId`.
    */
   const emitMove = useCallback((x, y) => {
     const socket = socketRef.current;
-    if (socket && socket.connected) socket.emit('move', { x, y });
+    if (socket?.connected && hasJoinedConnection(worldRef.current, socket.id)) {
+      socket.emit('move', { x, y });
+    }
   }, []);
 
   // Clean disconnect on unmount: no socket (and no presence document
