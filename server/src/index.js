@@ -10,6 +10,7 @@ import logger from './utils/logger.js';
 import { connectMongo, disconnectMongo, ensureIndexes } from './db/mongo.js';
 import { createApp } from './app.js';
 import { createSocketServer } from './sockets/index.js';
+import { listenOn } from './utils/httpServer.js';
 import { listRoomIds } from './services/roomService.js';
 
 const log = logger;
@@ -38,7 +39,7 @@ async function main() {
   // proxy and firewall.
   const io = createSocketServer({ httpServer, config, logger: log });
 
-  await new Promise((resolve) => httpServer.listen(config.server.port, config.server.host, resolve));
+  await listenOn(httpServer, { port: config.server.port, host: config.server.host });
   log.info(`ProxiSpeak server listening on ${config.server.host}:${config.server.port} (${config.nodeEnv})`);
   log.info('Health:  GET /health');
   log.info('Socket:  io() on the same origin');
