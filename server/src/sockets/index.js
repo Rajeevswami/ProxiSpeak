@@ -289,7 +289,6 @@ function registerHandlers(socket, ctx) {
     if (!session) return;
     const { roomId } = session;
     session = null;
-    socket.data.roomId = null;
 
     // Peers first, while the room channel is unambiguous, then the channel and
     // finally this socket's own document.

@@ -6,11 +6,20 @@ node_modules/
 .env.*
 !.env.example
 
-# Client build output (arrives in a later week)
+# Client build output (npm run build --prefix client)
 client/dist/
+dist/
+
+# Vite cache
+client/.vite/
+
+# Test / tooling output
+coverage/
 
 # Logs
 *.log
+logs/
+npm-debug.log*
 
 # OS junk
 .DS_Store
