@@ -50,6 +50,8 @@ const SERVER_ERROR_TEXT = {
   already_joined: () => 'This connection is already in a room. Reload the page to join a different one.',
   not_joined: () => 'You are not in a room yet.',
   connection_failed: () => 'Could not reach the server. Check that the server is running and that CLIENT_URL allows this page, then try again.',
+  connection_lost: () =>
+    'The connection to the server was lost before the join finished, and Socket.io is still trying to reconnect. Check that the server is running, then try again.',
   connect_error: () => 'Could not reach the server. Check that the server is running and that CLIENT_URL allows this page, then try again.',
   server_error: () => 'The server hit an unexpected error. Please try again.',
 };

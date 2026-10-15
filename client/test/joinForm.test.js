@@ -79,3 +79,12 @@ test('an unknown code still surfaces the server message', () => {
   assert.equal(describeServerError({ code: 'who_knows', message: 'something specific' }), 'something specific');
   assert.match(describeServerError({ code: 'who_knows' }), /something went wrong/i);
 });
+
+test('a connection lost before the join finished is explained', () => {
+  // The form used to sit at "Joining…" with its button disabled forever when
+  // the socket dropped mid-join; now that drop becomes this message.
+  const message = describeServerError({ code: 'connection_lost', message: 'the connection to the server was lost (transport close)' });
+  assert.match(message, /lost/i);
+  assert.match(message, /reconnect/i);
+  assert.match(message, /server is running/i);
+});

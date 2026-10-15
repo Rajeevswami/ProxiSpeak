@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config.js';
+import { CONNECTION_STATUS, statusAfter } from '../realtime/connectionStatus.js';
 import {
   addUser,
   applyJoinedSnapshot,
@@ -53,7 +54,8 @@ export function useSocket() {
    */
   const announcedRef = useRef(new Set());
 
-  const [status, setStatus] = useState('idle'); // idle | connecting | joined | disconnected | error
+  // idle | connecting | joined | disconnected | error — see connectionStatus.js
+  const [status, setStatus] = useState(CONNECTION_STATUS.IDLE);
   const [error, setError] = useState(null);
   // Set once per successful `joined` (never per move): { roomId, roomName, selfId, name }.
   const [joinedInfo, setJoinedInfo] = useState(null);
@@ -82,7 +84,7 @@ export function useSocket() {
       world.selfId = null;
       setJoinedInfo(null);
       setError(null);
-      setStatus('connecting');
+      setStatus((prev) => statusAfter(prev, 'join-requested'));
 
       pendingJoinRef.current = { roomId: normalizedRoom, name: trimmedName };
 
@@ -90,7 +92,10 @@ export function useSocket() {
       // the page origin when no URL is passed.
       const socket = io(SERVER_URL || undefined, {
         autoConnect: true,
-        reconnectionAttempts: 5,
+        // Socket.io keeps reconnecting on its own — the client never has to
+        // reload the page to get back into the room. The HUD shows the
+        // reconnect while it happens (see statusAfter).
+        reconnectionAttempts: Infinity,
       });
       socketRef.current = socket;
 
@@ -110,7 +115,7 @@ export function useSocket() {
         });
         announcedRef.current.clear();
         setError(null);
-        setStatus('joined');
+        setStatus((prev) => statusAfter(prev, 'joined'));
         setJoinedInfo({
           roomId: payload.room?.roomId ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
           roomName: payload.room?.name ?? pendingJoinRef.current?.roomId ?? normalizedRoom,
@@ -133,19 +138,24 @@ export function useSocket() {
 
       socket.on('error', (err) => {
         setError(toError(err));
-        // A rejected join leaves us connected but not in a room; the
-        // join screen reads `error` and stays up. Once joined, a later
-        // error is surfaced without tearing the world down.
-        setStatus((prev) => (prev === 'joined' ? prev : 'error'));
+        // A rejected join leaves us connected but not in a room; the join
+        // screen reads `error` and stays up. Once joined, a later error is
+        // surfaced in the HUD without tearing the world down.
+        setStatus((prev) => statusAfter(prev, 'error'));
       });
 
       socket.on('connect_error', (err) => {
         setError({ code: 'connection_failed', message: err?.message ?? 'could not reach the server' });
-        setStatus((prev) => (prev === 'joined' ? prev : 'error'));
+        setStatus((prev) => statusAfter(prev, 'connect-error'));
       });
 
-      socket.on('disconnect', () => {
-        setStatus((prev) => (prev === 'joined' ? 'disconnected' : prev));
+      socket.on('disconnect', (reason) => {
+        // Socket.io reconnects on its own, so a member stays in the world and
+        // the HUD reports the reconnect. A connection that drops *before* the
+        // join was acknowledged becomes a visible error instead of leaving the
+        // join form busy forever.
+        setError({ code: 'connection_lost', message: `the connection to the server was lost (${reason})` });
+        setStatus((prev) => statusAfter(prev, 'disconnected'));
       });
     },
     [teardownSocket],
