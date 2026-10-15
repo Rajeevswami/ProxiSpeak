@@ -12,10 +12,29 @@ const log = logger.child('mongo');
 /** Strip credentials from a connection string before it reaches any log. */
 const redact = (uri) => uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:***@');
 
+/**
+ * Connection lifecycle logging, bound once per connection object.
+ *
+ * Mongoose listeners live for the life of the process, so registering them on
+ * every `connectMongo()` call would multiply them: one early call (a failed boot
+ * attempt, then a retry, then a `connectMongo` from a seed script in the same
+ * process) would log every later event once per call, and keep every closure
+ * alive with it.
+ *
+ * @returns {boolean} whether this call did the binding
+ */
+const loggedConnections = new WeakSet();
+export function bindConnectionLogging(connection = mongoose.connection) {
+  if (loggedConnections.has(connection)) return false;
+  loggedConnections.add(connection);
+  connection.on('connected', () => log.info('connected'));
+  connection.on('error', (err) => log.error('connection error:', err.message));
+  connection.on('disconnected', () => log.warn('disconnected'));
+  return true;
+}
+
 export async function connectMongo({ uri = config.mongo.uri } = {}) {
-  mongoose.connection.on('connected', () => log.info('connected'));
-  mongoose.connection.on('error', (err) => log.error('connection error:', err.message));
-  mongoose.connection.on('disconnected', () => log.warn('disconnected'));
+  bindConnectionLogging();
 
   try {
     await mongoose.connect(uri, {
