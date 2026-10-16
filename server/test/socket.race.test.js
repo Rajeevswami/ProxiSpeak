@@ -12,6 +12,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { io as createClient } from 'socket.io-client';
 
@@ -68,14 +69,14 @@ function createStaticRooms(roomIds = ['lobby']) {
 const servers = [];
 const clients = [];
 
-async function startServer({ presence, cfg = config } = {}) {
+async function startServer({ presence, cfg = config, roomIds = ['lobby'] } = {}) {
   const server = http.createServer((req, res) => res.writeHead(404).end());
   const io = createSocketServer({
     httpServer: server,
     config: cfg,
     logger: log,
     presence,
-    rooms: createStaticRooms(),
+    rooms: createStaticRooms(roomIds),
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -372,4 +373,49 @@ test('existing Engine.IO pong refreshes idle lastSeen without a new client event
   assert.equal(result.roomId, 'lobby');
   assert.equal(result.instanceId, config.server.instanceId);
   assert.equal(presence.rows.get(socket.id).lastSeen, result.now);
+});
+
+
+test('SIGKILL of a client process produces user:left and removes its row (store double)', async (t) => {
+  const presence = createSlowPresence();
+  const { url } = await startServer({ presence });
+  const watcher = await connect(client(url));
+  let joined = waitFor(watcher, 'joined');
+  watcher.emit('join', { roomId: 'lobby', name: 'Watcher' });
+  await joined;
+  const moduleUrl = new URL('../node_modules/socket.io-client/build/esm-debug/index.js', import.meta.url).href;
+  const script = `import {io} from ${JSON.stringify(moduleUrl)};
+    const socket=io(${JSON.stringify(url)}, {transports:['websocket'],reconnection:false});
+    socket.on('connect',()=>socket.emit('join',{roomId:'lobby',name:'Killed client'}));
+    socket.on('joined',()=>process.send({id:socket.id}));`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  t.after(() => { if (child.exitCode === null && !child.killed) child.kill('SIGKILL'); });
+  const [{ id }] = await once(child, 'message');
+  assert.equal(presence.rows.has(id), true);
+  const left = waitFor(watcher, 'user:left', (u) => u.id === id);
+  const exited = once(child, 'exit');
+  child.kill('SIGKILL');
+  await exited; await left; await sleep(30);
+  assert.equal(presence.rows.has(id), false);
+});
+
+test('room broadcasts stay isolated and malformed payloads do not crash the gateway', async () => {
+  const presence = createSlowPresence();
+  const { url } = await startServer({ presence, roomIds: ['lobby', 'studio'] });
+  const a = await connect(client(url)), b = await connect(client(url));
+  for (const [socket, roomId] of [[a, 'lobby'], [b, 'studio']]) {
+    const joined = waitFor(socket, 'joined');
+    socket.emit('join', { roomId, name: roomId }); await joined;
+  }
+  let crossRoom = 0;
+  b.on('user:moved', () => { crossRoom++; });
+  a.emit('move', { x: 110, y: 100 }); await sleep(30);
+  for (const payload of [null, [], {}, {x: 'bad', y: 100}, {x: 1e100, y: 100}]) {
+    const rejected = waitFor(a, 'error');
+    a.emit('move', payload); const error = await rejected;
+    assert.equal(error.code, 'invalid_payload');
+  }
+  assert.equal(a.connected, true);
+  assert.equal(b.connected, true);
+  assert.equal(crossRoom, 0);
 });
