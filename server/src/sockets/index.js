@@ -103,6 +103,14 @@ function registerHandlers(socket, ctx) {
   let session = null;
   /** The join this socket is currently processing, if any (see the handler). */
   let joinInFlight = null;
+  // Serialize writes per connection: old moves must not land after newer moves
+  // or recreate a row after disconnect has deleted it. Drain on shutdown too.
+  let presenceWrites = Promise.resolve();
+  const queuePresenceWrite = (operation) => {
+    const next = presenceWrites.then(operation);
+    presenceWrites = next.catch(() => {});
+    return track(next);
+  };
 
   const fail = (code, message, field) =>
     socket.emit('error', field ? { code, message, field } : { code, message });
@@ -130,10 +138,13 @@ function registerHandlers(socket, ctx) {
   // Reuse Engine.IO's heartbeat, including idle clients, without a new event.
   socket.conn.on('packet', (packet) => {
     if (packet.type !== 'pong' || !session || !presence.refreshLastSeen) return;
-    session.user.lastSeen = Date.now();
-    track(Promise.resolve(presence.refreshLastSeen(clientId, session.roomId,
-      cfg.server.instanceId, session.user.lastSeen)).catch((err) =>
-      socketLog.error('heartbeat persist failed:', err?.message ?? err)));
+    const current = session;
+    const now = Date.now();
+    current.user.lastSeen = now;
+    queuePresenceWrite(async () => {
+      if (socket.disconnected || session !== current) return;
+      await presence.refreshLastSeen(clientId, current.roomId, cfg.server.instanceId, now);
+    }).catch((err) => socketLog.error('heartbeat persist failed:', err?.message ?? err));
   });
 
   socketLog.debug('socket connected');
@@ -177,7 +188,7 @@ function registerHandlers(socket, ctx) {
         });
       }
 
-      joinInFlight = performJoin({ roomId, name });
+      joinInFlight = track(performJoin({ roomId, name }));
       try {
         await joinInFlight;
       } finally {
@@ -270,17 +281,18 @@ function registerHandlers(socket, ctx) {
       session.user.y = y;
       session.user.lastSeen = Date.now();
 
-      // Persist through the Day 2 helper, which also refreshes the 2dsphere
-      // GeoJSON point. A transient write failure is logged and the broadcast
-      // still goes out: the next accepted move rewrites the document.
-      try {
-        await presence.upsertPosition(session.user, geo);
-      } catch (err) {
-        socketLog.error('position persist failed:', err?.message ?? err);
-      }
-
-      // Room-scoped fan-out, everyone but the mover.
-      socket.to(session.roomId).emit('user:moved', { id: clientId, x, y });
+      const current = session;
+      const user = { ...current.user }; // immutable payload for this accepted move
+      await queuePresenceWrite(async () => {
+        if (socket.disconnected || session !== current) return;
+        try {
+          await presence.upsertPosition(user, geo);
+        } catch (err) {
+          socketLog.error('position persist failed:', err?.message ?? err);
+        }
+        if (socket.disconnected || session !== current) return;
+        socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
+      });
     }),
   );
 
@@ -309,6 +321,8 @@ function registerHandlers(socket, ctx) {
       /* the adapter already dropped the membership */
     }
 
+    // A write already in flight may still upsert. Delete only after it ends.
+    await presenceWrites;
     try {
       await presence.removeUser(clientId);
     } catch (err) {

@@ -237,3 +237,72 @@ test('a shutdown with several connected clients removes every presence document'
 
   assert.equal(presence.rows.size, 0, 'the shutdown drained all twelve cleanups');
 });
+
+test('disconnect during a delayed move does not recreate presence or reject asynchronously', async () => {
+  const presence = createSlowPresence();
+  const { url, io } = await startServer({ presence });
+  const socket = await connect(client(url));
+  const id = socket.id;
+  const joined = waitFor(socket, 'joined');
+  socket.emit('join', { roomId: 'lobby', name: 'Moving leaver' });
+  await joined;
+  let release, started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const entered = new Promise((resolve) => { started = resolve; });
+  const write = presence.upsertPosition.bind(presence);
+  presence.upsertPosition = async (user) => { started(); await gate; return write(user); };
+  socket.emit('move', { x: 110, y: 100 });
+  await entered;
+  socket.close();
+  await sleep(50);
+  release();
+  await io.drainSessions();
+  await sleep(30);
+  assert.equal(presence.rows.has(id), false, 'a move cannot resurrect a disconnected user');
+});
+
+test('accepted moves persist immutable coordinates in receive order', async () => {
+  const presence = createSlowPresence();
+  const { url } = await startServer({ presence });
+  const socket = await connect(client(url));
+  const joined = waitFor(socket, 'joined');
+  socket.emit('join', { roomId: 'lobby', name: 'Ordered mover' });
+  await joined;
+  const writes = [];
+  let release, started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const entered = new Promise((resolve) => { started = resolve; });
+  const write = presence.upsertPosition.bind(presence);
+  presence.upsertPosition = async (user) => {
+    writes.push(user.x);
+    if (writes.length === 1) { started(); await gate; }
+    return write(user);
+  };
+  socket.emit('move', { x: 110, y: 100 });
+  await entered;
+  socket.emit('move', { x: 120, y: 100 });
+  await sleep(30);
+  assert.deepEqual(writes, [110], 'second DB write waits for the earlier accepted move');
+  release();
+  await sleep(70);
+  assert.deepEqual(writes, [110, 120]);
+  assert.equal(presence.rows.get(socket.id).x, 120);
+});
+
+test('shutdown drains a join write already in flight', async () => {
+  const presence = createSlowPresence();
+  const { url, shutdown } = await startServer({ presence });
+  const socket = await connect(client(url));
+  const id = socket.id;
+  let release, started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const entered = new Promise((resolve) => { started = resolve; });
+  const write = presence.upsertPosition.bind(presence);
+  presence.upsertPosition = async (user) => { started(); await gate; return write(user); };
+  socket.emit('join', { roomId: 'lobby', name: 'Shutdown join' });
+  await entered;
+  const closing = shutdown();
+  release();
+  await closing;
+  assert.equal(presence.rows.has(id), false);
+});
