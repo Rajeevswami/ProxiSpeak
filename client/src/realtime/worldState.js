@@ -119,8 +119,9 @@ export function removeUser(world, user) {
  * @param {string|null} [options.selfId] connection id, when the payload omits it
  * @param {string|null} [options.name] this user's name, for entries without one
  * @param {Set<string>|null} [options.announcedIds] ids announced during this join
+ * @param {Set<string>|null} [options.departedIds] ids removed while the snapshot was in flight
  */
-export function applyJoinedSnapshot(world, payload, { selfId = null, name = null, announcedIds = null } = {}) {
+export function applyJoinedSnapshot(world, payload, { selfId = null, name = null, announcedIds = null, departedIds = null } = {}) {
   const nextSelfId = payload?.selfId ?? selfId ?? world.selfId ?? null;
   /**
    * Our own previous connection. After a reconnect the server still has that
@@ -135,7 +136,7 @@ export function applyJoinedSnapshot(world, payload, { selfId = null, name = null
 
   for (const user of snapshot) {
     if (typeof user?.id !== 'string' || !isDrawable(user)) continue;
-    if (user.id === previousSelfId) continue;
+    if (user.id === previousSelfId || departedIds?.has(user.id)) continue;
     users.set(user.id, {
       id: user.id,
       // The server sends a name with every entry; the fallbacks only cover an
@@ -153,7 +154,7 @@ export function applyJoinedSnapshot(world, payload, { selfId = null, name = null
   // already drawn, so keep them.
   if (announcedIds?.size) {
     for (const [id, user] of world.users) {
-      if (!users.has(id) && announcedIds.has(id)) users.set(id, user);
+      if (!users.has(id) && announcedIds.has(id) && !departedIds?.has(id)) users.set(id, user);
     }
   }
 

@@ -53,6 +53,10 @@ export function useSocket() {
    * (a reconnect starts a brand new connection) and after the snapshot.
    */
   const announcedRef = useRef(new Set());
+  // Only retain join-race tombstones while a snapshot is pending, never for
+  // the whole connection lifetime (room churn must not grow these forever).
+  const departedRef = useRef(new Set());
+  const snapshotPendingRef = useRef(false);
 
   // idle | connecting | joined | disconnected | error — see connectionStatus.js
   const [status, setStatus] = useState(CONNECTION_STATUS.IDLE);
@@ -65,6 +69,8 @@ export function useSocket() {
     socketRef.current = null;
     pendingJoinRef.current = null;
     announcedRef.current.clear();
+    departedRef.current.clear();
+    snapshotPendingRef.current = false;
     if (socket) {
       socket.removeAllListeners();
       socket.disconnect();
@@ -101,6 +107,8 @@ export function useSocket() {
 
       socket.on('connect', () => {
         announcedRef.current.clear();
+        departedRef.current.clear();
+        snapshotPendingRef.current = true;
         const pending = pendingJoinRef.current;
         if (pending) socket.emit('join', pending);
       });
@@ -112,8 +120,11 @@ export function useSocket() {
           selfId: payload.selfId ?? socket.id ?? null,
           name: pendingJoinRef.current?.name ?? null,
           announcedIds: announcedRef.current,
+          departedIds: departedRef.current,
         });
+        snapshotPendingRef.current = false;
         announcedRef.current.clear();
+        departedRef.current.clear();
         setError(null);
         setStatus((prev) => statusAfter(prev, 'joined'));
         setJoinedInfo({
@@ -125,7 +136,10 @@ export function useSocket() {
       });
 
       socket.on('user:joined', (user) => {
-        if (addUser(worldRef.current, user)) announcedRef.current.add(user.id);
+        if (addUser(worldRef.current, user) && snapshotPendingRef.current) {
+          announcedRef.current.add(user.id);
+          departedRef.current.delete(user.id);
+        }
       });
 
       socket.on('user:moved', (user) => {
@@ -133,6 +147,10 @@ export function useSocket() {
       });
 
       socket.on('user:left', (user) => {
+        if (snapshotPendingRef.current && typeof user?.id === 'string') {
+          departedRef.current.add(user.id);
+          announcedRef.current.delete(user.id);
+        }
         removeUser(worldRef.current, user);
       });
 
