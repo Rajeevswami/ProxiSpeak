@@ -715,3 +715,32 @@ npm test --prefix client        # 37 movement tests: keys, speed, diagonals, cla
                                 # (99 tests in the whole client suite)
 ```
 
+
+## Week 2 — Day 7: Proximity engine
+
+Backend-only MongoDB service in `server/src/services/proximityService.js`:
+
+- `findNearby(roomId, sessionId, radiusPx?)`: live same-room neighbors, excluding
+  self, sorted by pixel distance; returns `{ id, distancePx }` entries. Uses
+  `$near` with an exact stored-x/y boundary check.
+- `countWithin(roomId, { x, y }, radiusPx?)`: live users inside the pixel circle,
+  using `$geoWithin` / `$centerSphere` followed by exact pixel filtering.
+- `computeClusters(roomId, radiusPx?)`: connected components using DB neighbor
+  queries (chains count as one conversation; isolated users form singletons).
+
+Default units: **100 px = 10 m**. Existing geo helpers handle metres/radians;
+MongoDB candidate queries allow projection/numeric slack before exact pixel
+filtering. Each service call logs elapsed `performance.now()` time at debug level.
+
+Config: `PROXIMITY_RADIUS_PX=100`, `PRESENCE_CLEANUP_INTERVAL_MS=30000`,
+`PRESENCE_TIMEOUT_MS=60000`. Set a unique, restart-stable `INSTANCE_ID` per
+server (single-process default now `node-local`, replacing the PID fallback).
+Boot deletes only that instance's old rows. Accepted moves and existing
+Engine.IO pong heartbeats refresh `lastSeen`; reads exclude stale rows immediately.
+Periodic instance-owned cleanup atomically rechecks age and broadcasts `user:left`
+to each deleted row's room. Its interval is cleared and drained on shutdown.
+No new HTTP route, client event, library, audio or signaling is introduced.
+
+See [Day 7 implementation and verification](docs/DAY7.md) for API semantics,
+config caveats, test commands and the explicit **NOT VERIFIED** MongoDB status.
+Day 8 peer graph and WebRTC signaling are the next step, not part of this slice.

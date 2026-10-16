@@ -170,3 +170,23 @@ channel, browser client and movement — with **no audio and no proximity querie
 * `docs/WEEK1.md` (deliverables → files, event tables, data model, projection,
   ASCII architecture) and `docs/DEMO_WEEK1.md` (5-minute demo + troubleshooting),
   a consolidated Week 1 README section and this changelog.
+
+## Week 2 — Day 7 — 2026-10-16 — proximity engine
+
+Actual implementation/test commits (date confirmed with `git log`):
+
+- `3610b25` — proximity/presence config, geo helper usage and timed-query foundation.
+- `bb1cba5` — `$near`, live same-room/self exclusion, exact pixel boundary and ordering.
+- `ba2852e` — `$geoWithin` counts and DB-discovered connected-component clusters.
+- `5b5aa91` — instance-owned boot/stale cleanup, Engine.IO heartbeat refresh,
+  live join snapshots and shutdown drain. Stable default instance identity is
+  now `node-local`; multi-instance processes must supply unique stable ids.
+- `e666d0f` — node:test real-MongoDB brute-force, boundary, cluster, cleanup,
+  index-plan and 50-user timing coverage; database-free runs explicitly skip.
+
+Verification in this environment: server 34 passed / 0 failed / 17 skipped;
+client 99 passed / 0 failed / 0 skipped; both fresh dependency installs and
+client production build succeeded. Real MongoDB correctness and query p50/p95
+are **NOT VERIFIED** (local MongoDB unavailable), not claimed as passing.
+See `docs/DAY7.md` for exact rerun commands. No client/dependency changes,
+HTTP audit endpoint, peer graph, signaling or audio work is included.
