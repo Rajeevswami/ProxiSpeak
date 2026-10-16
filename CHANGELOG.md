@@ -190,3 +190,20 @@ client production build succeeded. Real MongoDB correctness and query p50/p95
 are **NOT VERIFIED** (local MongoDB unavailable), not claimed as passing.
 See `docs/DAY7.md` for exact rerun commands. No client/dependency changes,
 HTTP audit endpoint, peer graph, signaling or audio work is included.
+
+## Day 1–7 local QA fixes — 2026-10-16
+
+- `78dfa05` — serialize per-socket presence writes, retain immutable accepted
+  move coordinates, drain in-flight joins/writes before disconnect cleanup.
+  Added failing-then-passing socket race regressions with an in-memory store.
+- `dc6c08b` — reject malformed/operator identifiers and invalid/oversized query
+  radii before MongoDB access; limit radius to the configured world diagonal.
+- `06a42d7` — enforce CLIENT_URL at WebSocket admission, not only CORS headers;
+  direct forbidden-Origin WebSocket regression failed before and passed after.
+- `c59677d` — verify 10 Hz acceptance (20/20 accepted, 0 dropped), Engine.IO pong
+  refresh, cleanup ownership/recheck and timer stop/drain using test doubles.
+- `9151130` — reject overflowing cleanup intervals/timeouts; avoid Node's silent
+  1 ms timer overflow behavior and invalid Date cutoffs.
+
+These local QA fixes are not a claim of real-MongoDB or browser verification.
+No dependency, client application, signaling or audio features were added.

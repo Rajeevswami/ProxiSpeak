@@ -29,7 +29,10 @@ Import from `server/src/services/proximityService.js`:
 
 All functions measure elapsed query work with `performance.now()` and log only
 at logger debug level (`LOG_LEVEL=debug`). No new default console output.
-Radii must be finite and nonnegative. Centres must contain finite x/y numbers.
+Radii must be finite, nonnegative and no larger than the configured world
+diagonal (`Math.hypot(width, height)`). Centres must contain finite x/y numbers
+inside that world. Room ids must use the normalized join identifier format;
+session ids must be bounded strings, never MongoDB operator objects.
 
 ### Units and boundary semantics
 
@@ -50,6 +53,9 @@ existing socket validation. No geospatial library is added.
 | `PROXIMITY_RADIUS_PX` | `100` | Default service radius, pixels |
 | `PRESENCE_CLEANUP_INTERVAL_MS` | `30000` | Sweep interval, milliseconds |
 | `PRESENCE_TIMEOUT_MS` | `60000` | Maximum presence age, milliseconds |
+
+Presence interval and timeout values must be between 1 and 2,147,483,647 ms;
+overflowing Node timers are rejected rather than silently running every 1 ms.
 | `INSTANCE_ID` | `node-local` | Stable owner id across restarts |
 
 **Assign a distinct, stable `INSTANCE_ID` to every simultaneous server instance.**
