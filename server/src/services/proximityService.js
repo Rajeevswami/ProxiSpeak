@@ -58,3 +58,45 @@ async function neighbors(roomId, center, radiusPx, live) {
   })).filter((row) => row.distancePx <= radiusPx)
     .sort((a, b) => a.distancePx - b.distancePx || a.id.localeCompare(b.id));
 }
+
+/** Pixel centre { x, y }; includes a user at the centre itself. */
+export function countWithin(roomId, center, radiusPx = config.proximity.radiusPx) {
+  return timed('countWithin', async () => {
+    if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y)) throw new TypeError('center must contain finite x/y');
+    const rows = await UserPresence.find({
+      roomId, ...livePresenceFilter(),
+      location: { $geoWithin: geo.centerSphere(center.x, center.y, candidateRadius(radiusPx)) },
+    }).select('x y').lean();
+    return rows.filter((row) => distancePx(center.x, center.y, row.x, row.y) <= radiusPx).length;
+  });
+}
+
+/** Connected components, not cliques: A-B-C remains one conversation. */
+export function computeClusters(roomId, radiusPx = config.proximity.radiusPx) {
+  return timed('computeClusters', async () => {
+    validateRadius(radiusPx);
+    const live = livePresenceFilter();
+    const users = await UserPresence.find({ roomId, ...live }).sort({ sessionId: 1 }).lean();
+    const graph = new Map(await Promise.all(users.map(async (user) => [
+      user.sessionId, await neighbors(roomId, user, radiusPx, live),
+    ])));
+    const visited = new Set();
+    const clusters = [];
+    for (const user of users) {
+      if (visited.has(user.sessionId)) continue;
+      const cluster = [], queue = [user.sessionId];
+      visited.add(user.sessionId);
+      for (let i = 0; i < queue.length; i++) {
+        const id = queue[i];
+        cluster.push(id);
+        for (const neighbor of graph.get(id) ?? []) {
+          if (!graph.has(neighbor.id) || visited.has(neighbor.id)) continue;
+          visited.add(neighbor.id);
+          queue.push(neighbor.id);
+        }
+      }
+      clusters.push(cluster.sort());
+    }
+    return clusters;
+  });
+}
