@@ -90,8 +90,9 @@ export const config = Object.freeze({
     radiusPx: num('PROXIMITY_RADIUS_PX', 100, { min: 0, max: Math.hypot(world.width, world.height) }),
   }),
   presence: Object.freeze({
-    cleanupIntervalMs: num('PRESENCE_CLEANUP_INTERVAL_MS', 30000, { min: 1 }),
-    timeoutMs: num('PRESENCE_TIMEOUT_MS', 60000, { min: 1 }),
+    // Node clamps overflowing intervals to 1 ms; reject them before boot.
+    cleanupIntervalMs: num('PRESENCE_CLEANUP_INTERVAL_MS', 30000, { min: 1, max: 2 ** 31 - 1 }),
+    timeoutMs: num('PRESENCE_TIMEOUT_MS', 60000, { min: 1, max: 2 ** 31 - 1 }),
   }),
 
   socket: Object.freeze({
