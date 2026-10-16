@@ -321,3 +321,55 @@ test('a forbidden Origin cannot bypass CLIENT_URL using WebSocket transport', as
   assert.equal(outcome, 'rejected');
   assert.equal(presence.rows.size, 0);
 });
+
+test('a legitimate 10 Hz client broadcasts every move and preserves snapshot names', async (t) => {
+  const presence = createSlowPresence();
+  const { url } = await startServer({ presence });
+  const watcher = await connect(client(url));
+  let joined = waitFor(watcher, 'joined');
+  watcher.emit('join', { roomId: 'lobby', name: 'Watcher' });
+  await joined;
+  const mover = await connect(client(url));
+  joined = waitFor(mover, 'joined');
+  mover.emit('join', { roomId: 'lobby', name: 'Ten Hertz' });
+  const snapshot = await joined;
+  assert.equal(snapshot.users.find((u) => u.id === watcher.id).name, 'Watcher');
+  let received = 0;
+  watcher.on('user:moved', (u) => { if (u.id === mover.id) received++; });
+  for (let i = 0; i < 20; i++) {
+    mover.emit('move', { x: 290 - i, y: 300 });
+    await sleep(100);
+  }
+  await sleep(50);
+  t.diagnostic(`10Hz socket client: sent=20 accepted=${presence.calls.upserts - 2} broadcasts=${received} dropped=${20 - received} (in-memory store)`);
+  assert.equal(received, 20);
+  assert.equal(presence.calls.upserts - 2, 20);
+});
+
+test('existing Engine.IO pong refreshes idle lastSeen without a new client event', async () => {
+  const presence = createSlowPresence();
+  let refreshed;
+  const heartbeat = new Promise((resolve) => { refreshed = resolve; });
+  presence.refreshLastSeen = async (id, roomId, instanceId, now) => {
+    const row = presence.rows.get(id);
+    if (row) row.lastSeen = now;
+    refreshed({ id, roomId, instanceId, now });
+  };
+  const { url, io } = await startServer({ presence });
+  // Accelerate only the test server's existing Engine.IO heartbeat.
+  io.engine.opts.pingInterval = 30;
+  const socket = await connect(client(url));
+  const joined = waitFor(socket, 'joined');
+  socket.emit('join', { roomId: 'lobby', name: 'Idle' });
+  await joined;
+  let timer, result;
+  try {
+    result = await Promise.race([heartbeat, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('no heartbeat refresh')), 2000);
+    })]);
+  } finally { clearTimeout(timer); }
+  assert.equal(result.id, socket.id);
+  assert.equal(result.roomId, 'lobby');
+  assert.equal(result.instanceId, config.server.instanceId);
+  assert.equal(presence.rows.get(socket.id).lastSeen, result.now);
+});
