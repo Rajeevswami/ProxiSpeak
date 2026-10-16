@@ -127,6 +127,15 @@ function registerHandlers(socket, ctx) {
     }
   };
 
+  // Reuse Engine.IO's heartbeat, including idle clients, without a new event.
+  socket.conn.on('packet', (packet) => {
+    if (packet.type !== 'pong' || !session || !presence.refreshLastSeen) return;
+    session.user.lastSeen = Date.now();
+    track(Promise.resolve(presence.refreshLastSeen(clientId, session.roomId,
+      cfg.server.instanceId, session.user.lastSeen)).catch((err) =>
+      socketLog.error('heartbeat persist failed:', err?.message ?? err)));
+  });
+
   socketLog.debug('socket connected');
 
   // One bucket per socket: a client that floods `move` only starves itself.

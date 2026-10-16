@@ -9,6 +9,7 @@
  * sweeps arrive with the Socket.io presence day; the $near / $geoWithin reads
  * arrive with the proximity services. Nothing here queries by location yet.
  */
+import { livePresenceFilter } from './proximityService.js';
 import UserPresence from '../models/UserPresence.js';
 
 /** Everything needed to rebuild a MongoDB document for one user. */
@@ -60,5 +61,10 @@ export async function removeUser(sessionId) {
  * to the wire format, so database-only fields never leave the server.
  */
 export async function listPresenceByRoom(roomId) {
-  return UserPresence.find({ roomId }).sort({ createdAt: 1, _id: 1 }).lean();
+  return UserPresence.find({ roomId, ...livePresenceFilter() }).sort({ createdAt: 1, _id: 1 }).lean();
+}
+
+/** Engine.IO pong refresh; never upsert a disconnected or expired row. */
+export function refreshLastSeen(sessionId, roomId, instanceId, now = Date.now()) {
+  return UserPresence.updateOne({ sessionId, roomId, instanceId }, { $set: { lastSeen: new Date(now) } });
 }
