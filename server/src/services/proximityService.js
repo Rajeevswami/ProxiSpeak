@@ -127,6 +127,13 @@ export function computeClusters(roomId, radiusPx = config.proximity.radiusPx) {
       }
       clusters.push(cluster.sort());
     }
-    return clusters;
+    // One final roster read drops vanished/stale ids without redesigning or
+    // splitting components assembled from the earlier, eventually consistent reads.
+    const remaining = await UserPresence.find({
+      roomId, ...livePresenceFilter(), sessionId: { $in: clusters.flat() },
+    }).select('sessionId').lean();
+    const existing = new Set(remaining.map((user) => user.sessionId));
+    return clusters.map((cluster) => cluster.filter((id) => existing.has(id)))
+      .filter((cluster) => cluster.length > 0);
   });
 }
