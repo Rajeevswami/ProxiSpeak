@@ -207,3 +207,14 @@ HTTP audit endpoint, peer graph, signaling or audio work is included.
 
 These local QA fixes are not a claim of real-MongoDB or browser verification.
 No dependency, client application, signaling or audio features were added.
+
+## Day 7 follow-up — 2026-10-16
+
+- `1c6e597` — stale sweeps close the owning socket transport (preserving automatic
+  reconnect); moves atomically update without upsert and reject missing rows with
+  `session_expired`; client reconnect/rejoin uses the existing snapshot path.
+  Real-socket tests with store/query doubles cover expiry, automatic rejoin,
+  duplicate-free avatars, repeated rejected moves and deletion racing a move.
+- `2628beb` — one final live, room-scoped roster query filters vanished ids
+  out of computed clusters and removes empty clusters, without splitting/rebuilding
+  components. README notes the eventual-consistency limitation.

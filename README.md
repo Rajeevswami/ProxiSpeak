@@ -750,3 +750,5 @@ reconnects and sends a fresh `join`; moves never upsert and return
 `error { code: "session_expired" }` if their room/instance-owned row is missing.
 The client handles `session_expired` by reconnecting through its existing
 connect/join/snapshot path, without adding listeners or duplicate avatars.
+
+Clusters are eventually consistent: one final live-roster query drops vanished ids, but concurrent moves/deletions can still affect membership and removing a bridge does not split an already computed cluster.
