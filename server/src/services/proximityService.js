@@ -10,7 +10,29 @@ export const livePresenceFilter = (now = Date.now()) => ({
 });
 
 function validateRadius(radiusPx) {
-  if (!Number.isFinite(radiusPx) || radiusPx < 0) throw new RangeError('radiusPx must be finite and nonnegative');
+  const maximum = Math.hypot(config.world.width, config.world.height);
+  if (!Number.isFinite(radiusPx) || radiusPx < 0 || radiusPx > maximum) {
+    throw new RangeError(`radiusPx must be finite and within [0, ${maximum}]`);
+  }
+}
+
+function validateRoom(roomId) {
+  if (typeof roomId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(roomId)) {
+    throw new TypeError('roomId must be a normalized room identifier');
+  }
+}
+
+function validateUser(userId) {
+  if (typeof userId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(userId)) {
+    throw new TypeError('userId must be a session identifier');
+  }
+}
+
+function validateCenter(center) {
+  if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y) ||
+      center.x < 0 || center.x > config.world.width || center.y < 0 || center.y > config.world.height) {
+    throw new TypeError('center must contain finite x/y within the configured world');
+  }
 }
 
 // Equirectangular longitude scale varies with latitude. Overselect candidates
@@ -33,6 +55,8 @@ async function timed(name, operation) {
 /** Session ids are the public user ids; distancePx is authoritative. */
 export function findNearby(roomId, userId, radiusPx = config.proximity.radiusPx) {
   return timed('findNearby', async () => {
+    validateRoom(roomId);
+    validateUser(userId);
     validateRadius(radiusPx);
     const live = livePresenceFilter();
     const center = await UserPresence.findOne({ roomId, sessionId: userId, ...live }).lean();
@@ -42,8 +66,11 @@ export function findNearby(roomId, userId, radiusPx = config.proximity.radiusPx)
 }
 
 export function nearQuery(roomId, center, radiusPx = config.proximity.radiusPx, live = livePresenceFilter()) {
+  validateRoom(roomId);
+  validateCenter(center);
+  validateUser(center.sessionId);
   return {
-    roomId, ...live, sessionId: { $ne: center.sessionId },
+    ...live, roomId, sessionId: { $ne: center.sessionId },
     location: { $near: {
       $geometry: geo.point(center.x, center.y),
       $maxDistance: geo.maxDistanceMeters(candidateRadius(radiusPx)),
@@ -62,7 +89,9 @@ async function neighbors(roomId, center, radiusPx, live) {
 /** Pixel centre { x, y }; includes a user at the centre itself. */
 export function countWithin(roomId, center, radiusPx = config.proximity.radiusPx) {
   return timed('countWithin', async () => {
-    if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y)) throw new TypeError('center must contain finite x/y');
+    validateRoom(roomId);
+    validateCenter(center);
+    validateRadius(radiusPx);
     const rows = await UserPresence.find({
       roomId, ...livePresenceFilter(),
       location: { $geoWithin: geo.centerSphere(center.x, center.y, candidateRadius(radiusPx)) },
@@ -74,6 +103,7 @@ export function countWithin(roomId, center, radiusPx = config.proximity.radiusPx
 /** Connected components, not cliques: A-B-C remains one conversation. */
 export function computeClusters(roomId, radiusPx = config.proximity.radiusPx) {
   return timed('computeClusters', async () => {
+    validateRoom(roomId);
     validateRadius(radiusPx);
     const live = livePresenceFilter();
     const users = await UserPresence.find({ roomId, ...live }).sort({ sessionId: 1 }).lean();
