@@ -64,7 +64,7 @@ export async function listPresenceByRoom(roomId) {
   return UserPresence.find({ roomId, ...livePresenceFilter() }).sort({ createdAt: 1, _id: 1 }).lean();
 }
 
-/** Engine.IO pong refresh; never upsert a disconnected or expired row. */
+/** Engine.IO pong refresh; never recreate a row already removed by cleanup. */
 export function refreshLastSeen(sessionId, roomId, instanceId, now = Date.now()) {
   return UserPresence.updateOne({ sessionId, roomId, instanceId }, { $set: { lastSeen: new Date(now) } });
 }
