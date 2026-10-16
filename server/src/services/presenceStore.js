@@ -33,15 +33,16 @@ export function toPresenceDocument(user, transform) {
 
 /**
  * Upsert one user's position. The filter is the unique (sessionId, roomId)
- * pair, so the first write inserts and every later move just updates; the
+ * pair. Joins may insert; moves must pass { upsert: false } and inspect
+ * matchedCount so an expired session cannot silently re-admit itself. The
  * GeoJSON point always agrees with the authoritative x/y pixels.
  */
-export async function upsertPosition(user, transform) {
+export async function upsertPosition(user, transform, { upsert = true } = {}) {
   const doc = toPresenceDocument(user, transform);
   return UserPresence.updateOne(
-    { sessionId: doc.sessionId, roomId: doc.roomId },
+    { sessionId: doc.sessionId, roomId: doc.roomId, ...(!upsert ? { instanceId: doc.instanceId } : {}) },
     { $set: doc },
-    { upsert: true },
+    { upsert },
   );
 }
 

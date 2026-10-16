@@ -257,6 +257,9 @@ function registerHandlers(socket, ctx) {
   socket.on(
     'move',
     guard('move', async (payload) => {
+      if (socket.data.presenceExpired) {
+        throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+      }
       if (!session) {
         throw new AppError('join a room before sending move events', { code: 'not_joined', status: 409 });
       }
@@ -286,10 +289,20 @@ function registerHandlers(socket, ctx) {
       const user = { ...current.user }; // immutable payload for this accepted move
       await queuePresenceWrite(async () => {
         if (socket.disconnected || session !== current) return;
+        if (socket.data.presenceExpired) {
+          throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+        }
+        let result;
         try {
-          await presence.upsertPosition(user, geo);
+          // Join is the only admission/upsert path. This atomic update cannot
+          // revive a row removed by a sweep, even if deletion races this move.
+          result = await presence.upsertPosition(user, geo, { upsert: false });
         } catch (err) {
           socketLog.error('position persist failed:', err?.message ?? err);
+        }
+        if (result?.matchedCount === 0) {
+          socket.data.presenceExpired = true;
+          throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
         }
         if (socket.disconnected || session !== current) return;
         socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
@@ -314,7 +327,7 @@ function registerHandlers(socket, ctx) {
 
     // Peers first, while the room channel is unambiguous, then the channel and
     // finally this socket's own document.
-    socket.to(roomId).emit('user:left', { id: clientId });
+    if (!socket.data.expiryAnnounced) socket.to(roomId).emit('user:left', { id: clientId });
 
     try {
       await Promise.resolve(socket.leave(roomId));

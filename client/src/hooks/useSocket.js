@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { recoverExpiredSession } from '../realtime/sessionRecovery.js';
 import { SERVER_URL } from '../config.js';
 import { CONNECTION_STATUS, statusAfter } from '../realtime/connectionStatus.js';
 import {
@@ -155,6 +156,7 @@ export function useSocket() {
       });
 
       socket.on('error', (err) => {
+        if (recoverExpiredSession(socket, err)) return;
         setError(toError(err));
         // A rejected join leaves us connected but not in a room; the join
         // screen reads `error` and stays up. Once joined, a later error is

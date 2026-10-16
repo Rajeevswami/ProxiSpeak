@@ -15,7 +15,16 @@ export async function cleanupStale(io, { instanceId = config.server.instanceId, 
     const result = await UserPresence.deleteOne({
       _id: row._id, roomId: row.roomId, instanceId, lastSeen: { $lt: cutoff },
     });
-    if (result.deletedCount) io.to(row.roomId).emit('user:left', { id: row.sessionId });
+    if (!result.deletedCount) continue;
+    const socket = io.sockets?.sockets.get(row.sessionId);
+    if (socket?.data.roomId === row.roomId) {
+      socket.data.presenceExpired = true;
+      socket.data.expiryAnnounced = true;
+    }
+    io.to(row.roomId).emit('user:left', { id: row.sessionId });
+    // Close the transport, not socket.disconnect(true): an explicit namespace
+    // disconnect disables Socket.IO's automatic reconnection on the client.
+    if (socket?.data.roomId === row.roomId) socket.conn.close();
   }
 }
 

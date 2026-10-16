@@ -56,3 +56,17 @@ test('cleanup timer uses config, does not overlap, stops and drains in-flight sw
   await Promise.resolve(); assert.equal(stopped, false);
   release(); await stopping; assert.equal(stopped, true);
 });
+
+test('move persistence atomically updates only its owner and never upserts', async (t) => {
+  const { upsertPosition } = await import('../src/services/presenceStore.js');
+  const { createGeoTransform } = await import('../src/utils/geo.js');
+  t.mock.method(UserPresence, 'updateOne', async (filter, update, options) => {
+    assert.deepEqual(filter, { sessionId: 'expired', roomId: 'room', instanceId: 'ours' });
+    assert.equal(options.upsert, false);
+    assert.equal(update.$set.sessionId, 'expired');
+    return { matchedCount: 0 };
+  });
+  const result = await upsertPosition({ id: 'expired', roomId: 'room', instanceId: 'ours',
+    x: 10, y: 10, name: 'Gone', color: '#fff' }, createGeoTransform(config.world), { upsert: false });
+  assert.equal(result.matchedCount, 0);
+});

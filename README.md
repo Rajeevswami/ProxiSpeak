@@ -744,3 +744,9 @@ No new HTTP route, client event, library, audio or signaling is introduced.
 See [Day 7 implementation and verification](docs/DAY7.md) for API semantics,
 config caveats, test commands and the explicit **NOT VERIFIED** MongoDB status.
 Day 8 peer graph and WebRTC signaling are the next step, not part of this slice.
+
+Expired presence closes the owning socket's transport so Socket.IO automatically
+reconnects and sends a fresh `join`; moves never upsert and return
+`error { code: "session_expired" }` if their room/instance-owned row is missing.
+The client handles `session_expired` by reconnecting through its existing
+connect/join/snapshot path, without adding listeners or duplicate avatars.
