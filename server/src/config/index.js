@@ -65,7 +65,7 @@ export const config = Object.freeze({
      * scaling arrives on its own day; until then one process owns the rooms it
      * serves, and this string is what a document records as its writer.
      */
-    instanceId: str('INSTANCE_ID', '') || `node-${process.pid}`,
+    instanceId: str('INSTANCE_ID', 'node-local'),
   }),
 
   mongo: Object.freeze({
@@ -73,6 +73,14 @@ export const config = Object.freeze({
     // verbatim — db/mongo.js redacts credentials before any output.
     uri: str('MONGO_URI', 'mongodb://127.0.0.1:27017/proxispeak'),
     serverSelectionTimeoutMS: num('MONGO_TIMEOUT_MS', 8000, { min: 500 }),
+  }),
+
+  proximity: Object.freeze({
+    radiusPx: num('PROXIMITY_RADIUS_PX', 100, { min: 0 }),
+  }),
+  presence: Object.freeze({
+    cleanupIntervalMs: num('PRESENCE_CLEANUP_INTERVAL_MS', 30000, { min: 1 }),
+    timeoutMs: num('PRESENCE_TIMEOUT_MS', 60000, { min: 1 }),
   }),
 
   socket: Object.freeze({
