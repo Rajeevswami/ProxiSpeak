@@ -30,6 +30,24 @@ export function socketCorsOrigin(cfg = config) {
   };
 }
 
+/** CORS headers do not protect native WebSocket handshakes. Enforce admission
+ * too. Non-browser clients without Origin remain supported; this is not auth. */
+export function socketAllowRequest(cfg = config) {
+  return (req, callback) => {
+    const origin = req.headers.origin;
+    const allowed = cfg.server.clientOrigins ?? [];
+    if (!origin || allowed.includes('*') || allowed.includes(origin)) return callback(null, true);
+    let sameOrigin = false;
+    if (allowed.length === 0) {
+      try {
+        const url = new URL(origin);
+        sameOrigin = ['http:', 'https:'].includes(url.protocol) && url.host === req.headers.host;
+      } catch { /* malformed origins are rejected */ }
+    }
+    callback(null, sameOrigin);
+  };
+}
+
 /** Human-readable summary of the policy, for the boot log (never a secret). */
 export function describeCorsOrigin(cfg = config) {
   const allowed = cfg.server.clientOrigins ?? [];

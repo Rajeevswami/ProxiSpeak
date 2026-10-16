@@ -306,3 +306,18 @@ test('shutdown drains a join write already in flight', async () => {
   await closing;
   assert.equal(presence.rows.has(id), false);
 });
+
+test('a forbidden Origin cannot bypass CLIENT_URL using WebSocket transport', async () => {
+  const presence = createSlowPresence();
+  const cfg = { ...config, server: { ...config.server, clientOrigins: ['https://trusted.example'] } };
+  const { url } = await startServer({ presence, cfg });
+  const socket = createClient(url, { transports: ['websocket'], reconnection: false,
+    forceNew: true, extraHeaders: { Origin: 'https://untrusted.example' } });
+  clients.push(socket);
+  const outcome = await new Promise((resolve) => {
+    socket.once('connect', () => resolve('accepted'));
+    socket.once('connect_error', () => resolve('rejected'));
+  });
+  assert.equal(outcome, 'rejected');
+  assert.equal(presence.rows.size, 0);
+});

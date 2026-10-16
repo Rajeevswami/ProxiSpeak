@@ -18,7 +18,7 @@ import { Server } from 'socket.io';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
-import { describeCorsOrigin, socketCorsOrigin } from '../utils/origin.js';
+import { describeCorsOrigin, socketCorsOrigin, socketAllowRequest } from '../utils/origin.js';
 import { createGeoTransform } from '../utils/geo.js';
 import { TokenBucket } from '../utils/rateLimiter.js';
 import { validateJoinPayload, validateMovePayload } from './validation.js';
@@ -47,6 +47,7 @@ export function createSocketServer({
   if (!httpServer) throw new Error('createSocketServer requires the HTTP server to attach to');
 
   const io = new Server(httpServer, {
+    allowRequest: socketAllowRequest(cfg),
     cors: {
       origin: socketCorsOrigin(cfg),
       methods: ['GET', 'POST'],
