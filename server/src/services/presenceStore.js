@@ -9,6 +9,7 @@
  * sweeps arrive with the Socket.io presence day; the $near / $geoWithin reads
  * arrive with the proximity services. Nothing here queries by location yet.
  */
+import { livePresenceFilter } from './proximityService.js';
 import UserPresence from '../models/UserPresence.js';
 
 /** Everything needed to rebuild a MongoDB document for one user. */
@@ -32,15 +33,16 @@ export function toPresenceDocument(user, transform) {
 
 /**
  * Upsert one user's position. The filter is the unique (sessionId, roomId)
- * pair, so the first write inserts and every later move just updates; the
+ * pair. Joins may insert; moves must pass { upsert: false } and inspect
+ * matchedCount so an expired session cannot silently re-admit itself. The
  * GeoJSON point always agrees with the authoritative x/y pixels.
  */
-export async function upsertPosition(user, transform) {
+export async function upsertPosition(user, transform, { upsert = true } = {}) {
   const doc = toPresenceDocument(user, transform);
   return UserPresence.updateOne(
-    { sessionId: doc.sessionId, roomId: doc.roomId },
+    { sessionId: doc.sessionId, roomId: doc.roomId, ...(!upsert ? { instanceId: doc.instanceId } : {}) },
     { $set: doc },
-    { upsert: true },
+    { upsert },
   );
 }
 
@@ -60,5 +62,10 @@ export async function removeUser(sessionId) {
  * to the wire format, so database-only fields never leave the server.
  */
 export async function listPresenceByRoom(roomId) {
-  return UserPresence.find({ roomId }).sort({ createdAt: 1, _id: 1 }).lean();
+  return UserPresence.find({ roomId, ...livePresenceFilter() }).sort({ createdAt: 1, _id: 1 }).lean();
+}
+
+/** Engine.IO pong refresh; never recreate a row already removed by cleanup. */
+export function refreshLastSeen(sessionId, roomId, instanceId, now = Date.now()) {
+  return UserPresence.updateOne({ sessionId, roomId, instanceId }, { $set: { lastSeen: new Date(now) } });
 }

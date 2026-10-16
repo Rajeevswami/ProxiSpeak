@@ -244,3 +244,13 @@ test('the ghost rule never touches anybody else', () => {
   );
   assert.deepEqual([...world.users.keys()].sort(), ['ada-1', 'bob', 'carol']);
 });
+
+test('a delayed joined snapshot cannot resurrect a peer that already emitted user:left', () => {
+  const world = createWorldState();
+  addUser(world, person('departed', 'Gone'));
+  removeUser(world, { id: 'departed' });
+  applyJoinedSnapshot(world, {
+    selfId: 'self', room, users: [person('self', 'Me'), person('departed', 'Gone')],
+  }, { departedIds: new Set(['departed']) });
+  assert.deepEqual([...world.users.keys()], ['self']);
+});

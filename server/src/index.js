@@ -13,6 +13,8 @@ import { createSocketServer } from './sockets/index.js';
 import { listenOn } from './utils/httpServer.js';
 import { listRoomIds } from './services/roomService.js';
 
+import { cleanupOnBoot, startPresenceCleanup } from './services/presenceCleanup.js';
+
 const log = logger;
 
 async function main() {
@@ -23,6 +25,7 @@ async function main() {
   // The geospatial engine is useless without its indexes, so create them on
   // every boot (idempotent) rather than relying on a manual migration.
   await ensureIndexes();
+  await cleanupOnBoot();
   log.info('MongoDB indexes ready (UserPresence.location: 2dsphere)');
 
   const httpServer = http.createServer();
@@ -38,6 +41,8 @@ async function main() {
   // The websocket shares the HTTP server, so there is exactly one port to open,
   // proxy and firewall.
   const io = createSocketServer({ httpServer, config, logger: log });
+
+  const stopPresenceCleanup = startPresenceCleanup(io);
 
   await listenOn(httpServer, { port: config.server.port, host: config.server.host });
   log.info(`ProxiSpeak server listening on ${config.server.host}:${config.server.port} (${config.nodeEnv})`);
@@ -58,6 +63,7 @@ async function main() {
     // and their presence cleanup is an asynchronous write, so wait for it
     // before MongoDB goes away — otherwise every connected client would be
     // left behind as a ghost document.
+    await stopPresenceCleanup();
     await new Promise((resolve) => io.close(resolve));
     await io.drainSessions();
     await new Promise((resolve) => httpServer.close(resolve));

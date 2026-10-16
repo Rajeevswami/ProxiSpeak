@@ -18,7 +18,7 @@ import { Server } from 'socket.io';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
-import { describeCorsOrigin, socketCorsOrigin } from '../utils/origin.js';
+import { describeCorsOrigin, socketCorsOrigin, socketAllowRequest } from '../utils/origin.js';
 import { createGeoTransform } from '../utils/geo.js';
 import { TokenBucket } from '../utils/rateLimiter.js';
 import { validateJoinPayload, validateMovePayload } from './validation.js';
@@ -47,6 +47,7 @@ export function createSocketServer({
   if (!httpServer) throw new Error('createSocketServer requires the HTTP server to attach to');
 
   const io = new Server(httpServer, {
+    allowRequest: socketAllowRequest(cfg),
     cors: {
       origin: socketCorsOrigin(cfg),
       methods: ['GET', 'POST'],
@@ -103,6 +104,14 @@ function registerHandlers(socket, ctx) {
   let session = null;
   /** The join this socket is currently processing, if any (see the handler). */
   let joinInFlight = null;
+  // Serialize writes per connection: old moves must not land after newer moves
+  // or recreate a row after disconnect has deleted it. Drain on shutdown too.
+  let presenceWrites = Promise.resolve();
+  const queuePresenceWrite = (operation) => {
+    const next = presenceWrites.then(operation);
+    presenceWrites = next.catch(() => {});
+    return track(next);
+  };
 
   const fail = (code, message, field) =>
     socket.emit('error', field ? { code, message, field } : { code, message });
@@ -126,6 +135,18 @@ function registerHandlers(socket, ctx) {
       fail('server_error', 'the server could not process that request');
     }
   };
+
+  // Reuse Engine.IO's heartbeat, including idle clients, without a new event.
+  socket.conn.on('packet', (packet) => {
+    if (packet.type !== 'pong' || !session || !presence.refreshLastSeen) return;
+    const current = session;
+    const now = Date.now();
+    current.user.lastSeen = now;
+    queuePresenceWrite(async () => {
+      if (socket.disconnected || session !== current) return;
+      await presence.refreshLastSeen(clientId, current.roomId, cfg.server.instanceId, now);
+    }).catch((err) => socketLog.error('heartbeat persist failed:', err?.message ?? err));
+  });
 
   socketLog.debug('socket connected');
 
@@ -168,7 +189,7 @@ function registerHandlers(socket, ctx) {
         });
       }
 
-      joinInFlight = performJoin({ roomId, name });
+      joinInFlight = track(performJoin({ roomId, name }));
       try {
         await joinInFlight;
       } finally {
@@ -236,6 +257,9 @@ function registerHandlers(socket, ctx) {
   socket.on(
     'move',
     guard('move', async (payload) => {
+      if (socket.data.presenceExpired) {
+        throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+      }
       if (!session) {
         throw new AppError('join a room before sending move events', { code: 'not_joined', status: 409 });
       }
@@ -261,17 +285,28 @@ function registerHandlers(socket, ctx) {
       session.user.y = y;
       session.user.lastSeen = Date.now();
 
-      // Persist through the Day 2 helper, which also refreshes the 2dsphere
-      // GeoJSON point. A transient write failure is logged and the broadcast
-      // still goes out: the next accepted move rewrites the document.
-      try {
-        await presence.upsertPosition(session.user, geo);
-      } catch (err) {
-        socketLog.error('position persist failed:', err?.message ?? err);
-      }
-
-      // Room-scoped fan-out, everyone but the mover.
-      socket.to(session.roomId).emit('user:moved', { id: clientId, x, y });
+      const current = session;
+      const user = { ...current.user }; // immutable payload for this accepted move
+      await queuePresenceWrite(async () => {
+        if (socket.disconnected || session !== current) return;
+        if (socket.data.presenceExpired) {
+          throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+        }
+        let result;
+        try {
+          // Join is the only admission/upsert path. This atomic update cannot
+          // revive a row removed by a sweep, even if deletion races this move.
+          result = await presence.upsertPosition(user, geo, { upsert: false });
+        } catch (err) {
+          socketLog.error('position persist failed:', err?.message ?? err);
+        }
+        if (result?.matchedCount === 0) {
+          socket.data.presenceExpired = true;
+          throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+        }
+        if (socket.disconnected || session !== current) return;
+        socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
+      });
     }),
   );
 
@@ -292,7 +327,7 @@ function registerHandlers(socket, ctx) {
 
     // Peers first, while the room channel is unambiguous, then the channel and
     // finally this socket's own document.
-    socket.to(roomId).emit('user:left', { id: clientId });
+    if (!socket.data.expiryAnnounced) socket.to(roomId).emit('user:left', { id: clientId });
 
     try {
       await Promise.resolve(socket.leave(roomId));
@@ -300,6 +335,8 @@ function registerHandlers(socket, ctx) {
       /* the adapter already dropped the membership */
     }
 
+    // A write already in flight may still upsert. Delete only after it ends.
+    await presenceWrites;
     try {
       await presence.removeUser(clientId);
     } catch (err) {

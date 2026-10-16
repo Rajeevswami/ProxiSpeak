@@ -45,6 +45,17 @@ const list = (key, fallback) => {
 
 const nodeEnv = str('NODE_ENV', 'development');
 
+const world = Object.freeze({
+    // Tangent-plane projection the 2dsphere schema depends on: the pixel
+    // plane is mapped onto a tiny globe patch centred on (centerLat,
+    // centerLon). 10 pixels per metre === 1 px is exactly 0.1 m to MongoDB.
+    width: num('WORLD_WIDTH', 1920, { min: 200 }),
+    height: num('WORLD_HEIGHT', 1080, { min: 200 }),
+    centerLat: num('WORLD_CENTER_LAT', 37.7749, { min: -90, max: 90 }),
+    centerLon: num('WORLD_CENTER_LON', -122.4194, { min: -180, max: 180 }),
+    pixelsPerMeter: num('PIXELS_PER_METER', 10, { min: 0.0001, max: 1e6 }),
+  });
+
 export const config = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
@@ -65,7 +76,7 @@ export const config = Object.freeze({
      * scaling arrives on its own day; until then one process owns the rooms it
      * serves, and this string is what a document records as its writer.
      */
-    instanceId: str('INSTANCE_ID', '') || `node-${process.pid}`,
+    instanceId: str('INSTANCE_ID', 'node-local'),
   }),
 
   mongo: Object.freeze({
@@ -73,6 +84,15 @@ export const config = Object.freeze({
     // verbatim — db/mongo.js redacts credentials before any output.
     uri: str('MONGO_URI', 'mongodb://127.0.0.1:27017/proxispeak'),
     serverSelectionTimeoutMS: num('MONGO_TIMEOUT_MS', 8000, { min: 500 }),
+  }),
+
+  proximity: Object.freeze({
+    radiusPx: num('PROXIMITY_RADIUS_PX', 100, { min: 0, max: Math.hypot(world.width, world.height) }),
+  }),
+  presence: Object.freeze({
+    // Node clamps overflowing intervals to 1 ms; reject them before boot.
+    cleanupIntervalMs: num('PRESENCE_CLEANUP_INTERVAL_MS', 30000, { min: 1, max: 2 ** 31 - 1 }),
+    timeoutMs: num('PRESENCE_TIMEOUT_MS', 60000, { min: 1, max: 2 ** 31 - 1 }),
   }),
 
   socket: Object.freeze({
@@ -89,16 +109,7 @@ export const config = Object.freeze({
     maxStepPx: num('SOCKET_MAX_STEP_PX', 120, { min: 1, max: 100000 }),
   }),
 
-  world: Object.freeze({
-    // Tangent-plane projection the 2dsphere schema depends on: the pixel
-    // plane is mapped onto a tiny globe patch centred on (centerLat,
-    // centerLon). 10 pixels per metre === 1 px is exactly 0.1 m to MongoDB.
-    width: num('WORLD_WIDTH', 1920, { min: 200 }),
-    height: num('WORLD_HEIGHT', 1080, { min: 200 }),
-    centerLat: num('WORLD_CENTER_LAT', 37.7749, { min: -90, max: 90 }),
-    centerLon: num('WORLD_CENTER_LON', -122.4194, { min: -180, max: 180 }),
-    pixelsPerMeter: num('PIXELS_PER_METER', 10, { min: 0.0001, max: 1e6 }),
-  }),
+  world,
 });
 
 export default config;

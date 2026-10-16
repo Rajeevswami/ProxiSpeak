@@ -170,3 +170,51 @@ channel, browser client and movement — with **no audio and no proximity querie
 * `docs/WEEK1.md` (deliverables → files, event tables, data model, projection,
   ASCII architecture) and `docs/DEMO_WEEK1.md` (5-minute demo + troubleshooting),
   a consolidated Week 1 README section and this changelog.
+
+## Week 2 — Day 7 — 2026-10-16 — proximity engine
+
+Actual implementation/test commits (date confirmed with `git log`):
+
+- `3610b25` — proximity/presence config, geo helper usage and timed-query foundation.
+- `bb1cba5` — `$near`, live same-room/self exclusion, exact pixel boundary and ordering.
+- `ba2852e` — `$geoWithin` counts and DB-discovered connected-component clusters.
+- `5b5aa91` — instance-owned boot/stale cleanup, Engine.IO heartbeat refresh,
+  live join snapshots and shutdown drain. Stable default instance identity is
+  now `node-local`; multi-instance processes must supply unique stable ids.
+- `e666d0f` — node:test real-MongoDB brute-force, boundary, cluster, cleanup,
+  index-plan and 50-user timing coverage; database-free runs explicitly skip.
+
+Verification in this environment: server 34 passed / 0 failed / 17 skipped;
+client 99 passed / 0 failed / 0 skipped; both fresh dependency installs and
+client production build succeeded. Real MongoDB correctness and query p50/p95
+are **NOT VERIFIED** (local MongoDB unavailable), not claimed as passing.
+See `docs/DAY7.md` for exact rerun commands. No client/dependency changes,
+HTTP audit endpoint, peer graph, signaling or audio work is included.
+
+## Day 1–7 local QA fixes — 2026-10-16
+
+- `78dfa05` — serialize per-socket presence writes, retain immutable accepted
+  move coordinates, drain in-flight joins/writes before disconnect cleanup.
+  Added failing-then-passing socket race regressions with an in-memory store.
+- `dc6c08b` — reject malformed/operator identifiers and invalid/oversized query
+  radii before MongoDB access; limit radius to the configured world diagonal.
+- `06a42d7` — enforce CLIENT_URL at WebSocket admission, not only CORS headers;
+  direct forbidden-Origin WebSocket regression failed before and passed after.
+- `c59677d` — verify 10 Hz acceptance (20/20 accepted, 0 dropped), Engine.IO pong
+  refresh, cleanup ownership/recheck and timer stop/drain using test doubles.
+- `9151130` — reject overflowing cleanup intervals/timeouts; avoid Node's silent
+  1 ms timer overflow behavior and invalid Date cutoffs.
+
+These local QA fixes are not a claim of real-MongoDB or browser verification.
+No dependency, client application, signaling or audio features were added.
+
+## Day 7 follow-up — 2026-10-16
+
+- `1c6e597` — stale sweeps close the owning socket transport (preserving automatic
+  reconnect); moves atomically update without upsert and reject missing rows with
+  `session_expired`; client reconnect/rejoin uses the existing snapshot path.
+  Real-socket tests with store/query doubles cover expiry, automatic rejoin,
+  duplicate-free avatars, repeated rejected moves and deletion racing a move.
+- `2628beb` — one final live, room-scoped roster query filters vanished ids
+  out of computed clusters and removes empty clusters, without splitting/rebuilding
+  components. README notes the eventual-consistency limitation.
