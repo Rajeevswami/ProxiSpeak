@@ -29,3 +29,32 @@ async function timed(name, operation) {
   try { return await operation(); }
   finally { logger.debug(`${name} query time: ${(performance.now() - start).toFixed(3)} ms`); }
 }
+
+/** Session ids are the public user ids; distancePx is authoritative. */
+export function findNearby(roomId, userId, radiusPx = config.proximity.radiusPx) {
+  return timed('findNearby', async () => {
+    validateRadius(radiusPx);
+    const live = livePresenceFilter();
+    const center = await UserPresence.findOne({ roomId, sessionId: userId, ...live }).lean();
+    if (!center) return [];
+    return neighbors(roomId, center, radiusPx, live);
+  });
+}
+
+export function nearQuery(roomId, center, radiusPx = config.proximity.radiusPx, live = livePresenceFilter()) {
+  return {
+    roomId, ...live, sessionId: { $ne: center.sessionId },
+    location: { $near: {
+      $geometry: geo.point(center.x, center.y),
+      $maxDistance: geo.maxDistanceMeters(candidateRadius(radiusPx)),
+    } },
+  };
+}
+
+async function neighbors(roomId, center, radiusPx, live) {
+  const rows = await UserPresence.find(nearQuery(roomId, center, radiusPx, live)).lean();
+  return rows.map((row) => ({
+    id: row.sessionId, distancePx: distancePx(center.x, center.y, row.x, row.y),
+  })).filter((row) => row.distancePx <= radiusPx)
+    .sort((a, b) => a.distancePx - b.distancePx || a.id.localeCompare(b.id));
+}
