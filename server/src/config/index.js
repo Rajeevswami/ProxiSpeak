@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import { parseIceServers } from './iceServers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SERVER_ROOT = path.resolve(__dirname, '..', '..');
@@ -45,6 +46,10 @@ const list = (key, fallback) => {
 
 const nodeEnv = str('NODE_ENV', 'development');
 
+// Malformed JSON must never stop the server from booting: the parser always
+// returns a usable list and, on failure, the reason for a single warning line.
+const ice = parseIceServers(str('ICE_SERVERS', ''));
+
 const world = Object.freeze({
     // Tangent-plane projection the 2dsphere schema depends on: the pixel
     // plane is mapped onto a tiny globe patch centred on (centerLat,
@@ -60,6 +65,14 @@ export const config = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
   logLevel: str('LOG_LEVEL', 'info'),
+
+  /**
+   * ICE servers handed to browsers inside `joined` / `peer:connect`.
+   * Default: one public STUN server (no TURN). See config/iceServers.js.
+   */
+  iceServers: ice.servers,
+  /** Non-null only when ICE_SERVERS was malformed; logged once at boot. */
+  iceServersWarning: ice.warning,
 
   server: Object.freeze({
     // Most PaaS hosts inject PORT; 4000 stays the local default.
@@ -107,6 +120,13 @@ export const config = Object.freeze({
      * can never teleport an avatar across the floor plan.
      */
     maxStepPx: num('SOCKET_MAX_STEP_PX', 120, { min: 1, max: 100000 }),
+    /**
+     * `signal` events per socket per second. ICE trickling is naturally
+     * bursty, so the bucket starts with `signalBurst` tokens (a whole
+     * candidate batch may arrive at once) and refills at this sustained rate.
+     */
+    signalEventsPerSec: num('SOCKET_SIGNAL_EPS', 30, { min: 1, max: 1000 }),
+    signalBurst: num('SOCKET_SIGNAL_BURST', 100, { min: 1, max: 10000 }),
   }),
 
   world,

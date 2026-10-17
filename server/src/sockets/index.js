@@ -5,13 +5,13 @@
  * the Express port and the `/health` endpoint keeps working untouched.
  *
  * Event contract (every inbound payload is validated server-side):
- *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users }
+ *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users, iceServers }
  *   C -> S  move     { x, y }           S -> C  user:moved { id, x, y }
  *   C -> S  signal   { to, generation, data }
  *                                       S -> C  signal     { from, generation, data }
  *   (socket disconnects)                S -> C  user:left  { id }
  *   other clients in the room           S -> C  user:joined { id, name, x, y }
- *   both users of a new edge            S -> C  peer:connect { peerId, name, initiator, generation }
+ *   both users of a new edge            S -> C  peer:connect { peerId, name, initiator, generation, iceServers }
  *   both users of a removed edge        S -> C  peer:disconnect { peerId, generation }
  *   any rejection                       S -> C  error       { code, message, field? }
  *
@@ -73,6 +73,8 @@ export function createSocketServer({
   // GeoJSON, and both must always agree.
   const geo = createGeoTransform(cfg.world);
 
+  if (cfg.iceServersWarning) log.warn(cfg.iceServersWarning);
+
   // One in-memory peer graph per process (Week 3 may share it through Redis).
   // It owns the edges; this gateway only turns edge events into socket events.
   const peers = new PeerGraph({ findNearby: neighborQuery, radiusPx: cfg.proximity.radiusPx });
@@ -89,6 +91,7 @@ export function createSocketServer({
           name: peerName(edge.roomId, peerId),
           initiator: edge.initiator === recipient,
           generation: edge.generation,
+          iceServers: cfg.iceServers,
         });
       }
     },
@@ -199,9 +202,10 @@ function registerHandlers(socket, ctx) {
   });
   // Signaling gets its own, larger bucket: one offer/answer exchange is a few
   // events, but trickled ICE candidates arrive in bursts.
-  // Provisional defaults; Day 8's config commit turns these into env-tunable
-  // SOCKET_SIGNAL_EPS / SOCKET_SIGNAL_BURST values.
-  const signalBucket = new TokenBucket({ capacity: 100, refillPerSec: 30 });
+  const signalBucket = new TokenBucket({
+    capacity: cfg.socket.signalBurst,
+    refillPerSec: cfg.socket.signalEventsPerSec,
+  });
 
   // ------------------------------------------------------------------ join ---
   socket.on(
@@ -221,7 +225,7 @@ function registerHandlers(socket, ctx) {
       // `user:joined` for the people already inside.
       if (session && session.roomId === roomId) {
         const users = await snapshotUsers(presence, roomId);
-        socket.emit('joined', buildJoined(clientId, session.room, users));
+        socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers));
         socketLog.debug(`duplicate join ignored (already in "${roomId}")`);
         return;
       }
@@ -299,7 +303,7 @@ function registerHandlers(socket, ctx) {
     const currentSession = session;
     const users = await snapshotUsers(presence, roomId);
     if (socket.disconnected || session !== currentSession) return;
-    socket.emit('joined', buildJoined(clientId, room, users));
+    socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers));
 
     // Connect the newcomer to everyone already within earshot. Only this user's
     // neighbors are queried; existing edges in the room are untouched.
@@ -484,7 +488,9 @@ function registerHandlers(socket, ctx) {
 // ------------------------------------------------------------- wire format ---
 
 /** The `joined` reply: who you are, the room blueprint and everybody inside. */
-const buildJoined = (selfId, room, users) => ({ selfId, room: toRoomPayload(room), users });
+const buildJoined = (selfId, room, users, iceServers) => ({
+  selfId, room: toRoomPayload(room), users, iceServers: iceServers ?? [],
+});
 
 /**
  * Room dimensions + obstacles, whitelisted field by field. Spawn points and
