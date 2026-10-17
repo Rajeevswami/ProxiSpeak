@@ -218,3 +218,60 @@ No dependency, client application, signaling or audio features were added.
 - `2628beb` — one final live, room-scoped roster query filters vanished ids
   out of computed clusters and removes empty clusters, without splitting/rebuilding
   components. README notes the eventual-consistency limitation.
+
+## Week 2 — Day 8 — 2026-10-17 — peer graph and WebRTC signaling
+
+Backend-only slice. Server-side peer coordination and signaling relay only: no
+client WebRTC/audio, no `getUserMedia`, no Redis, no TURN, no new dependency.
+
+Actual implementation/test commits (date from `git log`; this documentation
+commit follows them):
+
+- `d4a9492` — in-memory per-room peer graph: order-independent edge keys,
+  per-user diffing, monotonically increasing generations, lexicographic
+  initiator, idempotent leave, measured recompute timings.
+- `ed51158` — gateway integration for join, accepted move, disconnect and
+  presence expiry; `peer:connect` / `peer:disconnect` to both endpoints; expiry
+  cleanup hook in the presence sweep.
+- `66399fc` — `signal` validation and relay restricted to a live edge in the
+  sender's room with a matching generation; `no_peer_edge` and
+  `stale_generation` error paths; 16 KB cap and candidate whitelisting.
+- `4abeee2` — `ICE_SERVERS` JSON parsing with a one-line warning and default
+  STUN fallback, `iceServers` in `joined` and `peer:connect`, and the
+  `SOCKET_SIGNAL_EPS` / `SOCKET_SIGNAL_BURST` token bucket.
+- `848bdf1` — 29 new tests: 12 real-MongoDB/real-socket integration tests,
+  8 peer-graph unit tests, 5 signal-validation tests, 4 ICE-config tests.
+
+**Added**
+
+- `server/src/services/peerGraph.js`: one edge per unordered pair (sorted key),
+  only the changed user's neighbors re-queried with Day 7 `findNearby`,
+  generation on every new edge, deterministic initiator, full cleanup on
+  disconnect/expiry.
+- `peer:connect { peerId, name, initiator, generation, iceServers }` and
+  `peer:disconnect { peerId, generation }`, emitted to both users of the edge.
+- `signal` relay (offer/answer/candidate) with `from`/generation rewriting;
+  no edge, other room, self, stale generation, malformed/oversized payload and
+  pre-join signals are rejected with `error`, never a crash. Throttled signals
+  are dropped silently, matching the existing `move` limiter style.
+- `ICE_SERVERS` config (default `stun:stun.l.google.com:19302`, no TURN),
+  validated and falling back to the default with a clear boot warning when
+  malformed. `joined` now carries `iceServers` (duplicate joins included).
+- `docs/DAY8.md` and the README “Week 2 — Day 8” section with the event table,
+  edge/generation/initiator rules and configuration.
+
+**Fixed**
+
+- A duplicate `join` snapshot now keeps `iceServers` instead of returning an
+  empty list.
+- Day 3/8 integration suites print their NOT VERIFIED banner only when the
+  MongoDB connection actually failed, not before `before()` runs.
+
+**Verified (real MongoDB 6.0.29, 2 vCPU sandbox)**
+
+- Server: 101 tests, 101 passed, 0 failed, 0 skipped (29 new Day 8 tests).
+- Client: 101 passed, 0 failed, 0 skipped; `npm run build --prefix client`
+  succeeded.
+- 50 users × 20 random moves: 1,050 recomputes, edge set equal to the
+  brute-force pair set, no duplicate edges, no crash, p50 ≈ 4.7 ms /
+  p95 ≈ 11.4 ms (environment-dependent; printed by the test).
