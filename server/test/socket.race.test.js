@@ -78,6 +78,18 @@ async function startServer({ presence, cfg = config, roomIds = ['lobby'] } = {})
     logger: log,
     presence,
     rooms: createStaticRooms(roomIds),
+    // This suite has no database on purpose: the peer graph gets the same
+    // "who is within radiusPx" contract from the in-memory presence rows.
+    findNearby: async (roomId, userId, radiusPx) => {
+      const rows = [...presence.rows.values()].filter((row) => row.roomId === roomId);
+      const self = rows.find((row) => row.sessionId === userId);
+      if (!self) return [];
+      return rows
+        .filter((row) => row.sessionId !== userId)
+        .map((row) => ({ id: row.sessionId, distancePx: Math.hypot(row.x - self.x, row.y - self.y) }))
+        .filter((row) => row.distancePx <= radiusPx)
+        .sort((left, right) => left.distancePx - right.distancePx || left.id.localeCompare(right.id));
+    },
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

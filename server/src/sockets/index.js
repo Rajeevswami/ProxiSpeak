@@ -9,6 +9,8 @@
  *   C -> S  move     { x, y }           S -> C  user:moved { id, x, y }
  *   (socket disconnects)                S -> C  user:left  { id }
  *   other clients in the room           S -> C  user:joined { id, name, x, y }
+ *   both users of a new edge            S -> C  peer:connect { peerId, name, initiator, generation }
+ *   both users of a removed edge        S -> C  peer:disconnect { peerId, generation }
  *   any rejection                       S -> C  error       { code, message, field? }
  *
  * Payloads carry ids, names and pixels only — never a connection string, a
@@ -24,6 +26,8 @@ import { TokenBucket } from '../utils/rateLimiter.js';
 import { validateJoinPayload, validateMovePayload } from './validation.js';
 import * as presenceStore from '../services/presenceStore.js';
 import * as roomService from '../services/roomService.js';
+import { PeerGraph } from '../services/peerGraph.js';
+import { findNearby } from '../services/proximityService.js';
 
 /** Deterministic colour for avatars: the Day 3 `join` payload carries a name only. */
 const DEFAULT_AVATAR_COLOR = '#4f8cff';
@@ -35,6 +39,7 @@ const DEFAULT_AVATAR_COLOR = '#4f8cff';
  * @param {object} [options.logger] logger override
  * @param {object} [options.presence] presence store override (defaults to the Day 2 store)
  * @param {object} [options.rooms] room service override (defaults to the Day 2 service)
+ * @param {Function} [options.findNearby] neighbor query override for the peer graph
  * @returns {import('socket.io').Server}
  */
 export function createSocketServer({
@@ -43,6 +48,7 @@ export function createSocketServer({
   logger: log = logger,
   presence = presenceStore,
   rooms = roomService,
+  findNearby: neighborQuery = findNearby,
 } = {}) {
   if (!httpServer) throw new Error('createSocketServer requires the HTTP server to attach to');
 
@@ -60,6 +66,36 @@ export function createSocketServer({
   // One transform per process: the room is a flat pixel plane, MongoDB wants
   // GeoJSON, and both must always agree.
   const geo = createGeoTransform(cfg.world);
+
+  // One in-memory peer graph per process (Week 3 may share it through Redis).
+  // It owns the edges; this gateway only turns edge events into socket events.
+  const peers = new PeerGraph({ findNearby: neighborQuery, radiusPx: cfg.proximity.radiusPx });
+  const peerName = (roomId, userId) =>
+    io.sockets.sockets.get(userId)?.data.name ?? peers.nameOf(roomId, userId);
+
+  peers.setListeners({
+    onEdgeAdded: (edge) => {
+      for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
+        const target = io.sockets.sockets.get(recipient);
+        if (!target?.connected) continue;
+        target.emit('peer:connect', {
+          peerId,
+          name: peerName(edge.roomId, peerId),
+          initiator: edge.initiator === recipient,
+          generation: edge.generation,
+        });
+      }
+    },
+    onEdgeRemoved: (edge) => {
+      for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
+        io.to(recipient).emit('peer:disconnect', { peerId, generation: edge.generation });
+      }
+    },
+  });
+
+  // Exposed for tests/diagnostics and for the presence sweep (expiry path).
+  io.peerGraph = peers;
+  io.removePeerEdges = (roomId, userId) => peers.leave(roomId, userId);
 
   /**
    * Presence cleanups that have started but not finished. Sockets disconnect
@@ -86,14 +122,14 @@ export function createSocketServer({
     while (pendingCleanups.size) await Promise.allSettled([...pendingCleanups]);
   };
 
-  io.on('connection', (socket) => registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track }));
+  io.on('connection', (socket) => registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers }));
 
   log.info(`Socket.io attached to the HTTP server (CORS: ${describeCorsOrigin(cfg)})`);
   return io;
 }
 
 function registerHandlers(socket, ctx) {
-  const { cfg, log, presence, rooms, geo, track } = ctx;
+  const { cfg, log, presence, rooms, geo, track, peers } = ctx;
   // Captured once: the id is this connection's identity everywhere (presence
   // documents, broadcasts, room membership) and Socket.io clears it the moment
   // the connection drops, which is far too late for cleanup.
@@ -244,12 +280,23 @@ function registerHandlers(socket, ctx) {
 
     session = { roomId, room, user };
     socket.data.roomId = roomId;
+    socket.data.name = user.name;
     await socket.join(roomId);
 
     socket.to(roomId).emit('user:joined', { id: user.id, name: user.name, x: user.x, y: user.y });
 
+    const currentSession = session;
     const users = await snapshotUsers(presence, roomId);
+    if (socket.disconnected || session !== currentSession) return;
     socket.emit('joined', buildJoined(clientId, room, users));
+
+    // Connect the newcomer to everyone already within earshot. Only this user's
+    // neighbors are queried; existing edges in the room are untouched.
+    try {
+      await peers.join(roomId, clientId, { name: user.name });
+    } catch (err) {
+      socketLog.error('peer graph join failed:', err?.message ?? err);
+    }
     socketLog.info(`joined "${roomId}" as "${name}" (${users.length} in room)`);
   }
 
@@ -305,6 +352,15 @@ function registerHandlers(socket, ctx) {
           throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
         }
         if (socket.disconnected || session !== current) return;
+        // The new position is persisted, so $near can now decide this user's
+        // earshot. Only this user is re-queried; the diff emits connect/
+        // disconnect events for the changes and nothing for unchanged edges.
+        try {
+          await peers.sync(current.roomId, clientId);
+        } catch (err) {
+          socketLog.error('peer graph sync failed:', err?.message ?? err);
+        }
+        if (socket.disconnected || session !== current) return;
         socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
       });
     }),
@@ -324,6 +380,14 @@ function registerHandlers(socket, ctx) {
     if (!session) return;
     const { roomId } = session;
     session = null;
+
+    // Drop every edge this user owned first, so the remaining peers get a
+    // peer:disconnect with the edge generation they still know about.
+    try {
+      peers.leave(roomId, clientId);
+    } catch (err) {
+      socketLog.error('peer graph cleanup failed:', err?.message ?? err);
+    }
 
     // Peers first, while the room channel is unambiguous, then the channel and
     // finally this socket's own document.

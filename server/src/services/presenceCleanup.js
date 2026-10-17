@@ -21,6 +21,15 @@ export async function cleanupStale(io, { instanceId = config.server.instanceId, 
       socket.data.presenceExpired = true;
       socket.data.expiryAnnounced = true;
     }
+    // Drop this user's peer edges before announcing the departure, so the
+    // remaining peers receive peer:disconnect while the edge still exists.
+    // Optional: the socket gateway installs this hook; plain test doubles and
+    // the Day 7 standalone cleanup path simply do not have it.
+    try {
+      io.removePeerEdges?.(row.roomId, row.sessionId);
+    } catch (err) {
+      logger.error('peer graph expiry cleanup failed:', err?.message ?? err);
+    }
     io.to(row.roomId).emit('user:left', { id: row.sessionId });
     // Close the transport, not socket.disconnect(true): an explicit namespace
     // disconnect disables Socket.IO's automatic reconnection on the client.
