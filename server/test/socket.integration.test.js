@@ -59,6 +59,15 @@ before(async () => {
     mongoReady = true;
   } catch (err) {
     mongoError = err;
+    console.error(
+      '\n' +
+        '=====================================================================\n' +
+        ' Day 3 socket integration tests: NOT VERIFIED\n' +
+        ` No MongoDB reachable at ${redactUri(TEST_URI)}\n` +
+        ' Start one, or point MONGO_URI_TEST at a test database, then re-run:\n' +
+        '   MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak" npm test\n' +
+        '=====================================================================\n',
+    );
   }
 });
 
@@ -75,18 +84,6 @@ function requireMongo(t) {
   if (mongoReady) return true;
   t.skip(`NOT VERIFIED — no MongoDB at ${redactUri(TEST_URI)} (${mongoError?.message ?? 'unknown error'})`);
   return false;
-}
-
-if (!mongoReady) {
-  console.error(
-    '\n' +
-      '=====================================================================\n' +
-      ' Day 3 socket integration tests: NOT VERIFIED\n' +
-      ` No MongoDB reachable at ${redactUri(TEST_URI)}\n` +
-      ' Start one, or point MONGO_URI_TEST at a test database, then re-run:\n' +
-      '   MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak" npm test\n' +
-      '=====================================================================\n',
-  );
 }
 
 // ------------------------------------------------------------------- fixtures

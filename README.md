@@ -499,6 +499,11 @@ curl -i http://localhost:4000/health
   busy-port stack trace) with tests, connection-lost/reconnect messaging on the
   client, and the Week 1 documentation (`docs/WEEK1.md`, `docs/DEMO_WEEK1.md`,
   `CHANGELOG.md`).
+* **Day 8 status: peer graph and signaling done (backend)** — an in-memory,
+  per-room peer graph (`server/src/services/peerGraph.js`) derived from the
+  Day 7 `findNearby` query, `peer:connect` / `peer:disconnect` events, and a
+  `signal` relay restricted to live edges and matching generations. No browser
+  audio, WebRTC client, Redis, TURN or new library is included.
 * Redis, WebRTC, the proximity queries (`$near` / `$geoWithin` / `$geoNear`),
   audio and collision/occlusion are intentionally **not** part of Days 1–6;
   they land with their own days/weeks above.
@@ -743,7 +748,8 @@ No new HTTP route, client event, library, audio or signaling is introduced.
 
 See [Day 7 implementation and verification](docs/DAY7.md) for API semantics,
 config caveats, test commands and the explicit **NOT VERIFIED** MongoDB status.
-Day 8 peer graph and WebRTC signaling are the next step, not part of this slice.
+Day 8 (peer graph and WebRTC signaling) builds directly on this service; see the
+[Day 8 section](#week-2--day-8-peer-graph-and-signaling) below.
 
 Expired presence closes the owning socket's transport so Socket.IO automatically
 reconnects and sends a fresh `join`; moves never upsert and return
@@ -752,3 +758,69 @@ The client handles `session_expired` by reconnecting through its existing
 connect/join/snapshot path, without adding listeners or duplicate avatars.
 
 Clusters are eventually consistent: one final live-roster query drops vanished ids, but concurrent moves/deletions can still affect membership and removing a bridge does not split an already computed cluster.
+
+
+## Week 2 — Day 8: Peer graph and signaling
+
+Backend-only slice: the server decides which users are within earshot and
+orchestrates the WebRTC handshake, but it only relays signaling messages — it
+never touches audio. Implementation: `server/src/services/peerGraph.js`,
+`server/src/sockets/index.js`, `server/src/config/iceServers.js`. Full details,
+test matrix and verification: [docs/DAY8.md](docs/DAY8.md).
+
+### Events
+
+| Event | Direction | Payload | When |
+| --- | --- | --- | --- |
+| `joined` | S → C | `{ selfId, room, users, iceServers }` | Join accepted; the existing snapshot now also carries the ICE list. |
+| `peer:connect` | S → C | `{ peerId, name, initiator, generation, iceServers }` | A new edge; sent to both endpoints. Exactly one side has `initiator: true`. |
+| `peer:disconnect` | S → C | `{ peerId, generation }` | The edge this user knew about was removed; sent to both endpoints. |
+| `signal` | C → S | `{ to, generation, data }` | `data` is `{ type: "offer"\|"answer", sdp }` or `{ type: "candidate", candidate }`. |
+| `signal` | S → C | `{ from, generation, data }` | Relayed only when a live edge exists in the sender's room and the generation matches. |
+| `error` | S → C | `{ code, message, field? }` | `no_peer_edge`, `stale_generation`, `invalid_payload`, `not_joined`, `session_expired`. |
+
+`data` is capped at 16 KB, SDP must be a string, and candidate objects are
+whitelisted to `candidate`, `sdpMid`, `sdpMLineIndex`, `usernameFragment`.
+Throttled signals are dropped silently; the socket stays connected.
+
+### Edge, generation and initiator rules
+
+- One edge per unordered pair, keyed by the two ids sorted; a pair can never
+  have a duplicate edge.
+- On join, accepted `move`, disconnect and presence expiry, only **that user's**
+  neighbors are re-queried with the existing `findNearby` (`$near` + exact
+  pixel check, radius `PROXIMITY_RADIUS_PX`, default 100 px). The result is
+  diffed against the current edges; unchanged edges emit nothing, new neighbors
+  add an edge, neighbors that left the radius remove one.
+- Every edge gets a monotonically increasing process-wide `generation`. A
+  removed-and-recreated edge has a larger generation, so delayed signaling for
+  the old edge is refused.
+- The lexicographically smaller user id is the initiator, so both peers can
+  never send offers at the same time.
+- Distance 0 is a valid edge; nobody connects to themselves; different rooms
+  never share edges.
+- Disconnect, expiry and a killed client remove all of that user's edges and
+  emit one `peer:disconnect` per edge to the remaining peers. A reconnect gets a
+  new socket/user id and fresh edges; the old id keeps nothing.
+
+### Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ICE_SERVERS` | `[{"urls":"stun:stun.l.google.com:19302"}]` | JSON array for `RTCPeerConnection`; STUN/STUNS only (no TURN on Day 8). Malformed values fall back to the default with one warning line at boot. |
+| `SOCKET_SIGNAL_EPS` | `30` | Sustained `signal` events per socket per second. |
+| `SOCKET_SIGNAL_BURST` | `100` | Burst capacity for trickled ICE candidates. |
+
+### Tests
+
+`node --test server/test/peerGraph.unit.test.js server/test/peerGraph.integration.test.js server/test/signal.validation.test.js server/test/iceServers.test.js`
+(real Socket.IO clients and a real isolated MongoDB database for the
+integration file). The root `npm test` runs these with both existing suites.
+The integration tests cover 99/100/101 px, duplicate-free range changes,
+offer/answer/candidate relay and every refusal path, disconnect/expiry/kill,
+reconnect, the A–B–C chain, and a 50-user random-movement stress run whose
+p50/p95 recompute timing is printed.
+
+**Not included:** client WebRTC/audio (`getUserMedia`, `RTCPeerConnection`, Web
+Audio), Redis/multi-instance sharing, TURN, obstacle occlusion, the spatial
+audit endpoint, Express serving `client/dist`, Docker and any new library.
