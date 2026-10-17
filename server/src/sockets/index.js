@@ -7,11 +7,17 @@
  * Event contract (every inbound payload is validated server-side):
  *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users }
  *   C -> S  move     { x, y }           S -> C  user:moved { id, x, y }
+ *   C -> S  signal   { to, generation, data }
+ *                                       S -> C  signal     { from, generation, data }
  *   (socket disconnects)                S -> C  user:left  { id }
  *   other clients in the room           S -> C  user:joined { id, name, x, y }
  *   both users of a new edge            S -> C  peer:connect { peerId, name, initiator, generation }
  *   both users of a removed edge        S -> C  peer:disconnect { peerId, generation }
  *   any rejection                       S -> C  error       { code, message, field? }
+ *
+ * The server orchestrates peer-to-peer WebRTC handshakes but never touches
+ * audio: `signal` carries opaque SDP/candidate data between two users that the
+ * peer graph says are currently within earshot.
  *
  * Payloads carry ids, names and pixels only — never a connection string, a
  * document `_id` or any other database detail.
@@ -23,7 +29,7 @@ import { AppError } from '../utils/errors.js';
 import { describeCorsOrigin, socketCorsOrigin, socketAllowRequest } from '../utils/origin.js';
 import { createGeoTransform } from '../utils/geo.js';
 import { TokenBucket } from '../utils/rateLimiter.js';
-import { validateJoinPayload, validateMovePayload } from './validation.js';
+import { validateJoinPayload, validateMovePayload, validateSignalPayload } from './validation.js';
 import * as presenceStore from '../services/presenceStore.js';
 import * as roomService from '../services/roomService.js';
 import { PeerGraph } from '../services/peerGraph.js';
@@ -129,7 +135,7 @@ export function createSocketServer({
 }
 
 function registerHandlers(socket, ctx) {
-  const { cfg, log, presence, rooms, geo, track, peers } = ctx;
+  const { io, cfg, log, presence, rooms, geo, track, peers } = ctx;
   // Captured once: the id is this connection's identity everywhere (presence
   // documents, broadcasts, room membership) and Socket.io clears it the moment
   // the connection drops, which is far too late for cleanup.
@@ -191,6 +197,11 @@ function registerHandlers(socket, ctx) {
     capacity: cfg.socket.moveEventsPerSec,
     refillPerSec: cfg.socket.moveEventsPerSec,
   });
+  // Signaling gets its own, larger bucket: one offer/answer exchange is a few
+  // events, but trickled ICE candidates arrive in bursts.
+  // Provisional defaults; Day 8's config commit turns these into env-tunable
+  // SOCKET_SIGNAL_EPS / SOCKET_SIGNAL_BURST values.
+  const signalBucket = new TokenBucket({ capacity: 100, refillPerSec: 30 });
 
   // ------------------------------------------------------------------ join ---
   socket.on(
@@ -363,6 +374,52 @@ function registerHandlers(socket, ctx) {
         if (socket.disconnected || session !== current) return;
         socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
       });
+    }),
+  );
+
+  // ---------------------------------------------------------------- signal ---
+  socket.on(
+    'signal',
+    guard('signal', async (payload) => {
+      if (socket.data.presenceExpired) {
+        throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
+      }
+      if (!session) {
+        throw new AppError('join a room before sending signaling messages', { code: 'not_joined', status: 409 });
+      }
+      // Signaling floods are dropped silently, like throttled moves: replying
+      // to every dropped event would amplify the traffic the limit stops.
+      if (!signalBucket.take()) {
+        socketLog.debug('signal dropped (rate limit)');
+        return;
+      }
+
+      const { to, generation, data } = validateSignalPayload(payload);
+
+      // Relay only along a live edge in this socket's room. The edge carries
+      // the generation it was created with; anything else is stale and is
+      // refused instead of being guessed at.
+      const edge = peers.edgeBetween(session.roomId, clientId, to);
+      if (!edge) {
+        throw new AppError(`no live peer edge to "${to}" in this room`, {
+          code: 'no_peer_edge', status: 409, details: { field: 'to' },
+        });
+      }
+      if (edge.generation !== generation) {
+        throw new AppError('that peer edge has been replaced; use the current generation', {
+          code: 'stale_generation', status: 409, details: { field: 'generation' },
+        });
+      }
+
+      const target = io.sockets.sockets.get(to);
+      if (!target?.connected || target.data.roomId !== session.roomId) {
+        throw new AppError(`no live peer edge to "${to}" in this room`, {
+          code: 'no_peer_edge', status: 409, details: { field: 'to' },
+        });
+      }
+
+      // The server is a relay only: the payload is opaque SDP/candidate data.
+      target.emit('signal', { from: clientId, generation, data });
     }),
   );
 
