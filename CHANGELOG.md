@@ -275,3 +275,74 @@ commit follows them):
 - 50 users × 20 random moves: 1,050 recomputes, edge set equal to the
   brute-force pair set, no duplicate edges, no crash, p50 ≈ 4.7 ms /
   p95 ≈ 11.4 ms (environment-dependent; printed by the test).
+
+## Week 2 — Day 9 — 2026-10-18 — WebRTC audio
+
+Client-only slice: standard browser WebRTC audio (`getUserMedia`,
+`RTCPeerConnection`, `<audio>` elements — no other API, no new dependency) over
+the Day 8 signaling events. No server behavior change: the rate-limit review
+proved the shipped `signal` bucket already covers a 10-peer connect.
+
+Actual implementation/test commits (dates from `git log`; this documentation
+commit follows them):
+
+- `7768026` — `client/src/webrtc/localMedia.js`: microphone request with the
+  mandated audio constraints and typed failures (`permission_denied`,
+  `no_device`, `insecure_context`, `not_supported`); `release()` stops every
+  track; injectable `mediaDevices`/`isSecureContext` for Node tests.
+- `f8fb4da` — `client/src/webrtc/peerManager.js`: one `RTCPeerConnection` per
+  peer edge keyed by `peerId` + `generation`; offer/answer over `signal`,
+  ICE trickle with before-SDP queueing and in-order flush, newer-generation
+  replacement (never two connections per peer), generation-matched
+  `peer:disconnect`, failed/closed cleanup with no auto-retry, `closeAll()`
+  that leaves no connection, audio element, timer or track behind; fully
+  dependency-injected (pc factory, socket-like emitter, logger, media, audio
+  sink, stats).
+- `9a57135` — `client/src/webrtc/remoteAudio.js` (one `<audio autoplay
+  playsinline>` per remote stream in a hidden container, plain playback only —
+  no Web Audio) and `client/src/webrtc/rtcStats.js` (~1 s `getStats()` poll per
+  peer exposing `connectionState` + inbound audio `bytesReceived`).
+- `39a3138` — join flow + socket wiring: the Join button (user gesture)
+  requests the mic before `join`; denial/no-device shows a clear message and
+  continues listen-only (recvonly transceiver); `useSocket` creates the peer
+  manager on the existing events (`joined` iceServers fallback,
+  `peer:connect`/`peer:disconnect`/`signal`) and calls `closeAll()` on
+  disconnect/reconnect/`session_expired`/re-join/unmount; one *Join with mic /
+  Listen only* choice on the Join screen.
+- `91deece` — `client/src/components/AudioStatus.jsx`: minimal read-only
+  overlay (plain DOM/CSS): mic on/off/listen-only and per nearby peer name,
+  connection state and received audio bytes, updated at most once per second.
+- `448cfdf` — 31 `node:test` cases with fakes: initiator offer and
+  wait-then-answer, ICE queueing + in-order flush, stale/unknown signals
+  ignored, newer-generation replacement, disconnect + stale disconnect,
+  `closeAll()` zero-left-behind, listen-only recvonly, handler exceptions
+  logged, localMedia typed failures and track release, remoteAudio element
+  lifecycle, rtcStats poll/cleanup, and a server signal rate-limit headroom
+  proof (10 peers × 8 signals = 80 in 500 ms ≤ 100 burst + 15 refill → 0
+  dropped, flood guard still bites).
+
+**Added**
+
+- `client/src/webrtc/` (localMedia, peerManager, remoteAudio, rtcStats) —
+  plain JS, no React inside the core logic, unit-tested in Node.
+- Mic-first join flow with listen-only fallback and re-acquisition after a
+  reconnect; the hidden `.remote-audio` container; the ≤1 Hz `AudioStatus`
+  overlay.
+- README "Week 2 — Day 9" section (client event flow, two-window manual test
+  with mandatory headphones, Chrome fake-device flags, troubleshooting table)
+  and `docs/DAY9.md` (module map, edge rules, verification).
+
+**Verified (this environment, 2026-10-18)**
+
+- Fresh `npm run install:all` and `npm run build --prefix client` succeed.
+- Root `npm test`: client **132 passed / 0 failed / 0 skipped** (31 new);
+  server **74 passed / 0 failed / 29 skipped** (2 new headroom tests pass).
+- Server code untouched except the added proof test.
+
+**NOT VERIFIED here**
+
+- The real two-browser audio check: no headless Chromium/Firefox in this
+  sandbox — exact manual steps (and the fake-device flags variant) are in
+  `docs/DAY9.md`. No `connectionState`/`bytesReceived` numbers are claimed.
+- The 29 skipped real-MongoDB tests (no local MongoDB; they self-label
+  "NOT VERIFIED"). With a local MongoDB the count must be 0 skipped.

@@ -52,6 +52,16 @@ body {
   border: 1px solid #7f2438;
   color: #ffb4c0;
 }
+/* Microphone denial / missing-device notice (Day 9): informational, the join
+   continues in listen-only mode. */
+.form-notice {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: 8px;
+  background: #1c2740;
+  border: 1px solid #3a4a72;
+  color: #c3d4f5;
+}
 
 .world-canvas {
   display: block;
@@ -78,4 +88,85 @@ body {
   margin-top: 0.4rem;
   color: #ffb4c0;
   font-weight: 600;
+}
+
+/* Remote <audio> elements (Day 9). Hidden, but not display:none — some
+   browsers refuse to play media in a display:none subtree. */
+.remote-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Audio connection status overlay (Day 9): mic state + one row per nearby
+   peer with connection state and received audio bytes. Read-only, top right,
+   refreshed at most once per second. */
+.audio-status {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1;
+  min-width: 220px;
+  max-width: min(320px, 40vw);
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  background: rgba(11, 16, 32, 0.82);
+  border: 1px solid #26314d;
+  color: #c3cbdd;
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+.audio-status-mic {
+  font-weight: 600;
+  color: #e5e9f0;
+}
+.audio-status-notice {
+  display: block;
+  margin-top: 0.35rem;
+  font-weight: 400;
+  color: #9aa7c2;
+}
+.audio-status-empty {
+  margin-top: 0.35rem;
+  color: #9aa7c2;
+}
+.audio-status-list {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.audio-status-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.audio-status .peer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audio-status .peer-state {
+  color: #9aa7c2;
+  font-variant-numeric: tabular-nums;
+}
+.audio-status .peer-state-connected {
+  color: #6fd68a;
+}
+.audio-status .peer-state-failed,
+.audio-status .peer-state-closed,
+.audio-status .peer-state-disconnected {
+  color: #ffb4c0;
+}
+.audio-status .peer-bytes {
+  min-width: 4.5rem;
+  text-align: right;
+  color: #c3d4f5;
+  font-variant-numeric: tabular-nums;
 }
