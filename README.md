@@ -824,3 +824,125 @@ p50/p95 recompute timing is printed.
 **Not included:** client WebRTC/audio (`getUserMedia`, `RTCPeerConnection`, Web
 Audio), Redis/multi-instance sharing, TURN, obstacle occlusion, the spatial
 audit endpoint, Express serving `client/dist`, Docker and any new library.
+
+## Week 2 — Day 9: WebRTC audio
+
+Client-only slice: two browsers in the same room establish a standard WebRTC
+**audio** connection through the Day 8 signaling server, with browser built-ins
+only — `getUserMedia`, `RTCPeerConnection`, `HTMLAudioElement`. No Web Audio, no
+TURN, no new library, and **no server change**. Implementation:
+`client/src/webrtc/`, `client/src/hooks/useSocket.js`, `JoinScreen.jsx`,
+`AudioStatus.jsx`. Full details, test matrix and verification:
+[docs/DAY9.md](docs/DAY9.md).
+
+### Client event flow
+
+```
+Join click (user gesture)
+  └─ getUserMedia({ audio: {echoCancellation, noiseSuppression, autoGainControl},
+                    video: false })          → mic on  |  typed failure → listen only
+  └─ emit join { roomId, name }
+       └─ joined { selfId, room, users, iceServers }   ← fallback ICE list
+
+server edge: peer:connect { peerId, name, initiator, generation, iceServers }
+  └─ create RTCPeerConnection({ iceServers: event.iceServers ?? joined.iceServers })
+       ├─ mic on        → pc.addTrack(localAudioTrack)
+       │  listen only   → pc.addTransceiver('audio', { direction: 'recvonly' })
+       ├─ initiator     → createOffer → setLocalDescription
+       │                   → emit signal { to, generation, data: { type: 'offer', sdp } }
+       └─ !initiator    → wait for the offer
+
+signal { from, generation, data }
+  ├─ offer     → setRemoteDescription → flush queued candidates
+  │              → createAnswer → setLocalDescription
+  │              → emit signal { to, generation, data: { type: 'answer', sdp } }
+  ├─ answer    → setRemoteDescription → flush queued candidates
+  └─ candidate → before the remote SDP: queue (flushed in arrival order after it)
+                 after:  pc.addIceCandidate
+  local ICE    → pc.onicecandidate → emit signal { to, generation, candidate } (trickled)
+
+pc.ontrack → one <audio autoplay playsinline> per peer in the hidden
+             .remote-audio container (plain playback — no Web Audio on Day 9)
+
+teardown (peer:disconnect | connection failed/closed | socket disconnect |
+          reconnect | session_expired | re-join | unmount)
+  └─ close pc → remove the audio element → drop the registry entry
+     → stop stats timers → stop every local track (closeAll leaves nothing behind)
+```
+
+Every edge is keyed by `peerId` **and** its `generation`: stale signals and
+stale `peer:disconnect` events are ignored, a newer `generation` closes the old
+connection first (never two connections for one peer), ICE candidates that beat
+the remote description are queued and replayed in order, and a failed
+connection is cleaned up with **no auto-retry** — the server re-creates edges
+through `peer:connect`.
+
+### Modules
+
+| File | What it does |
+| --- | --- |
+| `client/src/webrtc/localMedia.js` | `getUserMedia` with the mandated constraints; typed failures (`permission_denied`, `no_device`, `insecure_context`); `release()` stops every track. |
+| `client/src/webrtc/peerManager.js` | One `RTCPeerConnection` per edge; offer/answer, ICE trickle + queueing, generation rules, cleanup. Dependency-injected (pc factory, socket, logger, media, audio sink, stats) and unit-tested with fakes. |
+| `client/src/webrtc/remoteAudio.js` | One `<audio autoplay playsinline>` per remote stream in a hidden container; removed on close. No gain, no panning (Week 3–4). |
+| `client/src/webrtc/rtcStats.js` | ~1 s `getStats()` poll per peer: `connectionState` + inbound audio `bytesReceived` — the proof that audio flows. |
+| `client/src/components/AudioStatus.jsx` | Read-only overlay: mic on/off/listen-only, and per peer the name, connection state and received bytes, refreshed at most once per second. |
+
+The Join button (a user gesture) asks for the microphone **before** emitting
+`join`; a denial or a missing device shows a clear message and the join
+continues in **listen only** mode (still hearing others). The choice itself is
+one dropdown on the Join screen: *Join with mic / Listen only*.
+
+### Testing with two browser windows (headphones mandatory)
+
+1. `npm run seed` once (rooms `lobby`/`studio`/`lounge`), `npm run dev:server`,
+   then `npm run dev:client` — open the printed URL in **two** windows.
+2. **Put on headphones.** Two open microphones next to each other create a
+   feedback howl that has nothing to do with the code.
+3. Join the same room with different names, one as *Join with mic*, the other
+   as *Listen only* or also with mic.
+4. Walk the two avatars within the earshot radius (default 100 px). Within a
+   second or two the overlay row appears: `connected`, and `bytesReceived`
+   starts **climbing** — that climb is the Audio Check. Walk apart again and
+   the row disappears (the server removed the edge).
+5. Repeat with both windows on mic: each side should hear the other (check the
+   OS volume mixer if not).
+
+### Testing without microphones (Chrome fake devices)
+
+Chrome flags replace the hardware and the permission prompt entirely:
+
+```
+google-chrome --use-fake-device-for-media-stream --use-fake-ui-for-media-stream
+```
+
+Open two windows of the dev client (or two different browser profiles).
+`getUserMedia` then "succeeds" with a fake tone, so the whole offer/answer/ICE
+path runs exactly as with real hardware — the overlay shows `connected` and
+climbing `bytesReceived` in both windows.
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| "Microphone permission was denied…" | The browser blocked the mic: open the padlock → Site settings → Microphone → Allow, and join again. Until then you are in listen-only mode and still hear others. |
+| Overlay stuck on `connecting`, no bytes | The ICE handshake did not finish — see the STUN-only note below, and check that both tabs really are in the same room. |
+| No audio, but bytes climb | The connection works and the *playback* is muted: check the tab/OS volume, and remember one side must have joined **with mic** — listen-only rows can still climb on their side. |
+| "The microphone needs a secure page…" | `getUserMedia` needs https or `localhost`. Off localhost, serve the client over https (or a tunnel) — plain http on a LAN IP can never get a mic. |
+| Connected on localhost, fails across networks | The default is STUN-only (`stun:stun.l.google.com:19302`). Strict NATs/firewalls need a TURN relay, which is a later deployment concern — on one machine/LAN, STUN is enough. |
+| Two laptops + open speakers → howl | Use headphones. Echo cancellation helps, but open mics beside open speakers will always feed back eventually. |
+
+### Signal rate limit (server, unchanged)
+
+Day 9 raises no server limit. The per-socket `signal` bucket ships as burst
+`SOCKET_SIGNAL_BURST=100` + refill `SOCKET_SIGNAL_EPS=30`/s. A 10-peer
+simultaneous connect sends at most 80 signals per socket within 500 ms in a
+pessimistic count (1 SDP + 7 candidates per edge — real browsers send 3–5):
+`server/test/signal.ratelimit.headroom.test.js` replays that burst against the
+shipped defaults (100 + 15 = 115 budget, 0 dropped) and re-proves the flood
+guard still bites. The server code is exactly Day 8's.
+
+**Not included (later days):** Web Audio of any kind (GainNode proximity
+attenuation, StereoPanner, volume drop-off), mute buttons or other extra UI,
+TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint, Express
+serving `client/dist`, Docker, TypeScript, any new library, any change to
+existing server behavior.
