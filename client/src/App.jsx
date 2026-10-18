@@ -1,12 +1,13 @@
 import JoinScreen from './components/JoinScreen.jsx';
 import WorldCanvas from './components/WorldCanvas.jsx';
+import AudioStatus from './components/AudioStatus.jsx';
 import { useSocket } from './hooks/useSocket.js';
 import { useMovement } from './hooks/useMovement.js';
 import { drawWorld } from './canvas/renderer.js';
 import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
-  const { world, status, error, joinedInfo, join, emitMove, mic } = useSocket();
+  const { world, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot } = useSocket();
   // Movement input + per-frame controller. Its `update` runs inside the
   // canvas's single rAF loop and never touches React state, so walking
   // around causes zero re-renders.
@@ -47,6 +48,7 @@ export default function App() {
           </span>
         ) : null}
       </div>
+      <AudioStatus mic={mic} getSnapshot={getAudioSnapshot} />
     </>
   );
 }
