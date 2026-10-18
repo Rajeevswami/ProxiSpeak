@@ -63,6 +63,13 @@ export function useSocket() {
   /** The user's last choice: 'mic' or 'listen-only'. Re-acquire the mic on a
    * reconnect only when the user asked to speak. */
   const micModeRef = useRef('listen-only');
+  /** True while the microphone is (or was) capturing this session: only a mic
+   * that worked before a drop is worth re-acquiring after the reconnect. */
+  const micWasLiveRef = useRef(false);
+  /** Set on 'disconnect', consumed by the next 'connect': the mic is only
+   * re-requested after a real reconnect — never a second time inside the same
+   * join (a denied permission must not be asked again immediately). */
+  const reconnectingRef = useRef(false);
   /**
    * Ids announced by `user:joined` on the current connection. Used by the
    * snapshot merge: a user who announces themselves while our own join is in
@@ -110,6 +117,7 @@ export function useSocket() {
   const requestMic = useCallback(async () => {
     const result = await localMediaRef.current.request();
     if (result.ok) {
+      micWasLiveRef.current = true;
       setMic({ state: 'on', notice: null });
       return true;
     }
@@ -136,9 +144,11 @@ export function useSocket() {
       //    the permission prompt has a real user gesture behind it. A denial
       //    or missing device is announced and the join continues listen-only.
       micModeRef.current = withMic ? 'mic' : 'listen-only';
+      reconnectingRef.current = false; // a fresh join is not a reconnect
       if (withMic) {
         await requestMic();
       } else {
+        micWasLiveRef.current = false;
         localMediaRef.current.release();
         setMic({ state: 'listen-only', notice: null });
       }
@@ -169,11 +179,20 @@ export function useSocket() {
         announcedRef.current.clear();
         departedRef.current.clear();
         snapshotPendingRef.current = true;
-        // A reconnect starts a new session (closeAll already ran on the
-        // disconnect): get the microphone back before the re-join so the new
-        // peer:connect edges carry audio again. The permission is already
-        // granted, so no prompt appears; a failure falls back to listen-only.
-        if (micModeRef.current === 'mic' && !localMediaRef.current.isActive()) {
+        // Only after a real reconnect (a 'disconnect' happened): closeAll ran
+        // there and stopped the tracks, so get the microphone back before the
+        // re-join when the user joined with a working mic. The permission is
+        // already granted, so no prompt appears. A fresh join already asked
+        // once inside the click — never ask twice; a mic that never worked is
+        // not re-requested (listen-only already covers it).
+        const reconnecting = reconnectingRef.current;
+        reconnectingRef.current = false;
+        if (
+          reconnecting &&
+          micModeRef.current === 'mic' &&
+          micWasLiveRef.current &&
+          !localMediaRef.current.isActive()
+        ) {
           await requestMic();
         }
         const pending = pendingJoinRef.current;
@@ -246,6 +265,7 @@ export function useSocket() {
         // audio element, stats timer or microphone track survives it. The
         // 'connect' handler re-acquires the mic and the server re-creates the
         // edges through peer:connect after the re-join.
+        reconnectingRef.current = true;
         peerManagerRef.current?.closeAll();
         // Socket.io reconnects on its own, so a member stays in the world and
         // the HUD reports the reconnect. A connection that drops *before* the
