@@ -6,7 +6,7 @@ import { drawWorld } from './canvas/renderer.js';
 import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
-  const { world, status, error, joinedInfo, join, emitMove } = useSocket();
+  const { world, status, error, joinedInfo, join, emitMove, mic } = useSocket();
   // Movement input + per-frame controller. Its `update` runs inside the
   // canvas's single rAF loop and never touches React state, so walking
   // around causes zero re-renders.
@@ -17,7 +17,7 @@ export default function App() {
   // connection failure) are what the user sees. The movement listeners
   // are already attached but ignore keys while the form has focus.
   if (!joinedInfo) {
-    return <JoinScreen onJoin={join} status={status} error={error} />;
+    return <JoinScreen onJoin={join} status={status} error={error} notice={mic.notice} />;
   }
 
   // In the world there is no join screen left to report problems, so the HUD
