@@ -79,3 +79,14 @@ body {
   color: #ffb4c0;
   font-weight: 600;
 }
+
+/* Remote <audio> elements (Day 9). Hidden, but not display:none — some
+   browsers refuse to play media in a display:none subtree. */
+.remote-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}

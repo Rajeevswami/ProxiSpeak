@@ -30,6 +30,9 @@
  * with data = { type: "offer"|"answer", sdp } or { type: "candidate", candidate }.
  */
 
+import { createRemoteAudio } from './remoteAudio.js';
+import { createRtcStats } from './rtcStats.js';
+
 const noop = () => {};
 
 const defaultLogger = {
@@ -39,21 +42,6 @@ const defaultLogger = {
   error: (...args) => console.error('[webrtc]', ...args),
 };
 
-/** Remote-audio sink used when none is injected (commit 3 wires the real one). */
-const noopRemoteAudio = {
-  attach: noop,
-  remove: noop,
-  removeAll: noop,
-};
-
-/** Stats poller used when none is injected (commit 3 wires the real one). */
-const noopStats = {
-  watch: noop,
-  unwatch: noop,
-  stopAll: noop,
-  get: () => null,
-};
-
 /**
  * @param {object} options
  * @param {{emit: Function, on: Function}} options.socket socket-like emitter
@@ -61,8 +49,10 @@ const noopStats = {
  * @param {Function} options.createPeerConnection (configuration) => RTCPeerConnection
  * @param {object} [options.logger] { debug, info, warn, error }
  * @param {object} [options.localMedia] { getStream(), release() } — the mic
- * @param {object} [options.remoteAudio] { attach(peerId, stream), remove(peerId), removeAll() }
- * @param {object} [options.stats] { watch(peerId, pc), unwatch(peerId), stopAll(), get(peerId) }
+ * @param {object} [options.remoteAudio] { attach(peerId, stream), remove(peerId), removeAll() };
+ *   defaults to a real `createRemoteAudio()` (own `<audio>` element per peer)
+ * @param {object} [options.stats] { watch(peerId, pc), unwatch(peerId), stopAll(), get(peerId) };
+ *   defaults to a real `createRtcStats()` (~1 s `getStats()` poll per peer)
  * @param {Array} [options.fallbackIceServers] ICE list from `joined`, used when
  *   a `peer:connect` arrives without one
  */
@@ -71,8 +61,8 @@ export function createPeerManager({
   createPeerConnection,
   logger = defaultLogger,
   localMedia = null,
-  remoteAudio = noopRemoteAudio,
-  stats = noopStats,
+  remoteAudio = null,
+  stats = null,
   fallbackIceServers = [],
 } = {}) {
   if (!socket || typeof socket.on !== 'function' || typeof socket.emit !== 'function') {
@@ -82,8 +72,8 @@ export function createPeerManager({
     throw new Error('createPeerManager requires a createPeerConnection factory');
   }
   const log = logger ?? defaultLogger;
-  const audio = remoteAudio ?? noopRemoteAudio;
-  const statsPoll = stats ?? noopStats;
+  const audio = remoteAudio ?? createRemoteAudio();
+  const statsPoll = stats ?? createRtcStats({ logger: log });
 
   /** peerId -> edge record (never two per peer). */
   const connections = new Map();
