@@ -187,6 +187,7 @@ offer/answer/ICE path runs end to end.
 
 - **Mic permission denied** → the padlock → Site settings → Microphone → Allow,
   join again; the overlay must show `mic on` afterwards.
+- **Bytes climb but silence** → click the page once (browser autoplay policy).
 - **No audio** → check `bytesReceived` first: climbing bytes + silence means
   playback (tab/OS volume, autoplay policy after a gesture); frozen `0 B` +
   `connecting` means ICE — same machine/LAN works with STUN-only, strict

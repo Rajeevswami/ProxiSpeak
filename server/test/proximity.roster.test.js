@@ -3,39 +3,36 @@ import assert from 'node:assert/strict';
 import UserPresence from '../src/models/UserPresence.js';
 import { computeClusters } from '../src/services/proximityService.js';
 
-test('one final room/live roster query drops vanished bridge and empty clusters', async (t) => {
+test('computeClusters uses ONE lean roster query and an in-memory grid', async (t) => {
   const users = [
     { sessionId: 'A', x: 100, y: 100 }, { sessionId: 'B', x: 190, y: 100 },
     { sessionId: 'C', x: 280, y: 100 }, { sessionId: 'D', x: 1000, y: 100 },
   ];
-  let queries = 0, rechecks = 0;
+  let queries = 0; let projection = null;
   t.mock.method(UserPresence, 'find', (filter) => {
     queries++;
     assert.equal(filter.roomId, 'room');
     assert.ok(filter.lastSeen.$gte instanceof Date);
-    let result;
-    if (filter.sessionId?.$in) {
-      rechecks++;
-      assert.deepEqual([...filter.sessionId.$in].sort(), ['A', 'B', 'C', 'D']);
-      // B (a bridge) and D disappeared after neighbor discovery. Do not split A/C.
-      result = [{ sessionId: 'A' }, { sessionId: 'C' }];
-    } else if (filter.location) {
-      const center = users.find((u) => u.sessionId === filter.sessionId.$ne);
-      result = users.filter((u) => u !== center && Math.hypot(u.x - center.x, u.y - center.y) <= 100);
-    } else result = users;
-    return { sort() { return this; }, select() { return this; }, async lean() { return result; } };
+    assert.equal(filter.location, undefined, 'no $near per user in fast clustering');
+    return {
+      select(fields) { projection = fields; return this; },
+      sort() { return this; },
+      async lean() { return users; },
+    };
   });
-  assert.deepEqual(await computeClusters('room'), [['A', 'C']]);
-  assert.equal(queries, 6, 'N neighbor queries + initial roster + ONE final roster query');
-  assert.equal(rechecks, 1);
+  // Chain A-B-C (A..C = 180px apart) is one connected component.
+  assert.deepEqual(await computeClusters('room'), [['A', 'B', 'C'], ['D']]);
+  assert.equal(queries, 1, 'exactly one roster query');
+  assert.match(projection, /sessionId/); assert.match(projection, /x/); assert.match(projection, /y/);
+  assert.match(projection, /-_id/, 'projection is id/x/y only — not even the default _id');
 });
 
-test('empty room still has a single final roster check and no empty clusters', async (t) => {
+test('empty room: still one query, no empty clusters', async (t) => {
   let queries = 0;
   t.mock.method(UserPresence, 'find', () => {
     queries++;
-    return { sort() { return this; }, select() { return this; }, async lean() { return []; } };
+    return { select() { return this; }, sort() { return this; }, async lean() { return []; } };
   });
   assert.deepEqual(await computeClusters('empty'), []);
-  assert.equal(queries, 2);
+  assert.equal(queries, 1);
 });

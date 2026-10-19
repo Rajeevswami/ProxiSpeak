@@ -11,6 +11,7 @@
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
     "seed": "npm --prefix server run seed",
+    "audit": "npm --prefix server run audit --",
     "install:all": "npm run install:server && npm run install:client",
     "install:server": "npm install --prefix server",
     "install:client": "npm install --prefix client",

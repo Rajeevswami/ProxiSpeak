@@ -126,7 +126,16 @@ export const config = Object.freeze({
      * candidate batch may arrive at once) and refills at this sustained rate.
      */
     signalEventsPerSec: num('SOCKET_SIGNAL_EPS', 30, { min: 1, max: 1000 }),
-    signalBurst: num('SOCKET_SIGNAL_BURST', 100, { min: 1, max: 10000 }),
+    signalBurst: num('SOCKET_SIGNAL_BURST', 200, { min: 1, max: 10000 }),
+  }),
+
+  audit: Object.freeze({
+    // Guarded Mid-Review endpoint/script: on by default outside production,
+    // off by default in production; AUDIT_ENABLED=true/false overrides.
+    enabled: process.env.AUDIT_ENABLED === undefined || process.env.AUDIT_ENABLED === ''
+      ? nodeEnv !== 'production'
+      : ['1', 'true', 'yes'].includes(String(process.env.AUDIT_ENABLED).toLowerCase()),
+    targetMs: num('AUDIT_TARGET_MS', 20, { min: 0.001, max: 60000 }),
   }),
 
   world,
