@@ -349,7 +349,7 @@ commit follows them):
 
 ## Day 10 — 2026-10-19 — Mid-Project Review readiness
 
-*Commits: `fac55d6`, `436d591`, `ce41472`, `01d1f48`, `f31392c`, `4464d42` (plus this docs commit)*
+*Commits: `3699c13` (fast clustering), `38185b2` (spatial audit service/endpoint/script), `1974762` (docs + signal burst), plus the Day 10 review-fix commits that follow them in `git log`*
 
 **Changed**
 * `computeClusters` reworked: one lean roster query (id/x/y, live rows of the
