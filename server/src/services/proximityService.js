@@ -86,16 +86,21 @@ async function neighbors(roomId, center, radiusPx, live) {
     .sort((a, b) => a.distancePx - b.distancePx || a.id.localeCompare(b.id));
 }
 
+/** Query object behind countWithin (exported so the audit can explain it). */
+export function geoWithinQuery(roomId, center, radiusPx = config.proximity.radiusPx, live = livePresenceFilter()) {
+  validateRoom(roomId);
+  validateCenter(center);
+  validateRadius(radiusPx);
+  return {
+    roomId, ...live,
+    location: { $geoWithin: geo.centerSphere(center.x, center.y, candidateRadius(radiusPx)) },
+  };
+}
+
 /** Pixel centre { x, y }; includes a user at the centre itself. */
 export function countWithin(roomId, center, radiusPx = config.proximity.radiusPx) {
   return timed('countWithin', async () => {
-    validateRoom(roomId);
-    validateCenter(center);
-    validateRadius(radiusPx);
-    const rows = await UserPresence.find({
-      roomId, ...livePresenceFilter(),
-      location: { $geoWithin: geo.centerSphere(center.x, center.y, candidateRadius(radiusPx)) },
-    }).select('x y').lean();
+    const rows = await UserPresence.find(geoWithinQuery(roomId, center, radiusPx)).select('x y').lean();
     return rows.filter((row) => distancePx(center.x, center.y, row.x, row.y) <= radiusPx).length;
   });
 }
@@ -103,6 +108,68 @@ export function countWithin(roomId, center, radiusPx = config.proximity.radiusPx
 /** Connected components, not cliques: A-B-C remains one conversation. */
 export function computeClusters(roomId, radiusPx = config.proximity.radiusPx) {
   return timed('computeClusters', async () => {
+    validateRoom(roomId);
+    validateRadius(radiusPx);
+    // One lean roster query: live presence rows of this room, projected to
+    // id/x/y only. Clustering then happens exactly in memory (see grid below);
+    // $near/$geoWithin remain the tools for per-user discovery and counting.
+    const rows = await UserPresence.find({ roomId, ...livePresenceFilter() })
+      .select('sessionId x y').lean();
+    const users = rows
+      .map((row) => ({ id: row.sessionId, x: row.x, y: row.y }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    // Union-find over connected components.
+    const parent = users.map((_, index) => index);
+    const find = (index) => {
+      let root = index;
+      while (parent[root] !== root) root = parent[root];
+      while (parent[index] !== root) { const next = parent[index]; parent[index] = root; index = next; }
+      return root;
+    };
+    const union = (a, b) => {
+      const ra = find(a); const rb = find(b);
+      if (ra !== rb) parent[rb] = ra;
+    };
+
+    // In-memory spatial grid, cell size = radius: any pair within `radius`
+    // must lie in the same or an adjacent cell, so only the 3x3 neighbourhood
+    // of already-inserted users is checked, each with the exact pixel
+    // Euclidean test (distance <= radius). Average O(n) for bounded density.
+    const cell = radiusPx > 0 ? radiusPx : 1;
+    const grid = new Map();
+    users.forEach((user, index) => {
+      const cx = Math.floor(user.x / cell);
+      const cy = Math.floor(user.y / cell);
+      for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let gy = cy - 1; gy <= cy + 1; gy++) {
+          for (const otherIndex of grid.get(`${gx},${gy}`) ?? []) {
+            const other = users[otherIndex];
+            if (distancePx(user.x, user.y, other.x, other.y) <= radiusPx) union(index, otherIndex);
+          }
+        }
+      }
+      const key = `${cx},${cy}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(index);
+    });
+
+    const components = new Map();
+    users.forEach((user, index) => {
+      const root = find(index);
+      if (!components.has(root)) components.set(root, []);
+      components.get(root).push(user.id);
+    });
+    return [...components.values()].map((cluster) => cluster.sort());
+  });
+}
+
+/**
+ * Legacy $near-per-user clustering, kept ONLY as an independent cross-check
+ * for tests and the spatial audit. Not used by the peer graph or hot paths.
+ */
+export function computeClustersViaNear(roomId, radiusPx = config.proximity.radiusPx) {
+  return timed('computeClustersViaNear', async () => {
     validateRoom(roomId);
     validateRadius(radiusPx);
     const live = livePresenceFilter();
