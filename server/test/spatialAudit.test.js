@@ -53,8 +53,10 @@ test('seeded dataset is reproducible and plants the edge cases', () => {
 });
 
 test('summarize reports measured percentiles without rounding down', () => {
-  assert.deepEqual(summarize([10, 20, 30]), { p50: 20, p95: 20, max: 30 });
+  assert.deepEqual(summarize([10, 20, 30]), { p50: 20, p95: 30, max: 30 });
   assert.equal(summarize(Array.from({ length: 100 }, (_, i) => i + 1)).p95, 95);
+  // Nearest-rank: with 25 samples p95 is the 24th smallest, never lower.
+  assert.equal(summarize(Array.from({ length: 25 }, (_, i) => i + 1)).p95, 24);
 });
 
 // ---------- route: injected runner, no MongoDB needed ----------

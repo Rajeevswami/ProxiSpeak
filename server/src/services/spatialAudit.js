@@ -108,7 +108,10 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export function summarize(samplesMs) {
   if (!samplesMs.length) return { p50: 0, p95: 0, max: 0 };
   const sorted = [...samplesMs].sort((a, b) => a - b);
-  const at = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)))];
+  // Nearest-rank percentile: ceil(q*n)-th smallest. (The previous
+  // floor(q*(n-1)) index understated p95 — e.g. n=25 reported the 23rd of 25
+  // values — which could flip the 20 ms PASS gate.)
+  const at = (q) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
   return { p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1] };
 }
 
