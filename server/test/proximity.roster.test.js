@@ -24,6 +24,7 @@ test('computeClusters uses ONE lean roster query and an in-memory grid', async (
   assert.deepEqual(await computeClusters('room'), [['A', 'B', 'C'], ['D']]);
   assert.equal(queries, 1, 'exactly one roster query');
   assert.match(projection, /sessionId/); assert.match(projection, /x/); assert.match(projection, /y/);
+  assert.match(projection, /-_id/, 'projection is id/x/y only — not even the default _id');
 });
 
 test('empty room: still one query, no empty clusters', async (t) => {

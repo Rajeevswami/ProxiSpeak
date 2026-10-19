@@ -114,7 +114,7 @@ export function computeClusters(roomId, radiusPx = config.proximity.radiusPx) {
     // id/x/y only. Clustering then happens exactly in memory (see grid below);
     // $near/$geoWithin remain the tools for per-user discovery and counting.
     const rows = await UserPresence.find({ roomId, ...livePresenceFilter() })
-      .select('sessionId x y').lean();
+      .select('sessionId x y -_id').lean();
     const users = rows
       .map((row) => ({ id: row.sessionId, x: row.x, y: row.y }))
       .sort((a, b) => a.id.localeCompare(b.id));
