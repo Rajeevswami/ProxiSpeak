@@ -18,14 +18,14 @@ import config from '../src/config/index.js';
 
 const t0 = 1_000_000; // arbitrary base timestamp for the injectable clock
 
-test('10 simultaneous peers exchange ICE without tripping the signal bucket', () => {
+test('20 simultaneous peers exchange ICE without tripping the signal bucket', () => {
   const { signalBurst, signalEventsPerSec } = config.socket;
 
   // Per edge per side on connect: 1 SDP message (offer or answer) plus the
   // trickled candidates. Observed browsers send 2-4 candidates with one STUN
   // server (1-2 host, 0-1 srflx, 0-1 TCP); 7 is a deliberately pessimistic
   // double-count (multiple interfaces, both TCP and UDP, a spare).
-  const peers = 10;
+  const peers = 20;
   const signalsPerEdge = 1 + 7;
   const total = peers * signalsPerEdge;
   // The whole burst lands inside half a second — the pessimistic case for a
@@ -42,7 +42,7 @@ test('10 simultaneous peers exchange ICE without tripping the signal bucket', ()
   const budget = signalBurst + signalEventsPerSec * (burstWindowMs / 1000);
   console.log(
     `  signal bucket: capacity ${signalBurst}, refill ${signalEventsPerSec}/s -> ` +
-      `${budget} signals fit in ${burstWindowMs} ms; a 10-peer connect sends ${total} ` +
+      `${budget} signals fit in ${burstWindowMs} ms; a 20-peer connect sends ${total} ` +
       `(${signalsPerEdge} per edge), dropped: ${dropped}`,
   );
 

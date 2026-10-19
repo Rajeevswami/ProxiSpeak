@@ -346,3 +346,26 @@ commit follows them):
   `docs/DAY9.md`. No `connectionState`/`bytesReceived` numbers are claimed.
 - The 29 skipped real-MongoDB tests (no local MongoDB; they self-label
   "NOT VERIFIED"). With a local MongoDB the count must be 0 skipped.
+
+## Day 10 — 2026-10-19 — Mid-Project Review readiness
+
+*Commits: `fac55d6`, `436d591`, `ce41472`, `01d1f48`, `f31392c`, `4464d42` (plus this docs commit)*
+
+**Changed**
+* `computeClusters` reworked: one lean roster query (id/x/y, live rows of the
+  room) + in-memory spatial grid (cell = radius) + exact pixel Euclidean check
+  + union-find. The old `$near`-per-user algorithm is kept as
+  `computeClustersViaNear`, used only as a cross-check in tests and the audit.
+* `SOCKET_SIGNAL_BURST` default raised 100 → 200 so a ~20-user mutually-near
+  cluster (~160 signals/socket, pessimistic count) exchanges ICE unthrottled.
+
+**Added**
+* Spatial Audit: `server/src/services/spatialAudit.js`,
+  `server/scripts/audit.js` (`npm run audit`, exit 1 on FAIL) and guarded
+  `GET /api/spatial-audit` (AUDIT_ENABLED default on outside production, off in
+  production; users ≤ 500, samples ≤ 100, 429 on concurrent runs, no caller
+  roomId). Synthetic throwaway room, planted 99/100/101 px edge cases,
+  independent brute-force comparison, `performance.now()` p50/p95/max,
+  2dsphere explain check, `finally` cleanup verified empty.
+* `docs/REQUIREMENTS_TRACE.md` and `docs/DEMO_MIDREVIEW.md`; autoplay
+  troubleshooting row ("bytes climb but silence -> click the page once").

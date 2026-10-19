@@ -757,7 +757,9 @@ reconnects and sends a fresh `join`; moves never upsert and return
 The client handles `session_expired` by reconnecting through its existing
 connect/join/snapshot path, without adding listeners or duplicate avatars.
 
-Clusters are eventually consistent: one final live-roster query drops vanished ids, but concurrent moves/deletions can still affect membership and removing a bridge does not split an already computed cluster.
+Clusters are computed from one roster snapshot, so they are internally
+consistent for that snapshot; concurrent moves after the read are reflected on
+the next call.
 
 
 ## Week 2 — Day 8: Peer graph and signaling
@@ -809,7 +811,7 @@ Throttled signals are dropped silently; the socket stays connected.
 | --- | --- | --- |
 | `ICE_SERVERS` | `[{"urls":"stun:stun.l.google.com:19302"}]` | JSON array for `RTCPeerConnection`; STUN/STUNS only (no TURN on Day 8). Malformed values fall back to the default with one warning line at boot. |
 | `SOCKET_SIGNAL_EPS` | `30` | Sustained `signal` events per socket per second. |
-| `SOCKET_SIGNAL_BURST` | `100` | Burst capacity for trickled ICE candidates. |
+| `SOCKET_SIGNAL_BURST` | `200` | Burst capacity for trickled ICE candidates (Day 10: a ~20-user mutually-near cluster sends ~20×(1 SDP+7 candidates)=160 signals per socket; 200 covers it, refill adds 15 more in 500 ms). |
 
 ### Tests
 
@@ -927,13 +929,28 @@ climbing `bytesReceived` in both windows.
 | "Microphone permission was denied…" | The browser blocked the mic: open the padlock → Site settings → Microphone → Allow, and join again. Until then you are in listen-only mode and still hear others. |
 | Overlay stuck on `connecting`, no bytes | The ICE handshake did not finish — see the STUN-only note below, and check that both tabs really are in the same room. |
 | No audio, but bytes climb | The connection works and the *playback* is muted: check the tab/OS volume, and remember one side must have joined **with mic** — listen-only rows can still climb on their side. |
+| Bytes climb but silence | Click the page once (browser autoplay policy) — browsers block audio playback until a user gesture; then check tab/OS volume. |
 | "The microphone needs a secure page…" | `getUserMedia` needs https or `localhost`. Off localhost, serve the client over https (or a tunnel) — plain http on a LAN IP can never get a mic. |
 | Connected on localhost, fails across networks | The default is STUN-only (`stun:stun.l.google.com:19302`). Strict NATs/firewalls need a TURN relay, which is a later deployment concern — on one machine/LAN, STUN is enough. |
 | Two laptops + open speakers → howl | Use headphones. Echo cancellation helps, but open mics beside open speakers will always feed back eventually. |
 
 ### Signal rate limit (server, unchanged)
 
-Day 9 raises no server limit. The per-socket `signal` bucket ships as burst
+Day 9 raised no server limit (100 covered 10 peers). **Day 10** raises the
+default to `SOCKET_SIGNAL_BURST=200` (refill unchanged at
+`SOCKET_SIGNAL_EPS=30`/s): a cluster of ~20 mutually-near users sends, per
+socket, ~20 edges × (1 SDP + 7 candidates) = 160 signals in a pessimistic
+count (real browsers send 3–5 per edge), which now fits inside the burst
+capacity alone; with refill the 500 ms budget is 200 + 15 = 215.
+`server/test/signal.ratelimit.headroom.test.js` replays that 20-peer burst
+(0 dropped) and re-proves the flood guard still bites.
+
+**Not included (later days):** Web Audio of any kind (GainNode proximity
+attenuation, StereoPanner, volume drop-off), mute buttons or other extra UI,
+TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint, Express
+serving `client/dist`, Docker, TypeScript, any new library, any change to
+existing server behavior.
+s as burst
 `SOCKET_SIGNAL_BURST=100` + refill `SOCKET_SIGNAL_EPS=30`/s. A 10-peer
 simultaneous connect sends at most 80 signals per socket within 500 ms in a
 pessimistic count (1 SDP + 7 candidates per edge — real browsers send 3–5):
@@ -946,3 +963,29 @@ attenuation, StereoPanner, volume drop-off), mute buttons or other extra UI,
 TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint, Express
 serving `client/dist`, Docker, TypeScript, any new library, any change to
 existing server behavior.
+
+## Day 10 — Mid-Project Review readiness
+
+- **Fast clustering:** `computeClusters` = one lean roster query + in-memory
+  spatial grid (cell = radius) + exact pixel check + union-find. The old
+  `$near`-per-user algorithm is `computeClustersViaNear`, a test/audit
+  cross-check only. Design note: see the Day 7 section above.
+- **Spatial Audit:** `npm run audit` or
+  `curl "http://localhost:4000/api/spatial-audit?users=50&samples=25&seed=1"`
+  (guarded by `AUDIT_ENABLED` — default on outside production, off in
+  production; users ≤ 500, samples ≤ 100, one run at a time, no caller roomId).
+  Synthetic throwaway `audit-*` room, planted 99/100/101 px edge cases,
+  brute-force comparison, `performance.now()` p50/p95/max, 2dsphere explain
+  check, `finally` cleanup, PASS only on 0 mismatches and p95 ≤
+  `AUDIT_TARGET_MS` (default 20). Timings are reported exactly as measured.
+- **Signal burst:** `SOCKET_SIGNAL_BURST` default raised 100 → 200 (see the
+  Day 9 signal section above for the 20-peer arithmetic).
+- Docs: [docs/REQUIREMENTS_TRACE.md](docs/REQUIREMENTS_TRACE.md) ·
+  [docs/DEMO_MIDREVIEW.md](docs/DEMO_MIDREVIEW.md) ·
+  [docs/DAY7.md](docs/DAY7.md) · [docs/DAY8.md](docs/DAY8.md) ·
+  [docs/DAY9.md](docs/DAY9.md) · [docs/WEEK1.md](docs/WEEK1.md) ·
+  [docs/DEMO_WEEK1.md](docs/DEMO_WEEK1.md)
+
+**Not included (later weeks):** Web Audio (GainNode/StereoPanner/attenuation),
+Redis/Pub-Sub, obstacle occlusion, room persistence changes, Express serving
+`client/dist`, deploy configs, TURN, TypeScript, any new library.
