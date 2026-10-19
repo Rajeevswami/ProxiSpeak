@@ -11,7 +11,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test test/*.test.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "audit": "node scripts/audit.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

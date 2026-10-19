@@ -7,8 +7,9 @@ import express from 'express';
 import cors from 'cors';
 import config from './config/index.js';
 import logger from './utils/logger.js';
+import { runSpatialAudit, validateAuditParams } from './services/spatialAudit.js';
 
-export function createApp({ config: cfg = config, logger: log = logger } = {}) {
+export function createApp({ config: cfg = config, logger: log = logger, auditRunner = runSpatialAudit } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Reverse proxies (Nginx, PaaS routers) terminate TLS and forward
@@ -33,6 +34,27 @@ export function createApp({ config: cfg = config, logger: log = logger } = {}) {
       uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
       time: new Date().toISOString(),
     });
+  });
+
+  // Mid-Review Spatial Audit. Guarded: disabled unless config.audit.enabled
+  // (default off in production), params validated/capped, one run at a time,
+  // and the caller can never choose the room (always a throwaway audit room).
+  let auditRunning = false;
+  app.get('/api/spatial-audit', async (req, res, next) => {
+    if (!cfg.audit?.enabled) return res.status(404).json({ ok: false, error: `No route for ${req.method} ${req.path}` });
+    if (req.query.roomId !== undefined) {
+      return res.status(400).json({ ok: false, error: 'roomId is not accepted; the audit always uses its own throwaway room' });
+    }
+    let params;
+    try {
+      params = validateAuditParams({ users: req.query.users ?? 50, samples: req.query.samples ?? 25, seed: req.query.seed ?? 1 });
+    } catch (err) { return res.status(400).json({ ok: false, error: err.message }); }
+    if (auditRunning) return res.status(429).json({ ok: false, error: 'a spatial audit is already running' });
+    auditRunning = true;
+    try {
+      const report = await auditRunner(params);
+      return res.status(200).json({ ok: report.ok, audit: report });
+    } catch (err) { return next(err); } finally { auditRunning = false; }
   });
 
   app.use((req, res) => {
