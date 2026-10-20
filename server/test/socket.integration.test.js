@@ -194,6 +194,7 @@ test('two clients can join the same room and both receive the room snapshot', as
     // --- client A joins an empty room -------------------------------------
     const joinedA = await joinRoom(a, { roomId, name: 'Ada' });
     assert.equal(joinedA.selfId, a.id);
+    assert.equal(joinedA.proximityRadiusPx, config.proximity.radiusPx);
     assert.equal(joinedA.room.width, config.world.width);
     assert.equal(joinedA.room.height, config.world.height);
     assert.ok(joinedA.room.obstacles.length > 0, 'obstacles travel with the room data');
