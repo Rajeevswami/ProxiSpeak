@@ -90,16 +90,17 @@ export function createAudioMixer({
     peers.delete(peerId);
     try { peer.source?.disconnect(); } catch { /* already disconnected */ }
     try { peer.gain?.disconnect(); } catch { /* already disconnected */ }
-    peer.element?.pause?.();
+    try { peer.element?.pause?.(); } catch { /* no longer playing */ }
     if (peer.element) {
-      peer.element.srcObject = null;
-      peer.element.remove?.();
+      try { peer.element.srcObject = null; } catch { /* detached already */ }
+      try { peer.element.remove?.(); } catch { /* detached already */ }
     }
     return true;
   };
 
   const attach = (peerId, stream, element) => {
     remove(peerId);
+    ensureVisibilityListener();
     if (!stream || !element) return null;
     element.muted = true;
     const audioContext = ensureContext();

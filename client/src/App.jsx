@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import JoinScreen from './components/JoinScreen.jsx';
 import WorldCanvas from './components/WorldCanvas.jsx';
 import AudioStatus from './components/AudioStatus.jsx';
@@ -7,11 +8,15 @@ import { drawWorld } from './canvas/renderer.js';
 import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
-  const { world, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot } = useSocket();
+  const { world, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains } = useSocket();
   // Movement input + per-frame controller. Its `update` runs inside the
   // canvas's single rAF loop and never touches React state, so walking
   // around causes zero re-renders.
   const movement = useMovement({ world, emitMove });
+  const updateFrame = useCallback((deltaSeconds) => {
+    movement.update(deltaSeconds);
+    updateAudioGains();
+  }, [movement.update, updateAudioGains]);
 
   // Until the server confirms `joined`, stay on the join screen so its
   // validation and server errors (room_not_found, invalid payload,
@@ -36,7 +41,7 @@ export default function App() {
       <WorldCanvas
         world={world}
         renderFrame={drawWorld}
-        updateFrame={movement.update}
+        updateFrame={updateFrame}
         onWorldClick={movement.handleWorldClick}
       />
       <div className="world-hud">

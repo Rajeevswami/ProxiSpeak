@@ -65,14 +65,15 @@ export function createRemoteAudio({ document: doc, container } = {}) {
     /**
      * Attach one remote stream to its own audio element (replacing any
      * previous element for the same peer). Returns the element, or null when
-     * no DOM is available.
+     * no DOM is available. `muted` is used when Web Audio owns audible output.
      */
-    attach(peerId, stream) {
+    attach(peerId, stream, { muted = false } = {}) {
       if (!documentRef || !stream) return null;
       remove(peerId);
       const element = documentRef.createElement('audio');
       element.autoplay = true;
       element.playsInline = true;
+      element.muted = Boolean(muted);
       element.setAttribute('autoplay', '');
       element.setAttribute('playsinline', '');
       element.srcObject = stream;

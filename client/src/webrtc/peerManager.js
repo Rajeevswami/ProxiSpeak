@@ -51,6 +51,7 @@ const defaultLogger = {
  * @param {object} [options.localMedia] { getStream(), release() } — the mic
  * @param {object} [options.remoteAudio] { attach(peerId, stream), remove(peerId), removeAll() };
  *   defaults to a real `createRemoteAudio()` (own `<audio>` element per peer)
+ * @param {object} [options.audioMixer] { attach(peerId, stream, element), remove(peerId), closeAll() }
  * @param {object} [options.stats] { watch(peerId, pc), unwatch(peerId), stopAll(), get(peerId) };
  *   defaults to a real `createRtcStats()` (~1 s `getStats()` poll per peer)
  * @param {Array} [options.fallbackIceServers] ICE list from `joined`, used when
@@ -62,6 +63,7 @@ export function createPeerManager({
   logger = defaultLogger,
   localMedia = null,
   remoteAudio = null,
+  audioMixer = null,
   stats = null,
   fallbackIceServers = [],
 } = {}) {
@@ -117,6 +119,11 @@ export function createPeerManager({
       statsPoll.unwatch(peerId);
     } catch (err) {
       log.debug(`stats unwatch for ${peerId} failed:`, err?.message ?? err);
+    }
+    try {
+      audioMixer?.remove?.(peerId);
+    } catch (err) {
+      log.debug(`audio mixer remove for ${peerId} failed:`, err?.message ?? err);
     }
     try {
       audio.remove(peerId);
@@ -190,7 +197,10 @@ export function createPeerManager({
         const remote =
           event.streams?.[0] ??
           (typeof MediaStream === 'function' ? new MediaStream([event.track]) : null);
-        if (remote) audio.attach(peerId, remote);
+        if (remote) {
+          const element = audio.attach(peerId, remote, { muted: Boolean(audioMixer) });
+          if (element && audioMixer) audioMixer.attach(peerId, remote, element);
+        }
       } catch (err) {
         log.error(`remote track for ${peerId} failed:`, err?.message ?? err);
       }
@@ -345,6 +355,10 @@ export function createPeerManager({
       return connections.size;
     },
 
+    peerIds() {
+      return [...connections.keys()];
+    },
+
     /**
      * Tear everything down: every connection, every remote audio element,
      * every stats timer and the local tracks. Used on socket disconnect and
@@ -357,6 +371,11 @@ export function createPeerManager({
         statsPoll.stopAll();
       } catch (err) {
         log.debug('stats stopAll failed:', err?.message ?? err);
+      }
+      try {
+        audioMixer?.closeAll?.();
+      } catch (err) {
+        log.debug('audio mixer closeAll failed:', err?.message ?? err);
       }
       try {
         audio.removeAll();
