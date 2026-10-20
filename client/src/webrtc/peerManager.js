@@ -378,9 +378,10 @@ export function createPeerManager({
         log.debug('audio mixer closeAll failed:', err?.message ?? err);
       }
       try {
-        audio.removeAll();
+        if (typeof audio.destroy === 'function') audio.destroy();
+        else audio.removeAll();
       } catch (err) {
-        log.debug('audio removeAll failed:', err?.message ?? err);
+        log.debug('audio teardown failed:', err?.message ?? err);
       }
       // No local track may outlive the session (microphone LED included).
       const stream = localMedia?.getStream?.() ?? null;

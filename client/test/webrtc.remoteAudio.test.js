@@ -101,6 +101,39 @@ test('remove detaches the element and clears its stream; removeAll empties the c
   assert.equal(container.children.length, 0);
 });
 
+test('destroy removes owned elements and container; externally supplied containers stay owned by caller', () => {
+  const document = createFakeDocument();
+  const audio = createRemoteAudio({ document });
+  const first = audio.attach('bob', { id: 1 });
+  const ownedContainer = document.body.children[0];
+
+  audio.destroy();
+  assert.equal(first.parentNode, null);
+  assert.equal(first.srcObject, null);
+  assert.equal(audio.count(), 0);
+  assert.equal(document.body.children.length, 0);
+  audio.destroy(); // idempotent
+
+  const external = document.createElement('div');
+  document.body.appendChild(external);
+  const supplied = createRemoteAudio({ document, container: external });
+  supplied.attach('cat', { id: 2 });
+  supplied.destroy();
+  assert.equal(external.parentNode, document.body, 'caller-owned container remains attached');
+  assert.equal(external.children.length, 0);
+  assert.notEqual(ownedContainer.parentNode, document.body);
+});
+
+test('50 per-session audio sinks leave no elements or owned containers behind', () => {
+  const document = createFakeDocument();
+  for (let cycle = 0; cycle < 50; cycle += 1) {
+    const audio = createRemoteAudio({ document });
+    audio.attach(`peer-${cycle}`, { id: cycle }, { muted: true });
+    audio.destroy();
+  }
+  assert.equal(document.body.children.length, 0);
+});
+
 test('without a DOM document attach is a safe no-op', () => {
   const audio = createRemoteAudio({ document: null });
   assert.equal(audio.attach('bob', {}), null);
