@@ -320,7 +320,7 @@ server to client; nobody ever receives an event from a room they are not in.
 | Event | Direction | Payload | Notes |
 | --- | --- | --- | --- |
 | `join` | C→S | `{ roomId: string, name: string }` | `roomId` 1–48 chars (`a-z`, `0-9`, `-`, `_`; lowercased), `name` 1–24 chars, trimmed, control characters refused. |
-| `joined` | S→C | `{ selfId, room: { roomId, name, width, height, obstacles[] }, users: [{ id, name, x, y }] }` | Reply to the joining socket only. `users` is the room as it currently stands, **including** the newcomer (identified by `selfId`). `obstacles` are data only (`id`, `type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`) — Day 3 ships no collision or occlusion logic. |
+| `joined` | S→C | `{ selfId, room: { roomId, name, width, height, obstacles[] }, users: [{ id, name, x, y }], iceServers, proximityRadiusPx }` | Reply to the joining socket only. `users` is the room as it currently stands, **including** the newcomer (identified by `selfId`). `proximityRadiusPx` is the server's configured `PROXIMITY_RADIUS_PX` and is the client's single source of truth for audio silence distance (fallback: 100 only for older servers). `obstacles` are data only (`id`, `type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`) — no collision or occlusion logic. |
 | `user:joined` | S→C | `{ id, name, x, y }` | The other sockets in the same room, once per successful join. |
 | `move` | C→S | `{ x: number, y: number }` | Finite numbers only; the position is clamped into the room and the step is capped. |
 | `user:moved` | S→C | `{ id, x, y }` | The same room only, excluding the mover. |
@@ -989,3 +989,68 @@ existing server behavior.
 **Not included (later weeks):** Web Audio (GainNode/StereoPanner/attenuation),
 Redis/Pub-Sub, obstacle occlusion, room persistence changes, Express serving
 `client/dist`, deploy configs, TURN, TypeScript, any new library.
+
+## Week 3 — Day 11: Dynamic attenuation
+
+Remote WebRTC tracks now pass through the browser's Web Audio API. The server
+includes `proximityRadiusPx` in `joined` from its configured
+`PROXIMITY_RADIUS_PX` (default 100 px); the client uses it as the silence radius
+and falls back to 100 px only when talking to an older server. Full volume is
+maintained through 30 px, then smoothstep fades to zero at the outer radius.
+For the default radius, the curve is:
+
+```text
+Distance (px) | Gain
+--------------+------
+           0  | 100%
+          30  | 100%
+        47.5  |  84%
+          65  |  50%
+        82.5  |  16%
+         100  |   0%
+         >100 |   0%
+```
+
+The gain is `1 - (3t² - 2t³)`, `t=(distance-30)/(outer-30)` between the two
+radii; the zero slope at both ends avoids an audible step.
+
+```text
+remote MediaStream ──┬── muted hidden <audio autoplay playsinline> (Chrome quirk)
+                     └── MediaStreamAudioSourceNode → GainNode → destination
+                                                               ↑
+                                                distance-derived target gain
+```
+
+Chrome may not deliver remote WebRTC audio through Web Audio unless the same
+stream is also attached to an `HTMLMediaElement`. That hidden element remains
+attached but `muted = true`, so only the Web Audio chain is audible (no double
+playback). One `AudioContext` is shared; each peer starts with a zero-gain node.
+The Join click creates/resumes the context as a user gesture; a suspended context
+is retried on Join and when the tab becomes visible. Gains are smoothed with
+`setTargetAtTime(..., 0.05)`, updated at most 20 Hz from the existing canvas
+render loop. No extra animation loop or per-frame React updates were added.
+
+**Two-window check:** Start MongoDB, seed the existing room data, then start
+the server and client using the Day 4 setup above. Open two browser windows, join
+the same room with different names, allow mic access or choose Listen only, and
+use headphones. Walk within 30 px for full volume; walk away and confirm the
+status overlay's distance (px) and gain (%) update while the sound fades
+smoothly to silence at the displayed server radius; walk closer and confirm it
+returns. For Chrome without physical microphones, launch two profiles with
+`--use-fake-device-for-media-stream --use-fake-ui-for-media-stream` (use
+`--user-data-dir=/tmp/proxispeak-a` and `/tmp/proxispeak-b` respectively).
+The optional `--autoplay-policy=no-user-gesture-required` is only for isolating
+autoplay problems; omit it for the normal Join gesture test.
+
+**Troubleshooting:** If inbound bytes climb but there is silence, the hidden
+element being muted is expected: check its remote `srcObject`, the AudioContext
+`running` state, the overlay gain, and that the GainNode has connected to the
+destination after its first position update. If the context is suspended, click
+Join and return the tab to the foreground; browser autoplay policy may still
+require a user gesture. If audio is too loud outside the expected radius, check
+`joined.proximityRadiusPx` against server `PROXIMITY_RADIUS_PX`.
+
+Implementation and exact manual steps: [docs/DAY11.md](docs/DAY11.md). Unit
+coverage: `node --test client/test/audio.attenuation.test.js client/test/audio.audioMixer.test.js`.
+Real two-browser audio is not verifiable by Node tests. Stereo panning and
+left/right ear logic, plus obstacle occlusion, are Week 4—not Day 11.

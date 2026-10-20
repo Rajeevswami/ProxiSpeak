@@ -1,9 +1,9 @@
-# Requirements Trace — up to Day 10 (Mid-Project Review)
+# Requirements Trace — up to Day 11
 
-Every company requirement up to the Mid-Project Review, traced to files, tests
-and the exact command that demonstrates it. Status is honest: in this sandbox
-there is no MongoDB and no browser, so Mongo/browser items are DONE in code but
-their live run is NOT VERIFIED here (commands given; see DEMO_MIDREVIEW.md).
+Company requirements through the Mid-Project Review plus Week 3 Day 11, traced
+to files, tests and exact commands. Status is honest: there is no local MongoDB
+or browser/Chromium here, so their live runs are marked NOT VERIFIED; see
+`docs/DAY11.md` and `DEMO_MIDREVIEW.md` for rerun steps.
 
 | # | Requirement | Implementing files | Test files | Command that demonstrates it | Status |
 |---|---|---|---|---|---|
@@ -22,7 +22,11 @@ their live run is NOT VERIFIED here (commands given; see DEMO_MIDREVIEW.md).
 | 13 | Key module: WebRTC audio connection | Same as #7 | Same as #7 | `docs/DEMO_MIDREVIEW.md` | DONE (live run NOT VERIFIED in sandbox) |
 | 14 | Day 10: fast whole-room clustering (one roster query + in-memory grid + union-find), old `$near` algorithm kept as cross-check | `server/src/services/proximityService.js` (`computeClusters`, `computeClustersViaNear`) | `server/test/proximity.roster.test.js`, `server/test/spatialAudit.test.js` (20-layout equivalence) | `node --test server/test/proximity.roster.test.js server/test/spatialAudit.test.js` | DONE |
 | 15 | Day 10: signal burst covers ~20-user clusters | `server/src/config/index.js` (`SOCKET_SIGNAL_BURST=200`), `.env.example` | `server/test/signal.ratelimit.headroom.test.js` | `node --test server/test/signal.ratelimit.headroom.test.js` | DONE |
-| 16 | Spatial Audio Mixer (Web Audio gain/panning) | — | — | — | MISSING — intentionally: Week 3–4 scope, excluded from Day 10 |
+| 16 | Week 3 — Dynamic Attenuation: distance-based GainNode for remote WebRTC tracks | `client/src/audio/attenuation.js`, `client/src/audio/audioMixer.js`, `client/src/webrtc/peerManager.js`, `client/src/webrtc/remoteAudio.js`, `client/src/hooks/useSocket.js`, `client/src/App.jsx`, `client/src/components/AudioStatus.jsx`; server sends `proximityRadiusPx` in `server/src/sockets/index.js` | `client/test/audio.attenuation.test.js`, `client/test/audio.audioMixer.test.js`, `server/test/socket.integration.test.js` | `npm test`; `npm run build --prefix client`; manual two-window hearing steps: `docs/DAY11.md` | DONE in code and client unit tests; server joined-payload assertion NOT VERIFIED (32 server tests skipped: no MongoDB); real two-browser hearing NOT VERIFIED (no browser/Chromium) |
+| 17 | Week 3 — Mesh Scaling | — | — | — | MISSING / not started (later day; excluded from Day 11) |
+| 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io (Day 12) | — | — | — | MISSING / not started — next planned step; excluded from Day 11 |
 
 Nothing else was found PARTIAL or MISSING within Week 1, Week 2 or the
-Mid-Review scope. Week 3+ items are listed only to state they are out of scope.
+Mid-Review scope. Week 3 rows distinguish the Day 11 attenuation deliverable
+from later Mesh Scaling and Redis work. Stereo panning and occlusion remain
+Week 4 scope, not started.

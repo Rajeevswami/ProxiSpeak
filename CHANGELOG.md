@@ -369,3 +369,44 @@ commit follows them):
   2dsphere explain check, `finally` cleanup verified empty.
 * `docs/REQUIREMENTS_TRACE.md` and `docs/DEMO_MIDREVIEW.md`; autoplay
   troubleshooting row ("bytes climb but silence -> click the page once").
+
+## Week 3 — Day 11 — 2026-10-20 — dynamic distance attenuation
+
+*Commits: `5ba8f32`, `234c209`, `10721f6`, `ffc9310`, `b265b1c`, `9f3f533`*
+
+**Added**
+
+- Pure Euclidean pixel distance and smoothstep gain curve (30 px inner radius,
+  server-supplied outer radius), with invalid input safely silent.
+- `joined.proximityRadiusPx` sourced from the existing server
+  `PROXIMITY_RADIUS_PX` config; client fallback is 100 px for older servers.
+- One dependency-injected Web Audio mixer with one source → GainNode chain per
+  remote peer, zero initial gain, smoothed 50 ms target updates, a 20 Hz maximum
+  tick, suspended-context recovery, and full peer/context cleanup. If Web Audio
+  is unavailable, hidden remote audio elements fall back to full-volume playback.
+- Remote streams remain attached to muted hidden audio elements for Chrome's
+  WebRTC/Web Audio compatibility behavior. The existing single render loop
+  updates gain from local predicted and remote rendered positions; the status
+  overlay reports distance and gain at most once per second.
+- Node tests for curve boundaries/sweep/invalid inputs, mixer chain and lifecycle,
+  exact gain targets, unknown positions, visibility resume, fallback, and tick
+  throttling; documentation and requirement trace updated for Day 11.
+
+**Scope boundary**
+
+- No panning, occlusion, Redis/Pub-Sub, mesh optimization, new library, or new
+  UI controls. Stereo panning and occlusion remain Week 4; Redis Pub/Sub is the
+  planned Day 12 work.
+
+**Verified in this environment (2026-10-20)**
+
+- Fresh `npm run install:all` succeeded; `npm run build --prefix client` succeeded.
+- Root `npm test`: server **80 passed / 0 failed / 32 skipped**; client
+  **142 passed / 0 failed / 0 skipped**. Server integration tests were skipped
+  because no local MongoDB is available (`127.0.0.1:27017`); the
+  `joined.proximityRadiusPx` integration assertion is among those NOT VERIFIED
+  server tests. With local MongoDB, expected skipped count is 0.
+- No headless Chromium/browser is installed here. Real GainNode measurements at
+  10, 50 and 90 px and the two-window hearing test are **NOT VERIFIED**; no
+  audible-output numbers are claimed. Exact manual steps and Chrome fake-device
+  flags are in `docs/DAY11.md`.
