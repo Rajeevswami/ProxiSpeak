@@ -21,10 +21,11 @@ and talk.
 
 ## Tech stack
 
-* **Backend** — Node.js, Express, Socket.io, MongoDB (`$near` / `$geoWithin` /
-  `$geoNear`, `2dsphere`), Redis Pub/Sub (`@socket.io/redis-adapter` + a
-  domain-event channel).
-* **Frontend** — React, HTML5 Canvas API, WebRTC (`getUserMedia`), Web Audio API.
+* **Backend** — Node.js, Express, Socket.io, MongoDB (`$near` / `$geoWithin`,
+  `2dsphere`). Redis Pub/Sub is planned for Day 12; it and the Socket.io Redis
+  adapter are not installed or implemented.
+* **Frontend** — React, HTML5 Canvas API, WebRTC (`getUserMedia`), Web Audio API
+  (Day 11 distance attenuation; panning/occlusion remain Week 4).
 
 No other libraries. No TURN. No UI kit, no state-management library, no extra
 database.
@@ -35,19 +36,19 @@ database.
 | --- | --- | --- |
 | `server/` — Express app | Health endpoint, JSON API surface, config + logger | **Day 1 — done** |
 | Geospatial engine | MongoDB `2dsphere` queries (`$near`, `$geoWithin`) mapped onto the 2D world plane | Week 1–2 |
-| Presence & signaling | Socket.io gateway, presence lifecycle, Redis Pub/Sub for multi-instance scaling | Week 2 |
-| Voice mesh | WebRTC peer connections with mesh hygiene (renegotiation, ICE restarts) | Week 3 |
-| Spatial audio | Web Audio API crossfade, proximity gain and wall occlusion | Week 3 |
-| Client | React + Canvas live map, avatar movement, audio UI | Week 3–4 |
+| Presence & signaling | Socket.io gateway, presence lifecycle, in-process peer graph; Redis Pub/Sub multi-instance scaling is planned for Day 12 | Week 2 done; backend scaling not started |
+| Voice mesh | WebRTC peer connections; mesh optimization is planned for Day 13 | Week 2 done; optimization not started |
+| Spatial audio | Web Audio API distance attenuation (GainNode) | Day 11 done; panning and wall occlusion are Week 4 |
+| Client | React + Canvas live map, avatar movement, WebRTC audio and read-only audio status | Week 1–3 slices done |
 
 ## Week-wise plan
 
 | Week | Focus | Deliverables | Review |
 | --- | --- | --- | --- |
 | **Week 1** | Foundations & data layer | Project setup (Day 1), MongoDB connection, `UserPresence` / `Room` schemas with `2dsphere` index, seed script, health endpoint | Week 1 review: server boots green, geo data seeds and queries |
-| **Week 2** | Real-time presence & proximity | Socket.io gateway, Redis Pub/Sub adapter, presence lifecycle, earshot queries on the world plane | Week 2 review: presence flows, proximity queries stay inside the latency budget |
-| **Week 3** | Voice mesh & spatial audio | WebRTC signaling, peer graph hygiene, Web Audio proximity crossfade and occlusion | Week 3 review: audio opens/closes by distance, mute/occlusion works |
-| **Week 4** | Client & hardening | Full React/Canvas client, movement + audio UX, load testing, production hardening | Final review: end-to-end multi-user demo |
+| **Week 2** | Real-time presence, proximity & P2P audio | Socket.io gateway, presence lifecycle, `$near` queries, in-process peer graph and WebRTC signaling/audio | Week 2 review: presence and proximity behavior |
+| **Week 3** | Frontend attenuation; backend scaling (planned) | Day 11 Web Audio distance gain is done; Day 12 Redis Pub/Sub and Day 13 mesh optimization are not started | Review gain fades by pixel distance; backend multi-instance work follows |
+| **Week 4** | Spatial audio and hardening | Stereo panning, obstacle occlusion, load testing and production hardening | Final review: end-to-end multi-user demo |
 
 ## Week 1 — what is done (Day 1–6)
 
@@ -59,8 +60,8 @@ with the keyboard or the mouse, and every other tab sees your avatar move.
 
 | Layer | Used in Week 1 | Later weeks |
 | --- | --- | --- |
-| Backend | Node.js, Express (health + JSON API), Socket.io, MongoDB via Mongoose (`2dsphere`) | Redis Pub/Sub adapter (Week 2) |
-| Frontend | React 18 + Vite, HTML5 Canvas 2D, `socket.io-client` | WebRTC (`getUserMedia`), Web Audio API (Week 3) |
+| Backend | Node.js, Express (health + JSON API), Socket.io, MongoDB via Mongoose (`2dsphere`) | Redis Pub/Sub adapter (planned Day 12, Week 3; not installed yet) |
+| Frontend | React 18 + Vite, HTML5 Canvas 2D, `socket.io-client` | WebRTC (`getUserMedia`); Web Audio attenuation (Day 11), panning/occlusion (Week 4) |
 | Tooling | Node's built-in test runner (`node --test`), no test framework, no UI kit, no state library | — |
 
 ### Key modules
@@ -181,10 +182,10 @@ npm test
 
 More detail: [Day 5 — Movement and broadcasting](#day-5-movement-and-broadcasting).
 
-### Known limitations / coming in Week 2–4
+### Known limitations at the end of Week 1 (historical snapshot)
 
-* **No audio yet.** WebRTC, `getUserMedia` and the Web Audio proximity crossfade
-  are Week 3; nothing asks for microphone permission in Week 1.
+* **No audio yet at this point in the project.** WebRTC and `getUserMedia` were
+  added in Week 2; distance-based Web Audio attenuation arrived on Day 11.
 * **No proximity logic.** Earshot, `$near` / `$geoWithin`, and the peer graph are
   Week 2. The projection (1 px = 0.1 m) and the `2dsphere` index they need are
   already in place.
@@ -195,8 +196,8 @@ More detail: [Day 5 — Movement and broadcasting](#day-5-movement-and-broadcast
   presence lifecycle that removes the row immediately is Week 2.
 * **A reconnect respawns you at a free spawn point** (the server does not resume
   your previous position) and you cannot switch rooms without reloading.
-* **Single instance.** Redis Pub/Sub and multi-instance rooms are Week 2; rooms
-  live in one process.
+* **Single instance.** Rooms and the peer graph are process-local. Redis Pub/Sub
+  multi-instance support is planned for Week 3 Day 12 and is not implemented.
 * No rate limiting on joins, no auth, no persistence of movement history.
 
 ## Day 2: MongoDB setup
@@ -945,24 +946,11 @@ capacity alone; with refill the 500 ms budget is 200 + 15 = 215.
 `server/test/signal.ratelimit.headroom.test.js` replays that 20-peer burst
 (0 dropped) and re-proves the flood guard still bites.
 
-**Not included (later days):** Web Audio of any kind (GainNode proximity
-attenuation, StereoPanner, volume drop-off), mute buttons or other extra UI,
-TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint, Express
-serving `client/dist`, Docker, TypeScript, any new library, any change to
-existing server behavior.
-s as burst
-`SOCKET_SIGNAL_BURST=100` + refill `SOCKET_SIGNAL_EPS=30`/s. A 10-peer
-simultaneous connect sends at most 80 signals per socket within 500 ms in a
-pessimistic count (1 SDP + 7 candidates per edge — real browsers send 3–5):
-`server/test/signal.ratelimit.headroom.test.js` replays that burst against the
-shipped defaults (100 + 15 = 115 budget, 0 dropped) and re-proves the flood
-guard still bites. The server code is exactly Day 8's.
-
-**Not included (later days):** Web Audio of any kind (GainNode proximity
-attenuation, StereoPanner, volume drop-off), mute buttons or other extra UI,
-TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint, Express
-serving `client/dist`, Docker, TypeScript, any new library, any change to
-existing server behavior.
+**Day 9 scope snapshot (before later days):** Web Audio of any kind (GainNode
+proximity attenuation, StereoPanner, volume drop-off), mute buttons or other
+extra UI, TURN servers, Redis, obstacle occlusion, the spatial-audit endpoint,
+Express serving `client/dist`, Docker, TypeScript, any new library, and changes
+to existing server behavior were not included in Day 9.
 
 ## Day 10 — Mid-Project Review readiness
 
@@ -986,9 +974,11 @@ existing server behavior.
   [docs/DAY9.md](docs/DAY9.md) · [docs/WEEK1.md](docs/WEEK1.md) ·
   [docs/DEMO_WEEK1.md](docs/DEMO_WEEK1.md)
 
-**Not included (later weeks):** Web Audio (GainNode/StereoPanner/attenuation),
-Redis/Pub-Sub, obstacle occlusion, room persistence changes, Express serving
-`client/dist`, deploy configs, TURN, TypeScript, any new library.
+**Day 10 scope snapshot (before Day 11):** Distance attenuation had not yet
+been implemented; Day 11 adds GainNode attenuation. Stereo panning and obstacle
+occlusion remain Week 4; Redis Pub/Sub and mesh optimization are planned for
+Days 12 and 13 and are not started. TURN, deployment configs, Express serving
+`client/dist`, TypeScript and new dependencies remain out of scope.
 
 ## Week 3 — Day 11: Dynamic attenuation
 

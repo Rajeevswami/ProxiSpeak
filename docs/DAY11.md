@@ -44,7 +44,7 @@ same stream is also attached to an `HTMLMediaElement`. The hidden element stays
 attached and muted; audible output comes only from the GainNode chain, so there
 is no double playback. If Web Audio is unavailable, the element is unmuted and
 plays at full volume, with one warning routed through the injected client
-logger (no new UI control).
+logger (by default a single `console.warn`); there is no new UI control.
 
 The context is created/resumed synchronously from the Join click's user
 activation. A suspended context is retried on the Join gesture and when the
@@ -98,7 +98,7 @@ the first distance calculation. Changes use
 - Fresh installs: `npm run install:all` succeeded. Production bundle:
   `npm run build --prefix client` succeeded.
 - Root `npm test`: server **80 passed / 0 failed / 32 skipped**; client
-  **142 passed / 0 failed / 0 skipped**. The server suite skips MongoDB-backed
+  **145 passed / 0 failed / 0 skipped**. The server suite skips MongoDB-backed
   integration cases because no local MongoDB is available; therefore the
   `joined.proximityRadiusPx` live integration assertion is NOT VERIFIED here.
   With local MongoDB, skipped must be 0.

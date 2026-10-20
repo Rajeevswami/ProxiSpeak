@@ -66,9 +66,10 @@ exchange offers/answers, and relays signaling for live edges inside 100 px."
 
 ## 6:30–7:00 — Close
 
-"Next (Week 3, not started): Redis Pub/Sub scaling and the Web Audio spatial
-mixer. Today: clustering is O(n) in memory after one roster query, and the
-audit proves geospatial accuracy with a 20 ms p95 budget."
+"Day 11 has since added the Web Audio distance-gain mixer. Next (Day 12): Redis
+Pub/Sub scaling; mesh optimization is planned for Day 13. Stereo panning and
+occlusion remain Week 4 work. This review's spatial audit still uses one roster
+query and reports its measured result against the 20 ms p95 budget."
 
 ## Troubleshooting
 

@@ -372,7 +372,11 @@ commit follows them):
 
 ## Week 3 — Day 11 — 2026-10-20 — dynamic distance attenuation
 
-*Commits: `5ba8f32`, `234c209`, `10721f6`, `ffc9310`, `b265b1c`, `9f3f533`*
+*Commits: `5ba8f32`, `234c209`, `10721f6`, `ffc9310`, `b265b1c`, `9f3f533`, `6e561e1`*
+
+*QA follow-ups from this re-review: default fallback warning, full remote-audio
+container teardown, corrected roadmap/history, and explicit NOT VERIFIED trace
+statuses for checks blocked by unavailable MongoDB/browser tooling.*
 
 **Added**
 
@@ -402,7 +406,7 @@ commit follows them):
 
 - Fresh `npm run install:all` succeeded; `npm run build --prefix client` succeeded.
 - Root `npm test`: server **80 passed / 0 failed / 32 skipped**; client
-  **142 passed / 0 failed / 0 skipped**. Server integration tests were skipped
+  **145 passed / 0 failed / 0 skipped**. Server integration tests were skipped
   because no local MongoDB is available (`127.0.0.1:27017`); the
   `joined.proximityRadiusPx` integration assertion is among those NOT VERIFIED
   server tests. With local MongoDB, expected skipped count is 0.
