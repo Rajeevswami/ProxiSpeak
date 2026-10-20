@@ -11,6 +11,7 @@ import {
   moveUser,
   removeUser,
 } from '../realtime/worldState.js';
+import { createAudioMixer } from '../audio/audioMixer.js';
 import { createLocalMedia } from '../webrtc/localMedia.js';
 import { createPeerManager } from '../webrtc/peerManager.js';
 
@@ -58,6 +59,9 @@ export function useSocket() {
   /** Microphone handle for this page (Day 9): one `createLocalMedia` per hook. */
   const localMediaRef = useRef(null);
   if (localMediaRef.current === null) localMediaRef.current = createLocalMedia();
+  /** One shared remote-audio mixer for this app session; no React state. */
+  const audioMixerRef = useRef(null);
+  if (audioMixerRef.current === null) audioMixerRef.current = createAudioMixer();
   /** WebRTC mesh for the current connection (Day 9), kept out of React state. */
   const peerManagerRef = useRef(null);
   /** The user's last choice: 'mic' or 'listen-only'. Re-acquire the mic on a
@@ -103,6 +107,7 @@ export function useSocket() {
     const peers = peerManagerRef.current;
     peerManagerRef.current = null;
     if (peers) peers.closeAll();
+    else void audioMixerRef.current?.closeAll?.();
     if (socket) {
       socket.removeAllListeners();
       socket.disconnect();
@@ -132,6 +137,9 @@ export function useSocket() {
 
       // Start from a clean slate: a (re)join never inherits stale avatars.
       teardownSocket();
+      // Must run synchronously from the Join click's user gesture. The context
+      // is shared across every remote peer in this page.
+      void audioMixerRef.current.resume();
       const world = worldRef.current;
       world.room = null;
       world.users.clear();
@@ -173,6 +181,7 @@ export function useSocket() {
         socket,
         createPeerConnection: (configuration) => new RTCPeerConnection(configuration),
         localMedia: localMediaRef.current,
+        audioMixer: audioMixerRef.current,
       });
 
       socket.on('connect', async () => {
@@ -201,6 +210,7 @@ export function useSocket() {
 
       socket.on('joined', (payload) => {
         if (!payload || typeof payload !== 'object') return;
+        audioMixerRef.current.setProximityRadius(payload.proximityRadiusPx);
         const world = worldRef.current;
         applyJoinedSnapshot(world, payload, {
           selfId: payload.selfId ?? socket.id ?? null,
@@ -305,9 +315,31 @@ export function useSocket() {
    * a second: `[{ peerId, name, generation, connectionState, bytesReceived }]`.
    * Never reactive — the overlay decides when to read it.
    */
-  const getAudioSnapshot = useCallback(() => peerManagerRef.current?.snapshot() ?? [], []);
+  const getAudioSnapshot = useCallback(() => {
+    const mixer = audioMixerRef.current;
+    return (peerManagerRef.current?.snapshot() ?? []).map((row) => ({
+      ...row,
+      ...(mixer.peerMetrics(row.peerId) ?? { distancePx: null, volumePercent: 0 }),
+    }));
+  }, []);
 
-  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot };
+  /** Called from the canvas's existing rAF after movement/interpolation. */
+  const updateAudioGains = useCallback(() => {
+    const world = worldRef.current;
+    const local = world.users.get(world.selfId);
+    if (!local) return false;
+    const peerIds = peerManagerRef.current?.peerIds?.() ?? [];
+    return audioMixerRef.current.updateGains(
+      { x: local.x, y: local.y },
+      (peerId) => {
+        const remote = world.users.get(peerId);
+        return remote ? { x: remote.x, y: remote.y } : null;
+      },
+      peerIds,
+    );
+  }, []);
+
+  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains };
 }
 
 export default useSocket;

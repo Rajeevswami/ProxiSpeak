@@ -5,10 +5,9 @@
  * kept in a hidden container and removed when the peer goes away. That is the
  * whole slice: plain HTMLMediaElement playback only.
  *
- * NO Web Audio here on purpose — GainNode proximity attenuation and
- * StereoPanner positioning are Week 3 and Week 4 work. The element surface is
- * deliberately tiny so that later slice can wrap these streams without
- * touching the peer manager.
+ * The element surface stays deliberately small: Day 11's GainNode mixer wraps
+ * these streams in the peer manager; StereoPanner positioning and occlusion
+ * remain Week 4 work.
  *
  * The `document` is injectable so the module builds (and unit tests) in Node
  * without a DOM; in the browser it defaults to the real one.
@@ -27,12 +26,14 @@ export function createRemoteAudio({ document: doc, container } = {}) {
   const documentRef =
     doc ?? (typeof document !== 'undefined' ? document : null);
   let root = container ?? null;
+  let ownsRoot = false;
   /** peerId -> HTMLAudioElement. Never two elements for one peer. */
   const elements = new Map();
 
   const ensureContainer = () => {
     if (root || !documentRef) return root;
     root = documentRef.createElement('div');
+    ownsRoot = true;
     root.className = REMOTE_AUDIO_CONTAINER_CLASS;
     root.setAttribute('aria-hidden', 'true');
     documentRef.body.appendChild(root);
@@ -65,14 +66,15 @@ export function createRemoteAudio({ document: doc, container } = {}) {
     /**
      * Attach one remote stream to its own audio element (replacing any
      * previous element for the same peer). Returns the element, or null when
-     * no DOM is available.
+     * no DOM is available. `muted` is used when Web Audio owns audible output.
      */
-    attach(peerId, stream) {
+    attach(peerId, stream, { muted = false } = {}) {
       if (!documentRef || !stream) return null;
       remove(peerId);
       const element = documentRef.createElement('audio');
       element.autoplay = true;
       element.playsInline = true;
+      element.muted = Boolean(muted);
       element.setAttribute('autoplay', '');
       element.setAttribute('playsinline', '');
       element.srcObject = stream;
@@ -94,6 +96,21 @@ export function createRemoteAudio({ document: doc, container } = {}) {
     /** Remove every element — the container itself stays for the next session. */
     removeAll() {
       for (const peerId of [...elements.keys()]) remove(peerId);
+    },
+
+    /** Remove owned audio elements and the owned container on full teardown. */
+    destroy() {
+      for (const peerId of [...elements.keys()]) remove(peerId);
+      if (!ownsRoot || !root) return;
+      const ownedRoot = root;
+      root = null;
+      ownsRoot = false;
+      try {
+        if (typeof ownedRoot.remove === 'function') ownedRoot.remove();
+        else ownedRoot.parentNode?.removeChild(ownedRoot);
+      } catch {
+        try { ownedRoot.parentNode?.removeChild(ownedRoot); } catch { /* already detached */ }
+      }
     },
 
     /** How many elements are live right now (0 after cleanup). */

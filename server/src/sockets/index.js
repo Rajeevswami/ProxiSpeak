@@ -225,7 +225,7 @@ function registerHandlers(socket, ctx) {
       // `user:joined` for the people already inside.
       if (session && session.roomId === roomId) {
         const users = await snapshotUsers(presence, roomId);
-        socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers));
+        socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers, cfg.proximity.radiusPx));
         socketLog.debug(`duplicate join ignored (already in "${roomId}")`);
         return;
       }
@@ -303,7 +303,7 @@ function registerHandlers(socket, ctx) {
     const currentSession = session;
     const users = await snapshotUsers(presence, roomId);
     if (socket.disconnected || session !== currentSession) return;
-    socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers));
+    socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers, cfg.proximity.radiusPx));
 
     // Connect the newcomer to everyone already within earshot. Only this user's
     // neighbors are queried; existing edges in the room are untouched.
@@ -488,8 +488,12 @@ function registerHandlers(socket, ctx) {
 // ------------------------------------------------------------- wire format ---
 
 /** The `joined` reply: who you are, the room blueprint and everybody inside. */
-const buildJoined = (selfId, room, users, iceServers) => ({
-  selfId, room: toRoomPayload(room), users, iceServers: iceServers ?? [],
+const buildJoined = (selfId, room, users, iceServers, proximityRadiusPx) => ({
+  selfId,
+  room: toRoomPayload(room),
+  users,
+  iceServers: iceServers ?? [],
+  proximityRadiusPx,
 });
 
 /**

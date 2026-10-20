@@ -57,6 +57,12 @@ export default function AudioStatus({ mic, getSnapshot }) {
             <li key={row.peerId}>
               <span className="peer-name">{row.name || row.peerId.slice(0, 6)}</span>
               <span className={`peer-state peer-state-${row.connectionState}`}>{row.connectionState}</span>
+              <span className="peer-distance" title="distance from your avatar">
+                {Number.isFinite(row.distancePx) ? `${Math.round(row.distancePx)} px` : 'distance unknown'}
+              </span>
+              <span className="peer-volume" title="current distance-based output gain">
+                {Number.isFinite(row.volumePercent) ? `${row.volumePercent}%` : '0%'}
+              </span>
               <span className="peer-bytes" title="inbound audio bytes received">
                 {formatBytes(row.bytesReceived)}
               </span>
