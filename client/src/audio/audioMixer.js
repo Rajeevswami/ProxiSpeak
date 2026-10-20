@@ -1,7 +1,12 @@
 import { distanceBetween, gainForDistance } from './attenuation.js';
 
-const noop = () => {};
-const NOOP_LOGGER = { warn: noop };
+const defaultLogger = {
+  warn(message) {
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('[audio]', message);
+    }
+  },
+};
 const UPDATE_INTERVAL_MS = 50;
 const TARGET_TIME_CONSTANT = 0.05;
 
@@ -12,13 +17,13 @@ const TARGET_TIME_CONSTANT = 0.05;
  * @param {object} [options]
  * @param {Function|null} [options.AudioContextFactory] constructor/factory
  * @param {Document|null} [options.document] visibility-event target
- * @param {object} [options.logger] optional `{ warn() }` client logger
+ * @param {object} [options.logger] optional `{ warn() }` client logger; defaults to one `console.warn` for fallback
  * @param {Function} [options.now] monotonic milliseconds clock
  */
 export function createAudioMixer({
   AudioContextFactory = defaultAudioContextFactory(),
   document: doc = typeof document === 'undefined' ? null : document,
-  logger = NOOP_LOGGER,
+  logger = defaultLogger,
   now = defaultNow,
 } = {}) {
   let context = null;

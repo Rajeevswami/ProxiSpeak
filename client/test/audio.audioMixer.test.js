@@ -210,6 +210,23 @@ test('unavailable Web Audio falls back to full-volume elements and warns only on
   assert.equal(mixer.size(), 0);
 });
 
+test('default fallback logger warns once when Web Audio is unavailable', async () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const mixer = createAudioMixer({ AudioContextFactory: null, document: fakeDocument() });
+    await mixer.resume();
+    mixer.attach('one', { id: 1 }, fakeElement());
+    mixer.attach('two', { id: 2 }, fakeElement());
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0][0], '[audio]');
+    await mixer.closeAll();
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('gain updates are internally throttled to at most 20 Hz', async () => {
   let clock = 0;
   const mixer = createAudioMixer({ AudioContextFactory: FakeAudioContext, now: () => clock });
