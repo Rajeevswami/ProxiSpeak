@@ -104,12 +104,18 @@ const mongoTest = (name, fn) => test(name, async (t) => { if (!ready) return t.s
 
 mongoTest('audit: 0 mismatches on planted + random data, cleanup leaves zero rows', async () => {
   const report = await runSpatialAudit({ users: 50, samples: 25, seed: 1 });
+  assert.equal(report.ok, true, JSON.stringify(report.operations));
+  assert.equal(report.status, 'PASS');
   assert.equal(report.totalMismatches, 0, JSON.stringify(report.mismatches));
   assert.equal(report.cleanupVerified, true);
   assert.equal(await UserPresence.countDocuments({ roomId: report.roomId }), 0);
   assert.equal(report.index.near.uses2dsphere, true); assert.equal(report.index.near.collscan, false);
   assert.equal(report.index.geoWithin.collscan, false);
   assert.ok(!report.dbHost.includes('@') && !report.dbHost.includes('mongodb'));
+
+  const overBudget = await runSpatialAudit({ users: 30, samples: 5, seed: 2, targetMs: 0.001 });
+  assert.equal(overBudget.ok, false, 'exceeding p95 target fails audit');
+  assert.equal(overBudget.status, 'FAIL');
 });
 
 mongoTest('cleanup leaves zero rows even when a comparison throws', async () => {
