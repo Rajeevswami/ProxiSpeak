@@ -417,7 +417,7 @@ statuses for checks blocked by unavailable MongoDB/browser tooling.*
 
 ## Week 3 — Day 12 — 2026-10-21 — Redis Pub/Sub and multi-instance edge scaling
 
-*Commits: `da2e332`, `efa9214`, `f3a6312`, `31bdd03`, `63c74a8`, `1d3a901`, `a0e6a0a`, `f73eec3`, `79732a3`*
+*Commits: `da2e332`, `efa9214`, `f3a6312`, `31bdd03`, `63c74a8`, `1d3a901`, `a0e6a0a`, `f73eec3`, `79732a3`, `59463fb`, plus QA bugfix commits `9615fe5`, `8fa43ec`, `8d39cf2`*
 
 **Added**
 
@@ -460,18 +460,16 @@ statuses for checks blocked by unavailable MongoDB/browser tooling.*
 
 **Verified in this environment (2026-10-21)**
 
-- Real `redis-server` 7.4.2 running locally (`127.0.0.1:6379`):
-  - `REDIS_URL_TEST="redis://127.0.0.1:6379" node --test server/test/edgeStore.contract.test.js server/test/redis.failure.test.js server/test/redis.scale.integration.test.js` -> **24 passed / 0 failed / 0 skipped**.
-  - `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` -> server **106 passed / 0 failed / 32 skipped** (0 Redis skips; 32 Mongo-gated tests skipped), client **145 passed / 0 failed / 0 skipped**.
-  - `REDIS_URL="" npm test` -> server **92 passed / 0 failed / 46 skipped** (with explicit `NOT VERIFIED` banners), client **145 passed / 0 failed / 0 skipped**.
-  - `npm run build` -> clean client production bundle (`0` warnings/errors).
-- Measured 50-user loopback benchmark: `move -> user:moved` p50 `0.904 ms`
-  (single) vs `1.288 ms` (2-instance Redis, `+0.384 ms`); `signal -> signal`
-  p50 `0.069 ms` (single) vs `0.340 ms` (2-instance Redis, `+0.271 ms`), p95
-  `0.126 ms` vs `1.360 ms` (`+1.234 ms`). 50-cycle cross-instance leak audit:
-  `0` leftover Redis keys, presence rows, sockets, rooms, remote-name entries,
-  or pending syncs.
-- No local `mongod` or Chromium binary is installed in this sandbox, so the 32
-  MongoDB-backed tests and live two-browser audio hearing check remain
-  **NOT VERIFIED** here; exact commands are in `docs/REDIS_SCALING.md`.
+- Real MongoDB Community Server `8.0.0` (`127.0.0.1:27017`) + `redis-server`
+  `7.4.2` (`127.0.0.1:6379`) running locally:
+  - `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`
+    -> server **142 passed / 0 failed / 0 skipped**, client **145 passed / 0 failed / 0 skipped** (**287 / 287 total**).
+  - `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL="" REDIS_URL_TEST="" npm test`
+    -> server **126 passed / 0 failed / 16 skipped**, client **145 passed / 0 failed / 0 skipped**.
+  - No MongoDB & no Redis -> server **94 passed / 0 failed / 48 skipped** (with explicit `NOT VERIFIED` banners), client **145 passed / 0 failed / 0 skipped**.
+  - `npm run audit` at `users = 50, 100, 250, 500` -> **PASS** across all four (`0` mismatches; 500-user p95 `findNearby=2.880 ms`, `countWithin=1.494 ms`, `computeClusters=10.379 ms <= 20 ms`).
+  - Live two-process `npm run scale-check` against ports `4000` & `4001` -> **PASS (8/8 checks)**; `npm run build` -> clean client bundle.
+- Live headful two-browser WebRTC audio hearing check remains **NOT VERIFIED**
+  here (no browser binary in sandbox); exact steps are in `docs/REDIS_SCALING.md`
+  and `docs/DAY11.md`.
 

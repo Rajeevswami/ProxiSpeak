@@ -144,6 +144,7 @@ orphan sweeps iterate exclusively via cursor-based `SCAN ... MATCH ... COUNT 100
 | `REDIS_URL` unreachable at boot | Clients torn down after `REDIS_CONNECT_TIMEOUT_MS` (default `3000 ms`); **one** loud redacted warning logged; no reconnect loop. | `"single"` | Process boots cleanly as single-instance instead of crash-looping. |
 | Redis drops mid-run | Adapter & `RedisEdgeStore` errors caught safely; zero process crashes; zero socket disconnects. | `"redis-degraded"` (`HTTP 200`) | Existing P2P WebRTC audio calls continue uninterrupted; new cross-instance edges pause until Redis reconnects. |
 | Redis recovers mid-run | `ioredis` reconnects automatically; once all 3 clients (`store`, `pub`, `sub`) emit `ready`, `PeerGraph.reconcileLocalUsers()` runs on every instance. | `"redis"` (`HTTP 200`) | Any avatars standing within earshot automatically receive `peer:connect` without needing to move again. |
+| `FLUSHALL` run while connected | Pub/Sub channels stay live; next `move` or `sweepOrphanEdges()` detects empty Redis keys, reconciles live local users, and seeds `CREATE_EDGE_LUA` with each instance's session `pairGenFloor` (`generation = prev + 1`). | `"redis"` (`HTTP 200`) | Zero crashes or socket drops; edges self-heal with strictly higher generations so client `PeerManager` replaces stale peers cleanly. |
 | Node instance killed (`kill -9`) | Surviving instances' `sweepOrphanEdges()` (`SCAN` every `EDGE_SWEEP_INTERVAL_MS`, plus boot pass) detects edges whose `sessionId` has no live `UserPresence`, emits `peer:disconnect` to survivors once, and cleans keys. | `"redis"` | Disconnected clients auto-reconnect to surviving instances; surviving peers cleanly close dead WebRTC connections. |
 
 `/health` reads cached `scaleState` in memory and **never** performs MongoDB or
@@ -178,15 +179,15 @@ TLS (`rediss://...`) is supported natively whenever `REDIS_URL` uses the
 # Terminal 1 — seed rooms once
 MONGO_URI="mongodb://127.0.0.1:27017/proxispeak" npm run seed
 
-# Terminal 2 — Instance A on :3001
-PORT=3001 INSTANCE_ID=node-a \
+# Terminal 2 — Instance A on :4000
+PORT=4000 INSTANCE_ID=node-a \
   MONGO_URI="mongodb://127.0.0.1:27017/proxispeak" \
   REDIS_URL="redis://127.0.0.1:6379" \
   CLIENT_URL="http://localhost:5173" \
   npm start
 
-# Terminal 3 — Instance B on :3002
-PORT=3002 INSTANCE_ID=node-b \
+# Terminal 3 — Instance B on :4001
+PORT=4001 INSTANCE_ID=node-b \
   MONGO_URI="mongodb://127.0.0.1:27017/proxispeak" \
   REDIS_URL="redis://127.0.0.1:6379" \
   CLIENT_URL="http://localhost:5173" \
@@ -196,22 +197,24 @@ PORT=3002 INSTANCE_ID=node-b \
 Inspect `/health` on both ports:
 
 ```bash
-curl -s http://127.0.0.1:3001/health
+curl -s http://127.0.0.1:4000/health
 # {"status":"ok","service":"proxispeak","instanceId":"node-a","scaleMode":"redis",...}
-curl -s http://127.0.0.1:3002/health
+curl -s http://127.0.0.1:4001/health
 # {"status":"ok","service":"proxispeak","instanceId":"node-b","scaleMode":"redis",...}
 ```
 
 ### Run the automated two-instance verification CLI
 
 ```bash
-npm run scale-check -- --urlA=http://127.0.0.1:3001 --urlB=http://127.0.0.1:3002 --room=lobby
+npm run scale-check
+# or override explicit URLs / room:
+npm run scale-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001 --room=lobby
 ```
 
-Sample output (verified against real `redis-server` 7.4.2):
+Sample output (verified against real MongoDB `8.0.0` + `redis-server` `7.4.2`):
 
 ```text
-ProxiSpeak Two-Instance Scale Check — A=http://127.0.0.1:3001 | B=http://127.0.0.1:3002 | room=lobby
+ProxiSpeak Two-Instance Scale Check — A=http://127.0.0.1:4000 | B=http://127.0.0.1:4001 | room=lobby
 check                                            status  detail
 1. /health reports 2 distinct redis instances    PASS    A=node-a (redis), B=node-b (redis)
 2. Cross-instance join snapshot & user:joined    PASS    A=..., B=..., snapshotSawA=true
