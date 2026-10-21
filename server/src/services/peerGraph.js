@@ -1,68 +1,53 @@
 /**
- * In-memory peer graph (Week 2, Day 8).
+ * Peer graph (Week 2 Day 8, refactored Week 3 Day 12 behind EdgeStore).
  *
- * One instance per server process, one sub-graph per room. A vertex is a live
- * user (the Socket.IO session id, which is also the public user id) and an edge
- * means "these two users are within earshot right now" — the same exact pixel
- * radius the Day 7 `findNearby` service applies.
- *
- * The graph is deliberately *not* a second source of truth for positions:
- * MongoDB stays authoritative. On join, accepted move, disconnect and presence
- * expiry the gateway asks this module to re-sync ONE user; the module runs the
- * existing `findNearby` query for that user and diffs the result against the
- * edges it already holds. The rest of the room is never recomputed.
- *
- * Rules:
- *  - edge key = the two user ids sorted, so a pair has exactly one edge no
- *    matter which side notices it first;
- *  - every edge is created with a monotonically increasing `generation`, so a
- *    delayed offer/answer/candidate for an older incarnation of the edge can be
- *    recognised and dropped;
- *  - the initiator is always the lexicographically smaller user id, so two
- *    peers can never both believe they should send the offer;
- *  - `leave` removes every edge of a user and reports each removal, which is
- *    what turns into `peer:disconnect` for the remaining peers.
- *
- * Everything is process-local by design. Multi-instance edge sharing (Redis)
- * is Week 3 work; nothing here reads or writes Redis.
+ * One instance per server process. Local socket sessions in this process register
+ * in `this.rooms` so `reconcileLocalUsers()` knows which users this node owns,
+ * while edge creation, generation assignment, lookup and removal are delegated
+ * entirely to the injected `EdgeStore` (`MemoryEdgeStore` by default when
+ * `REDIS_URL` is empty; `RedisEdgeStore` in multi-instance mode).
  */
 import { performance } from 'node:perf_hooks';
 import config from '../config/index.js';
 import { findNearby as defaultFindNearby } from './proximityService.js';
+import {
+  MemoryEdgeStore,
+  buildEdgeRecord,
+  edgeKey,
+  normalizePair,
+  pickInitiator,
+  validateRoomId,
+  validateUserId,
+} from './edgeStore.js';
 
-/** Order-independent identity of an undirected edge. */
-export function edgeKey(a, b) {
-  return a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
-}
-
-/** The lexicographically smaller endpoint is the deterministic offerer. */
-export function pickInitiator(a, b) {
-  return a < b ? a : b;
-}
+export { edgeKey, pickInitiator };
 
 const emptyDiff = () => ({ added: [], removed: [] });
 
-/**
- * @typedef {object} PeerEdge
- * @property {string} key order-independent pair key
- * @property {string} roomId
- * @property {string} a smaller id (the initiator)
- * @property {string} b larger id
- * @property {number} generation monotonically increasing per process
- * @property {string} initiator === a
- */
+const isPromise = (value) =>
+  value !== null && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function';
+
+const chain = (value, onFulfilled) => (isPromise(value) ? value.then(onFulfilled) : onFulfilled(value));
 
 export class PeerGraph {
   /**
    * @param {object} [options]
    * @param {Function} [options.findNearby] Day 7 neighbor query, injectable for tests
    * @param {number} [options.radiusPx] earshot radius; defaults to PROXIMITY_RADIUS_PX
+   * @param {import('./edgeStore.js').EdgeStore} [options.edgeStore] defaults to MemoryEdgeStore
+   * @param {boolean} [options.allowRemotePeers] true when peers may live on other instances
+   * @param {Function} [options.resolvePeerName] optional `(roomId, peerId) => string|Promise<string>`
+   * @param {object} [options.logger] optional logger for fail-safe store error reporting
    * @param {Function} [options.onEdgeAdded] called once per newly created edge
    * @param {Function} [options.onEdgeRemoved] called once per removed edge
    */
   constructor({
     findNearby = defaultFindNearby,
     radiusPx = config.proximity.radiusPx,
+    edgeStore = new MemoryEdgeStore(),
+    allowRemotePeers = false,
+    resolvePeerName = null,
+    logger = null,
     onEdgeAdded,
     onEdgeRemoved,
   } = {}) {
@@ -73,14 +58,19 @@ export class PeerGraph {
 
     this.findNearby = findNearby;
     this.radiusPx = radiusPx;
+    this.edgeStore = edgeStore;
+    this.allowRemotePeers = Boolean(allowRemotePeers);
+    this.resolvePeerName = typeof resolvePeerName === 'function' ? resolvePeerName : null;
+    this.log = logger;
     this.onEdgeAdded = typeof onEdgeAdded === 'function' ? onEdgeAdded : null;
     this.onEdgeRemoved = typeof onEdgeRemoved === 'function' ? onEdgeRemoved : null;
 
-    /** roomId -> { roomId, users: Map<userId, state>, edges: Map<key, edge> } */
+    /** roomId -> { roomId, users: Map<userId, { id, name }> } */
     this.rooms = new Map();
     /** Serialises syncs of the same user: a move can never overtake its join. */
     this.pendingSyncs = new Map();
-    this.generationCounter = 0;
+    /** Cached display names of remote peers, bounded to active rooms/peers. */
+    this.remoteNames = new Map();
 
     this.syncCount = 0;
     this.syncFailures = 0;
@@ -99,7 +89,7 @@ export class PeerGraph {
   #room(roomId) {
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { roomId, users: new Map(), edges: new Map() };
+      room = { roomId, users: new Map() };
       this.rooms.set(roomId, room);
     }
     return room;
@@ -110,12 +100,27 @@ export class PeerGraph {
   }
 
   #dropRoomIfEmpty(room) {
-    if (room.users.size === 0 && room.edges.size === 0) this.rooms.delete(room.roomId);
+    if (room.users.size !== 0) return;
+    this.rooms.delete(room.roomId);
+    const prefix = `${room.roomId}\u0000`;
+    for (const compositeKey of [...this.remoteNames.keys()]) {
+      if (compositeKey.startsWith(prefix)) this.remoteNames.delete(compositeKey);
+    }
+  }
+
+  rememberPeerName(roomId, userId, name) {
+    if (name && this.#findRoom(roomId)) {
+      this.remoteNames.set(`${roomId}\u0000${userId}`, name);
+    }
+  }
+
+  forgetPeerName(roomId, userId) {
+    this.remoteNames.delete(`${roomId}\u0000${userId}`);
   }
 
   /**
    * Register a user in a room without querying neighbors. Idempotent, and a
-   * re-registration keeps the existing edges (a duplicate join is harmless).
+   * re-registration keeps existing edges (a duplicate join is harmless).
    */
   register(roomId, userId, { name = '' } = {}) {
     const room = this.#room(roomId);
@@ -124,15 +129,33 @@ export class PeerGraph {
       if (name) existing.name = name;
       return existing;
     }
-    const state = { id: userId, name, neighbors: new Map() };
+    const state = { id: userId, name };
     room.users.set(userId, state);
     return state;
   }
 
+  /** Remove only local registration on this node without touching EdgeStore. */
+  dropLocalUser(roomId, userId) {
+    if (roomId === undefined) {
+      for (const id of [...this.rooms.keys()]) {
+        this.dropLocalUser(id, userId);
+      }
+      for (const compositeKey of [...this.remoteNames.keys()]) {
+        if (compositeKey.endsWith(`\u0000${userId}`)) this.remoteNames.delete(compositeKey);
+      }
+      return;
+    }
+    const room = this.#findRoom(roomId);
+    this.forgetPeerName(roomId, userId);
+    if (!room) return;
+    room.users.delete(userId);
+    this.#dropRoomIfEmpty(room);
+  }
+
   /**
    * Join = register + sync. The user is registered before the query so a peer
-   * that resolves the same moment can create the edge from its side too; the
-   * pair key guarantees only one edge is stored either way.
+   * that resolves at the same moment can create the edge from its side too; the
+   * EdgeStore guarantees only one edge is created across all instances.
    */
   async join(roomId, userId, { name = '' } = {}) {
     this.register(roomId, userId, { name });
@@ -140,10 +163,25 @@ export class PeerGraph {
   }
 
   /**
-   * Recompute exactly this user's neighbors and diff them into the graph.
-   * Returns the edge descriptors that were added/removed. The whole operation
-   * is serialised per user, so a move that arrives while the join query is
-   * still in flight cannot be applied out of order.
+   * Recompute local users after Redis recovers from a mid-run drop so edges
+   * missed during the outage are created and stale ones are removed.
+   */
+  async reconcileLocalUsers() {
+    const localUsers = [];
+    for (const [roomId, room] of this.rooms.entries()) {
+      for (const userId of room.users.keys()) {
+        localUsers.push({ roomId, userId });
+      }
+    }
+    for (const { roomId, userId } of localUsers) {
+      await this.sync(roomId, userId);
+    }
+  }
+
+  /**
+   * Recompute exactly this user's neighbors and diff them into the store.
+   * Serialised per user so a move arriving while join is in flight cannot apply
+   * out of order.
    */
   sync(roomId, userId) {
     const key = `${roomId}\u0000${userId}`;
@@ -164,7 +202,6 @@ export class PeerGraph {
   async #sync(roomId, userId) {
     const room = this.#findRoom(roomId);
     const state = room?.users.get(userId);
-    // The user left (disconnect/expiry) before this sync could run.
     if (!state) return emptyDiff();
 
     const started = performance.now();
@@ -176,144 +213,230 @@ export class PeerGraph {
       this.#recordLatency(performance.now() - started);
       throw err;
     }
+
+    let currentEdges;
+    try {
+      const rawEdges = await this.edgeStore.edgesOf(userId);
+      currentEdges = rawEdges.filter((edge) => edge.roomId === roomId);
+    } catch (err) {
+      this.syncFailures += 1;
+      this.#recordLatency(performance.now() - started);
+      this.log?.warn('edge store read failed during sync (failing safe):', err?.message ?? err);
+      return emptyDiff();
+    }
+
     this.syncCount += 1;
     this.#recordLatency(performance.now() - started);
 
-    // The user may have left while the query was in flight. Never recreate a
-    // vertex (or an edge) for a session that is gone.
+    // Abort if the user left while queries were in flight.
     if (this.#findRoom(roomId)?.users.get(userId) !== state) return emptyDiff();
 
     const next = new Set();
     for (const neighbor of nearby ?? []) {
       const id = typeof neighbor === 'string' ? neighbor : neighbor?.id;
-      // `findNearby` already excludes self; this is belt-and-braces so a buggy
-      // or custom source can never create a self-edge.
       if (typeof id !== 'string' || id === userId) continue;
       next.add(id);
+    }
+
+    const currentByPeer = new Map();
+    for (const edge of currentEdges) {
+      const peerId = edge.a === userId ? edge.b : edge.a;
+      currentByPeer.set(peerId, edge);
     }
 
     const added = [];
     const removed = [];
 
     for (const peerId of next) {
-      if (state.neighbors.has(peerId)) continue;
-      const edge = this.#createEdge(room, state, peerId);
-      if (!edge) continue;
+      if (currentByPeer.has(peerId)) continue;
+      if (!this.allowRemotePeers && !room.users.get(peerId)) continue;
+
+      // Resolve remote peer's display name BEFORE creating the edge in Redis so
+      // `onEdgeAdded` can emit synchronously immediately on winning the create.
+      if (!this.nameOf(roomId, peerId) && this.resolvePeerName) {
+        try {
+          const resolved = await this.resolvePeerName(roomId, peerId);
+          if (resolved) this.rememberPeerName(roomId, peerId, resolved);
+        } catch {
+          /* non-fatal; empty fallback name stays valid */
+        }
+        if (this.#findRoom(roomId)?.users.get(userId) !== state) return { added, removed };
+      }
+
+      let outcome;
+      try {
+        outcome = await this.edgeStore.createEdge(roomId, userId, peerId);
+      } catch (err) {
+        this.syncFailures += 1;
+        this.log?.warn('edge store create failed (failing safe):', err?.message ?? err);
+        continue;
+      }
+      if (!outcome?.created) continue;
+
+      const [a, b] = normalizePair(userId, peerId);
+      const edge = buildEdgeRecord(roomId, a, b, outcome.generation);
       added.push(edge);
       this.onEdgeAdded?.(edge);
     }
 
-    for (const [peerId, edge] of [...state.neighbors]) {
+    for (const [peerId, edge] of currentByPeer) {
       if (next.has(peerId)) continue;
-      this.#removeEdge(room, edge);
-      removed.push(edge);
-      this.onEdgeRemoved?.(edge);
+      const result = await this.#removeSingleEdge(roomId, userId, peerId, edge);
+      if (!result) continue;
+      this.forgetPeerName(roomId, peerId);
+      removed.push(result);
+      this.onEdgeRemoved?.(result);
     }
 
     return { added, removed };
   }
 
-  /**
-   * Create the one edge for a pair, unless it already exists. `edge` is only
-   * created when the peer is registered too: a presence row can be written a
-   * few milliseconds before that user is added to the graph, and the peer's own
-   * join sync will create the edge then.
-   */
-  #createEdge(room, state, peerId) {
-    const peer = room.users.get(peerId);
-    if (!peer) return null;
-
-    const key = edgeKey(state.id, peerId);
-    const existing = room.edges.get(key);
-    if (existing) {
-      // Repair both adjacency maps without emitting a duplicate event.
-      state.neighbors.set(peerId, existing);
-      peer.neighbors.set(state.id, existing);
+  async #removeSingleEdge(roomId, userId, peerId, fallbackEdge) {
+    try {
+      if (typeof this.edgeStore.removeEdgeWithRecord === 'function') {
+        const { removed, edge } = await this.edgeStore.removeEdgeWithRecord(roomId, userId, peerId);
+        return removed ? (edge ?? fallbackEdge) : null;
+      }
+      const removed = await this.edgeStore.removeEdge(roomId, userId, peerId);
+      return removed ? fallbackEdge : null;
+    } catch (err) {
+      this.syncFailures += 1;
+      this.log?.warn('edge store remove failed (failing safe):', err?.message ?? err);
       return null;
     }
-
-    this.generationCounter += 1;
-    const a = pickInitiator(state.id, peerId);
-    const b = a === state.id ? peerId : state.id;
-    const edge = Object.freeze({
-      key,
-      roomId: room.roomId,
-      a,
-      b,
-      generation: this.generationCounter,
-      initiator: a,
-    });
-
-    room.edges.set(key, edge);
-    state.neighbors.set(peerId, edge);
-    peer.neighbors.set(state.id, edge);
-    return edge;
-  }
-
-  #removeEdge(room, edge) {
-    room.edges.delete(edge.key);
-    room.users.get(edge.a)?.neighbors.delete(edge.b);
-    room.users.get(edge.b)?.neighbors.delete(edge.a);
   }
 
   /**
-   * Remove a user and every edge it owns, reporting each removal. Safe to call
-   * more than once (disconnect after expiry cleanup is a no-op).
-   * @returns {PeerEdge[]} removed edges
+   * Remove a user and every edge it owns, reporting each removal only once.
+   * Synchronous when backed by MemoryEdgeStore; returns a Promise for async stores.
    */
   leave(roomId, userId) {
     const room = this.#findRoom(roomId);
-    const state = room?.users.get(userId);
-    if (!room || !state) return [];
+    const hadLocal = Boolean(room?.users.get(userId));
+    if (!hadLocal && !this.allowRemotePeers) return [];
 
-    const removed = [...state.neighbors.values()];
-    for (const edge of removed) this.#removeEdge(room, edge);
-    room.users.delete(userId);
-    this.#dropRoomIfEmpty(room);
+    if (room) {
+      room.users.delete(userId);
+      this.forgetPeerName(roomId, userId);
+      this.#dropRoomIfEmpty(room);
+    }
 
-    for (const edge of removed) this.onEdgeRemoved?.(edge);
-    return removed;
+    let raw;
+    try {
+      raw = this.edgeStore.removeUser(userId);
+    } catch (err) {
+      this.syncFailures += 1;
+      this.log?.warn('edge store removeUser failed (failing safe):', err?.message ?? err);
+      return [];
+    }
+
+    const finish = (removed) => {
+      for (const edge of removed) {
+        const peerId = edge.a === userId ? edge.b : edge.a;
+        this.forgetPeerName(edge.roomId, peerId);
+        this.onEdgeRemoved?.(edge);
+      }
+      return removed;
+    };
+
+    if (isPromise(raw)) {
+      return raw.then(finish, (err) => {
+        this.syncFailures += 1;
+        this.log?.warn('edge store removeUser failed (failing safe):', err?.message ?? err);
+        return [];
+      });
+    }
+    return finish(raw);
   }
 
   /** Remove every edge of every user in one room (used by tests/tools). */
   clearRoom(roomId) {
     const room = this.#findRoom(roomId);
-    if (!room) return [];
-    const removed = [...room.edges.values()];
     this.rooms.delete(roomId);
-    for (const edge of removed) this.onEdgeRemoved?.(edge);
-    return removed;
+    for (const key of [...this.remoteNames.keys()]) {
+      if (key.startsWith(`${roomId}\u0000`)) this.remoteNames.delete(key);
+    }
+
+    if (typeof this.edgeStore.clearRoom === 'function') {
+      return chain(this.edgeStore.clearRoom(roomId), (removed) => {
+        for (const edge of removed) this.onEdgeRemoved?.(edge);
+        return removed;
+      });
+    }
+    if (!room) return [];
+    return [];
   }
 
   // --------------------------------------------------------------- read side ---
 
-  /** The live edge for a pair, or null. The returned object is a copy. */
+  /** The live edge for a pair in `roomId`, or null. */
   edgeBetween(roomId, a, b) {
-    const edge = this.#findRoom(roomId)?.edges.get(edgeKey(a, b));
-    return edge ? { ...edge } : null;
+    try {
+      validateRoomId(roomId);
+      validateUserId(a);
+      validateUserId(b);
+    } catch {
+      return null;
+    }
+    if (a === b) return null;
+
+    let lookup;
+    try {
+      lookup = this.edgeStore.getEdge(a, b);
+    } catch (err) {
+      this.log?.warn('edge store getEdge failed (failing safe):', err?.message ?? err);
+      return null;
+    }
+
+    const match = (edge) => (edge && edge.roomId === roomId ? { ...edge } : null);
+    if (isPromise(lookup)) {
+      return lookup.then(match, (err) => {
+        this.log?.warn('edge store getEdge failed (failing safe):', err?.message ?? err);
+        return null;
+      });
+    }
+    return match(lookup);
   }
 
   /** True when the users share a live edge in this room. */
   hasEdge(roomId, a, b) {
-    return Boolean(this.#findRoom(roomId)?.edges.get(edgeKey(a, b)));
+    return chain(this.edgeBetween(roomId, a, b), Boolean);
   }
 
-  /** Peer ids of one user, sorted for deterministic tests and logs. */
+  /** Peer ids of one user in `roomId`, sorted for deterministic tests and logs. */
   neighbors(roomId, userId) {
-    const state = this.#findRoom(roomId)?.users.get(userId);
-    return state ? [...state.neighbors.keys()].sort() : [];
+    try {
+      validateRoomId(roomId);
+      validateUserId(userId);
+    } catch {
+      return [];
+    }
+    if (!this.allowRemotePeers && !this.#findRoom(roomId)?.users.get(userId)) {
+      return [];
+    }
+    return chain(this.edgeStore.edgesOf(userId), (edges) =>
+      edges
+        .filter((edge) => edge.roomId === roomId)
+        .map((edge) => (edge.a === userId ? edge.b : edge.a))
+        .sort(),
+    );
   }
 
   /** Every edge in a room (or all rooms), sorted by key. */
   edges(roomId) {
-    const rooms = roomId === undefined ? [...this.rooms.values()] : [this.#findRoom(roomId)].filter(Boolean);
-    return rooms.flatMap((room) => [...room.edges.values()].map((edge) => ({ ...edge })))
-      .sort((left, right) => left.key.localeCompare(right.key));
+    if (typeof this.edgeStore.allEdges === 'function') {
+      return this.edgeStore.allEdges(roomId);
+    }
+    return [];
   }
 
-  /** Current display name recorded at join time, if still present. */
+  /** Current display name recorded locally or cached for a remote peer. */
   nameOf(roomId, userId) {
-    return this.#findRoom(roomId)?.users.get(userId)?.name ?? '';
+    return (
+      this.#findRoom(roomId)?.users.get(userId)?.name
+      ?? this.remoteNames.get(`${roomId}\u0000${userId}`)
+      ?? ''
+    );
   }
 
   isRegistered(roomId, userId) {
@@ -332,16 +455,17 @@ export class PeerGraph {
   stats(roomId) {
     const rooms = roomId === undefined ? [...this.rooms.values()] : [this.#findRoom(roomId)].filter(Boolean);
     const users = rooms.reduce((sum, room) => sum + room.users.size, 0);
-    const edges = rooms.reduce((sum, room) => sum + room.edges.size, 0);
-    return {
+    const rawEdges = typeof this.edgeStore.allEdges === 'function' ? this.edgeStore.allEdges(roomId) : [];
+    const finish = (edgeList) => ({
       rooms: rooms.length,
       users,
-      edges,
+      edges: edgeList.length,
       syncs: this.syncCount,
       failures: this.syncFailures,
-      generation: this.generationCounter,
+      generation: this.edgeStore.totalGenerations ?? 0,
       latency: this.latencySummary(),
-    };
+    });
+    return chain(rawEdges, finish);
   }
 
   #recordLatency(durationMs) {

@@ -1,11 +1,11 @@
 /**
- * Socket.io gateway (Day 3).
+ * Socket.io gateway (Day 3, multi-instance signaling ready on Day 12).
  *
  * The realtime channel is attached to the *existing* HTTP server, so it shares
  * the Express port and the `/health` endpoint keeps working untouched.
  *
  * Event contract (every inbound payload is validated server-side):
- *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users, iceServers }
+ *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users, iceServers, proximityRadiusPx }
  *   C -> S  move     { x, y }           S -> C  user:moved { id, x, y }
  *   C -> S  signal   { to, generation, data }
  *                                       S -> C  signal     { from, generation, data }
@@ -15,25 +15,25 @@
  *   both users of a removed edge        S -> C  peer:disconnect { peerId, generation }
  *   any rejection                       S -> C  error       { code, message, field? }
  *
- * The server orchestrates peer-to-peer WebRTC handshakes but never touches
- * audio: `signal` carries opaque SDP/candidate data between two users that the
- * peer graph says are currently within earshot.
- *
  * Payloads carry ids, names and pixels only — never a connection string, a
  * document `_id` or any other database detail.
  */
 import { Server } from 'socket.io';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
-import { AppError } from '../utils/errors.js';
+import { AppError, ValidationError } from '../utils/errors.js';
 import { describeCorsOrigin, socketCorsOrigin, socketAllowRequest } from '../utils/origin.js';
 import { createGeoTransform } from '../utils/geo.js';
 import { TokenBucket } from '../utils/rateLimiter.js';
+import { isPlainObject } from '../utils/validate.js';
 import { validateJoinPayload, validateMovePayload, validateSignalPayload } from './validation.js';
 import * as presenceStore from '../services/presenceStore.js';
 import * as roomService from '../services/roomService.js';
+import { MemoryEdgeStore, validateRoomId, validateUserId } from '../services/edgeStore.js';
+import { RedisEdgeStore } from '../services/redisEdgeStore.js';
 import { PeerGraph } from '../services/peerGraph.js';
 import { findNearby } from '../services/proximityService.js';
+import { attachRedisAdapter } from './redisAdapter.js';
 
 /** Deterministic colour for avatars: the Day 3 `join` payload carries a name only. */
 const DEFAULT_AVATAR_COLOR = '#4f8cff';
@@ -46,6 +46,8 @@ const DEFAULT_AVATAR_COLOR = '#4f8cff';
  * @param {object} [options.presence] presence store override (defaults to the Day 2 store)
  * @param {object} [options.rooms] room service override (defaults to the Day 2 service)
  * @param {Function} [options.findNearby] neighbor query override for the peer graph
+ * @param {import('../services/edgeStore.js').EdgeStore} [options.edgeStore] optional shared store
+ * @param {boolean} [options.multiInstance] whether cross-instance mode is active
  * @returns {import('socket.io').Server}
  */
 export function createSocketServer({
@@ -55,6 +57,9 @@ export function createSocketServer({
   presence = presenceStore,
   rooms = roomService,
   findNearby: neighborQuery = findNearby,
+  edgeStore,
+  redis = null,
+  multiInstance = false,
 } = {}) {
   if (!httpServer) throw new Error('createSocketServer requires the HTTP server to attach to');
 
@@ -69,24 +74,60 @@ export function createSocketServer({
     maxHttpBufferSize: 100_000,
   });
 
+  io.multiInstance = Boolean(multiInstance || redis?.enabled);
+
   // One transform per process: the room is a flat pixel plane, MongoDB wants
   // GeoJSON, and both must always agree.
   const geo = createGeoTransform(cfg.world);
 
   if (cfg.iceServersWarning) log.warn(cfg.iceServersWarning);
 
-  // One in-memory peer graph per process (Week 3 may share it through Redis).
-  // It owns the edges; this gateway only turns edge events into socket events.
-  const peers = new PeerGraph({ findNearby: neighborQuery, radiusPx: cfg.proximity.radiusPx });
+  const store = edgeStore
+    ?? (redis?.enabled && redis.storeClient
+      ? new RedisEdgeStore({
+          client: redis.storeClient,
+          keyPrefix: cfg.redis.keyPrefix,
+          ttlSeconds: cfg.redis.edgeTtlSeconds,
+        })
+      : new MemoryEdgeStore());
+  const resolvePeerName = async (roomId, userId) => {
+    const localName = io.sockets.sockets.get(userId)?.data.name;
+    if (localName) return localName;
+    if (typeof presence.listPresenceByRoom === 'function') {
+      const rows = await presence.listPresenceByRoom(roomId);
+      const match = rows.find((row) => row.sessionId === userId);
+      if (match?.name) return match.name;
+    }
+    return '';
+  };
+
+  const peers = new PeerGraph({
+    findNearby: neighborQuery,
+    radiusPx: cfg.proximity.radiusPx,
+    edgeStore: store,
+    allowRemotePeers: io.multiInstance,
+    resolvePeerName,
+    logger: log.child('peer-graph'),
+  });
+
   const peerName = (roomId, userId) =>
     io.sockets.sockets.get(userId)?.data.name ?? peers.nameOf(roomId, userId);
 
   peers.setListeners({
     onEdgeAdded: (edge) => {
+      if (io.multiInstance) {
+        try {
+          io.serverSideEmit('proxispeak:edge-created', {
+            a: edge.a,
+            b: edge.b,
+            generation: edge.generation,
+          });
+        } catch {
+          /* adapter already closed */
+        }
+      }
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
-        const target = io.sockets.sockets.get(recipient);
-        if (!target?.connected) continue;
-        target.emit('peer:connect', {
+        io.to(recipient).emit('peer:connect', {
           peerId,
           name: peerName(edge.roomId, peerId),
           initiator: edge.initiator === recipient,
@@ -96,15 +137,128 @@ export function createSocketServer({
       }
     },
     onEdgeRemoved: (edge) => {
+      peers.forgetPeerName(edge.roomId, edge.a);
+      peers.forgetPeerName(edge.roomId, edge.b);
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
         io.to(recipient).emit('peer:disconnect', { peerId, generation: edge.generation });
       }
     },
   });
 
-  // Exposed for tests/diagnostics and for the presence sweep (expiry path).
+  // Exposed for tests/diagnostics and for presence/orphan sweeps.
   io.peerGraph = peers;
+  io.edgeStore = store;
   io.removePeerEdges = (roomId, userId) => peers.leave(roomId, userId);
+
+  const EXPIRE_SOCKET_EVENT = 'proxispeak:expire-socket';
+  const PEER_LEFT_EVENT = 'proxispeak:peer-left';
+  const EDGE_CREATED_EVENT = 'proxispeak:edge-created';
+  const announcePeerLeft = (roomId, userId, removedEdges = []) => {
+    peers.forgetPeerName(roomId, userId);
+    const floors = removedEdges.map((edge) => ({
+      peerId: edge.a === userId ? edge.b : edge.a,
+      generation: edge.generation,
+    }));
+    if (io.multiInstance) {
+      try {
+        io.serverSideEmit(PEER_LEFT_EVENT, { roomId, userId, floors });
+      } catch {
+        /* adapter already closed */
+      }
+    }
+  };
+  const closeLocalExpiredSocket = (roomId, sessionId) => {
+    const local = io.sockets.sockets.get(sessionId);
+    if (!local || local.data.roomId !== roomId) return false;
+    local.data.presenceExpired = true;
+    local.data.expiryAnnounced = true;
+    peers.dropLocalUser(roomId, sessionId);
+    // Close raw Engine.IO transport — never socket.disconnect(true), so the
+    // client's automatic reconnection + Day 7 session recovery triggers cleanly.
+    local.conn.close();
+    return true;
+  };
+
+  io.closeRemoteSocket = (roomId, sessionId) => {
+    validateRoomId(roomId);
+    validateUserId(sessionId);
+    announcePeerLeft(roomId, sessionId);
+    if (closeLocalExpiredSocket(roomId, sessionId)) return;
+    if (io.multiInstance) {
+      io.serverSideEmit(EXPIRE_SOCKET_EVENT, { roomId, sessionId });
+    }
+  };
+
+  io.on(EXPIRE_SOCKET_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, sessionId } = payload;
+    try {
+      validateRoomId(roomId);
+      validateUserId(sessionId);
+    } catch {
+      return;
+    }
+    closeLocalExpiredSocket(roomId, sessionId);
+  });
+
+  io.on(PEER_LEFT_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, userId, floors } = payload;
+    if (typeof roomId === 'string' && typeof userId === 'string') {
+      peers.forgetPeerName(roomId, userId);
+      try {
+        store.userGenFloor?.delete?.(userId);
+      } catch {
+        /* ignore invalid foreign id */
+      }
+    }
+    if (Array.isArray(floors)) {
+      for (const item of floors) {
+        try {
+          if (item && typeof item.peerId === 'string' && Number.isInteger(item.generation)) {
+            store.recordUserFloor?.(item.peerId, item.generation);
+          }
+        } catch {
+          /* ignore malformed floor entry */
+        }
+      }
+    }
+  });
+
+  io.on(EDGE_CREATED_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { a, b, generation } = payload;
+    try {
+      if (typeof a === 'string' && typeof b === 'string' && Number.isInteger(generation)) {
+        store.recordPairFloor?.(a, b, generation);
+      }
+    } catch {
+      /* ignore malformed entry */
+    }
+  });
+
+  if (redis?.enabled && redis.pubClient && redis.subClient) {
+    attachRedisAdapter(io, {
+      pubClient: redis.pubClient,
+      subClient: redis.subClient,
+      keyPrefix: cfg.redis.keyPrefix,
+      logger: log,
+    });
+    const originalClose = io.close.bind(io);
+    io.close = (fn) => {
+      Promise.resolve(io.of('/').adapter.close?.())
+        .catch(() => {})
+        .finally(() => originalClose(fn));
+    };
+  }
+
+  if (redis?.enabled && typeof redis.setCallbacks === 'function') {
+    redis.setCallbacks({
+      onRecovered: async () => {
+        await peers.reconcileLocalUsers();
+      },
+    });
+  }
 
   /**
    * Presence cleanups that have started but not finished. Sockets disconnect
@@ -119,29 +273,20 @@ export function createSocketServer({
     return promise;
   };
 
-  /**
-   * Wait for every presence cleanup the gateway has started. Call it after
-   * `io.close()` and before the database connection is closed: otherwise the
-   * documents of the clients that were connected are cut off mid-delete and
-   * stay behind as ghosts.
-   */
   io.drainSessions = async () => {
-    // Looping (not a single pass) also covers a cleanup that starts while an
-    // earlier one is being awaited.
     while (pendingCleanups.size) await Promise.allSettled([...pendingCleanups]);
   };
 
-  io.on('connection', (socket) => registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers }));
+  io.on('connection', (socket) =>
+    registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft }),
+  );
 
   log.info(`Socket.io attached to the HTTP server (CORS: ${describeCorsOrigin(cfg)})`);
   return io;
 }
 
 function registerHandlers(socket, ctx) {
-  const { io, cfg, log, presence, rooms, geo, track, peers } = ctx;
-  // Captured once: the id is this connection's identity everywhere (presence
-  // documents, broadcasts, room membership) and Socket.io clears it the moment
-  // the connection drops, which is far too late for cleanup.
+  const { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft } = ctx;
   const clientId = socket.id;
   const socketLog = log.child(clientId.slice(0, 6));
 
@@ -161,12 +306,6 @@ function registerHandlers(socket, ctx) {
   const fail = (code, message, field) =>
     socket.emit('error', field ? { code, message, field } : { code, message });
 
-  /**
-   * Every handler runs through here, so one malformed payload can never take
-   * the process down: validation errors become a documented `error` event and
-   * unexpected failures are logged (message only, never the payload) and
-   * answered with a generic code.
-   */
   const guard = (event, handler) => async (payload) => {
     try {
       await handler(payload);
@@ -213,16 +352,8 @@ function registerHandlers(socket, ctx) {
     guard('join', async (payload) => {
       const { roomId, name } = validateJoinPayload(payload);
 
-      // Joins are serialised per socket. `session` is only set once the presence
-      // write has been awaited, so a second `join` that arrives before the first
-      // one finished (a double-click, or a client that re-sends while the first
-      // reply is still in flight) would otherwise run the whole join path again —
-      // two presence writes and two `user:joined` broadcasts for one avatar.
       while (joinInFlight) await joinInFlight.catch(() => {});
 
-      // A repeated join for the room this socket is already in is a no-op apart
-      // from a fresh snapshot: no second presence document, no second
-      // `user:joined` for the people already inside.
       if (session && session.roomId === roomId) {
         const users = await snapshotUsers(presence, roomId);
         socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers, cfg.proximity.radiusPx));
@@ -230,9 +361,6 @@ function registerHandlers(socket, ctx) {
         return;
       }
 
-      // One socket owns one room. Switching rooms means reconnecting, so a
-      // stray join can never leave a presence document behind in a room the
-      // socket no longer belongs to.
       if (session) {
         throw new AppError(`this socket already joined "${session.roomId}" — reconnect to join another room`, {
           code: 'already_joined',
@@ -275,14 +403,8 @@ function registerHandlers(socket, ctx) {
       lastSeen: Date.now(),
     };
 
-    // Presence first: a user that is broadcast to the room but missing from
-    // the database would be an invisible ghost on the next join.
     await presence.upsertPosition(user, geo);
 
-    // The socket can disappear while that write is in flight. Its disconnect
-    // handler ran before `session` existed, so it had nothing to clean up: undo
-    // the row here, where it is still visible. (No await between this check and
-    // the assignment below, so the disconnect handler cannot slip in either.)
     if (socket.disconnected) {
       await track(
         presence
@@ -303,10 +425,11 @@ function registerHandlers(socket, ctx) {
     const currentSession = session;
     const users = await snapshotUsers(presence, roomId);
     if (socket.disconnected || session !== currentSession) return;
+    for (const entry of users) {
+      if (entry.id !== clientId && entry.name) peers.rememberPeerName(roomId, entry.id, entry.name);
+    }
     socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers, cfg.proximity.radiusPx));
 
-    // Connect the newcomer to everyone already within earshot. Only this user's
-    // neighbors are queried; existing edges in the room are untouched.
     try {
       await peers.join(roomId, clientId, { name: user.name });
     } catch (err) {
@@ -326,9 +449,6 @@ function registerHandlers(socket, ctx) {
         throw new AppError('join a room before sending move events', { code: 'not_joined', status: 409 });
       }
 
-      // Rate limiting runs before any database work. Throttled events are
-      // dropped silently on purpose: answering a flood with an error per event
-      // would amplify the very traffic the limit exists to stop.
       if (!moveBucket.take()) {
         socketLog.debug('move dropped (rate limit)');
         return;
@@ -348,7 +468,7 @@ function registerHandlers(socket, ctx) {
       session.user.lastSeen = Date.now();
 
       const current = session;
-      const user = { ...current.user }; // immutable payload for this accepted move
+      const user = { ...current.user };
       await queuePresenceWrite(async () => {
         if (socket.disconnected || session !== current) return;
         if (socket.data.presenceExpired) {
@@ -356,8 +476,6 @@ function registerHandlers(socket, ctx) {
         }
         let result;
         try {
-          // Join is the only admission/upsert path. This atomic update cannot
-          // revive a row removed by a sweep, even if deletion races this move.
           result = await presence.upsertPosition(user, geo, { upsert: false });
         } catch (err) {
           socketLog.error('position persist failed:', err?.message ?? err);
@@ -367,9 +485,6 @@ function registerHandlers(socket, ctx) {
           throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
         }
         if (socket.disconnected || session !== current) return;
-        // The new position is persisted, so $near can now decide this user's
-        // earshot. Only this user is re-queried; the diff emits connect/
-        // disconnect events for the changes and nothing for unchanged edges.
         try {
           await peers.sync(current.roomId, clientId);
         } catch (err) {
@@ -391,19 +506,19 @@ function registerHandlers(socket, ctx) {
       if (!session) {
         throw new AppError('join a room before sending signaling messages', { code: 'not_joined', status: 409 });
       }
-      // Signaling floods are dropped silently, like throttled moves: replying
-      // to every dropped event would amplify the traffic the limit stops.
       if (!signalBucket.take()) {
         socketLog.debug('signal dropped (rate limit)');
         return;
       }
 
+      if (isPlainObject(payload) && payload.from !== undefined && payload.from !== clientId) {
+        throw new ValidationError('"from" cannot impersonate another session', { field: 'from' });
+      }
+
       const { to, generation, data } = validateSignalPayload(payload);
 
-      // Relay only along a live edge in this socket's room. The edge carries
-      // the generation it was created with; anything else is stale and is
-      // refused instead of being guessed at.
-      const edge = peers.edgeBetween(session.roomId, clientId, to);
+      // Relay only along a live edge in this socket's room validated via EdgeStore.
+      const edge = await peers.edgeBetween(session.roomId, clientId, to);
       if (!edge) {
         throw new AppError(`no live peer edge to "${to}" in this room`, {
           code: 'no_peer_edge', status: 409, details: { field: 'to' },
@@ -415,43 +530,37 @@ function registerHandlers(socket, ctx) {
         });
       }
 
-      const target = io.sockets.sockets.get(to);
-      if (!target?.connected || target.data.roomId !== session.roomId) {
+      const localTarget = io.sockets.sockets.get(to);
+      if (!io.multiInstance && (!localTarget?.connected || localTarget.data.roomId !== session.roomId)) {
+        throw new AppError(`no live peer edge to "${to}" in this room`, {
+          code: 'no_peer_edge', status: 409, details: { field: 'to' },
+        });
+      }
+      if (localTarget && (!localTarget.connected || localTarget.data.roomId !== session.roomId)) {
         throw new AppError(`no live peer edge to "${to}" in this room`, {
           code: 'no_peer_edge', status: 409, details: { field: 'to' },
         });
       }
 
-      // The server is a relay only: the payload is opaque SDP/candidate data.
-      target.emit('signal', { from: clientId, generation, data });
+      // Deliver via socket-id self-room so local and cross-instance targets work identically.
+      io.to(to).emit('signal', { from: clientId, generation, data });
     }),
   );
 
   // ------------------------------------------------------------ disconnect ---
-  /**
-   * Release everything this socket owns: the peers' view of it, its room
-   * membership and its presence document.
-   *
-   * Safe to call at any time — a socket that never joined, or whose presence
-   * was already removed, is a no-op — and scoped to `clientId`, so a socket
-   * that reconnects (new id, brand new document) is never cleaned up by the
-   * teardown of the connection it replaced.
-   */
   async function releaseSession(reason) {
     if (!session) return;
     const { roomId } = session;
     session = null;
 
-    // Drop every edge this user owned first, so the remaining peers get a
-    // peer:disconnect with the edge generation they still know about.
+    let removedEdges = [];
     try {
-      peers.leave(roomId, clientId);
+      removedEdges = (await peers.leave(roomId, clientId)) ?? [];
     } catch (err) {
       socketLog.error('peer graph cleanup failed:', err?.message ?? err);
     }
+    announcePeerLeft?.(roomId, clientId, removedEdges);
 
-    // Peers first, while the room channel is unambiguous, then the channel and
-    // finally this socket's own document.
     if (!socket.data.expiryAnnounced) socket.to(roomId).emit('user:left', { id: clientId });
 
     try {
@@ -460,7 +569,6 @@ function registerHandlers(socket, ctx) {
       /* the adapter already dropped the membership */
     }
 
-    // A write already in flight may still upsert. Delete only after it ends.
     await presenceWrites;
     try {
       await presence.removeUser(clientId);
@@ -473,9 +581,6 @@ function registerHandlers(socket, ctx) {
 
   socket.on('disconnect', (reason) => {
     socketLog.debug(`socket disconnected (${reason})`);
-    // The socket is already gone at this point, so the broadcast targets the
-    // room's remaining members and the delete is a no-op when nothing is left.
-    // Tracked, so a shutdown waits for this delete instead of cutting it off.
     track(
       releaseSession(`disconnect: ${reason}`).catch((err) =>
         socketLog.error('disconnect cleanup failed:', err?.message ?? err),
@@ -487,7 +592,6 @@ function registerHandlers(socket, ctx) {
 
 // ------------------------------------------------------------- wire format ---
 
-/** The `joined` reply: who you are, the room blueprint and everybody inside. */
 const buildJoined = (selfId, room, users, iceServers, proximityRadiusPx) => ({
   selfId,
   room: toRoomPayload(room),
@@ -496,11 +600,6 @@ const buildJoined = (selfId, room, users, iceServers, proximityRadiusPx) => ({
   proximityRadiusPx,
 });
 
-/**
- * Room dimensions + obstacles, whitelisted field by field. Spawn points and
- * document internals stay on the server; collision/occlusion logic does not
- * exist yet, so obstacles are shipped as data only.
- */
 function toRoomPayload(room) {
   return {
     roomId: room.roomId,
@@ -520,17 +619,11 @@ function toRoomPayload(room) {
   };
 }
 
-/** Presence rows -> the minimal `{ id, name, x, y }` list the client needs. */
 async function snapshotUsers(presence, roomId) {
   const rows = await presence.listPresenceByRoom(roomId);
   return rows.map((row) => ({ id: row.sessionId, name: row.name, x: row.x, y: row.y }));
 }
 
-/**
- * Spawn on the point furthest away from the users already inside, so two
- * clients never stack on the same pixel. Deterministic: ties keep the first
- * point, and a room without spawn points falls back to its centre.
- */
 function chooseSpawn(room, occupants, world) {
   const points = room.spawnPoints?.length ? room.spawnPoints : [{ x: world.width / 2, y: world.height / 2 }];
   let best = points[0];

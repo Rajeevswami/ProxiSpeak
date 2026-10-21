@@ -9,7 +9,12 @@ import config from './config/index.js';
 import logger from './utils/logger.js';
 import { runSpatialAudit, validateAuditParams } from './services/spatialAudit.js';
 
-export function createApp({ config: cfg = config, logger: log = logger, auditRunner = runSpatialAudit } = {}) {
+export function createApp({
+  config: cfg = config,
+  logger: log = logger,
+  auditRunner = runSpatialAudit,
+  scaleState = null,
+} = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Reverse proxies (Nginx, PaaS routers) terminate TLS and forward
@@ -31,6 +36,8 @@ export function createApp({ config: cfg = config, logger: log = logger, auditRun
     res.status(200).json({
       status: 'ok',
       service: 'proxispeak',
+      instanceId: scaleState?.instanceId ?? cfg.server.instanceId,
+      scaleMode: scaleState?.mode ?? 'single',
       uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
       time: new Date().toISOString(),
     });

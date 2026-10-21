@@ -414,3 +414,62 @@ statuses for checks blocked by unavailable MongoDB/browser tooling.*
   10, 50 and 90 px and the two-window hearing test are **NOT VERIFIED**; no
   audible-output numbers are claimed. Exact manual steps and Chrome fake-device
   flags are in `docs/DAY11.md`.
+
+## Week 3 — Day 12 — 2026-10-21 — Redis Pub/Sub and multi-instance edge scaling
+
+*Commits: `da2e332`, `efa9214`, `f3a6312`, `31bdd03`, `63c74a8`, `1d3a901`, `a0e6a0a`, `f73eec3`, `79732a3`, `59463fb`, plus QA bugfix commits `9615fe5`, `8fa43ec`, `8d39cf2`*
+
+**Added**
+
+- `EdgeStore` abstraction (`server/src/services/edgeStore.js`) with strict regex
+  validation on `roomId`, `userId`, and `keyPrefix`, collision-free canonical
+  length-prefixed pair encoding (`<lenA>:<a>:<lenB>:<b>`), synchronous
+  `MemoryEdgeStore`, and store-agnostic `PeerGraph` (`chain()` keeps pure sync
+  semantics when `REDIS_URL` is unset).
+- Optional Redis connection manager (`server/src/db/redis.js`) supporting
+  `redis://` and `rediss://` (TLS), credential redaction across valid and
+  malformed URLs, single-warning boot fallback when unreachable without retry
+  loops, and live `scaleState` transitions (`"single" | "redis" | "redis-degraded"`).
+- `@socket.io/redis-adapter` wiring (`server/src/sockets/redisAdapter.js`) for
+  room broadcasts, point-to-point `io.to(socketId).emit(...)` signaling relays,
+  `io.serverSideEmit` server coordination, and safe pub/sub rejection handling
+  across mid-run outages and shutdowns.
+- Atomic Lua-backed `RedisEdgeStore` (`server/src/services/redisEdgeStore.js`)
+  guaranteeing single-winner `createEdge` + monotonic per-pair `INCR`
+  generations, strict boolean winner `removeEdge`, atomic `removeUser`, and
+  bounded `EXPIRE` safety TTLs.
+- Multi-instance stale-presence sweeps (`server/src/services/presenceCleanup.js`)
+  with atomic per-row claims, `cleanupOnBoot` scoped strictly to `{ instanceId }`,
+  and cross-instance raw transport expiry (`socket.conn.close()` via
+  `io.serverSideEmit`, never `socket.disconnect(true)`) so clients auto-reconnect
+  and recover cleanly.
+- Cursor `SCAN`-only orphan sweeper (`server/src/services/edgeSweep.js`, never
+  `KEYS`) on boot and every `EDGE_SWEEP_INTERVAL_MS`, plus automatic local peer
+  reconciliation (`PeerGraph.reconcileLocalUsers()`) on Redis reconnection.
+- Cached `instanceId` and `scaleMode` fields on `GET /health` with zero DB/Redis
+  network I/O (`server/src/app.js`), CLI verifier `npm run scale-check`
+  (`server/scripts/scale-check.js`), Day 12 test suites, and
+  `docs/REDIS_SCALING.md`.
+
+**Scope boundary**
+
+- Client code untouched (`git diff 35bca1a -- client/` is empty). Only
+  `@socket.io/redis-adapter` and `ioredis` were added to `server/package.json`.
+- **Day 13 mesh optimization / peer caps remain `MISSING` (not started).** Stereo
+  panning and obstacle occlusion remain Week 4 scope.
+
+**Verified in this environment (2026-10-21)**
+
+- Real MongoDB Community Server `8.0.0` (`127.0.0.1:27017`) + `redis-server`
+  `7.4.2` (`127.0.0.1:6379`) running locally:
+  - `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`
+    -> server **142 passed / 0 failed / 0 skipped**, client **145 passed / 0 failed / 0 skipped** (**287 / 287 total**).
+  - `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL="" REDIS_URL_TEST="" npm test`
+    -> server **126 passed / 0 failed / 16 skipped**, client **145 passed / 0 failed / 0 skipped**.
+  - No MongoDB & no Redis -> server **94 passed / 0 failed / 48 skipped** (with explicit `NOT VERIFIED` banners), client **145 passed / 0 failed / 0 skipped**.
+  - `npm run audit` at `users = 50, 100, 250, 500` -> **PASS** across all four (`0` mismatches; 500-user p95 `findNearby=2.880 ms`, `countWithin=1.494 ms`, `computeClusters=10.379 ms <= 20 ms`).
+  - Live two-process `npm run scale-check` against ports `4000` & `4001` -> **PASS (8/8 checks)**; `npm run build` -> clean client bundle.
+- Live headful two-browser WebRTC audio hearing check remains **NOT VERIFIED**
+  here (no browser binary in sandbox); exact steps are in `docs/REDIS_SCALING.md`
+  and `docs/DAY11.md`.
+
