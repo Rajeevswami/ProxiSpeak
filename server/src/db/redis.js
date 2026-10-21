@@ -29,11 +29,8 @@ export function redactRedisUrl(raw) {
   let sanitized = raw;
   try {
     const parsed = new URL(raw);
-    if (parsed.password) {
-      parsed.password = '***';
-    } else if (parsed.username) {
-      parsed.username = '***';
-    }
+    if (parsed.username) parsed.username = '***';
+    if (parsed.password) parsed.password = '***';
     for (const key of [...parsed.searchParams.keys()]) {
       if (/pass|secret|token|auth/i.test(key)) {
         parsed.searchParams.set(key, '***');
@@ -47,8 +44,8 @@ export function redactRedisUrl(raw) {
     return sanitized;
   } catch {
     return sanitized
-      .replace(/\/\/([^:/@]*):([^@]+)@/g, (_match, user) => `//${user ? `${user}:` : ':'}***@`)
-      .replace(/\/\/([^@]+)@/g, '//***@')
+      .replace(/\/\/([^:/@]*):([^@]+)@/g, (_match, user) => `//${user ? '***:' : ':'}***@`)
+      .replace(/\/\/([^:*@]+)@/g, '//***@')
       .replace(/([?&](?:password|pass|token|secret|auth)=)[^&#\s]+/gi, '$1***');
   }
 }

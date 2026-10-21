@@ -103,6 +103,11 @@ function connectSocket(baseUrl) {
   });
 }
 
+export function scrubUrlsInText(text) {
+  if (typeof text !== 'string') return String(text);
+  return text.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"']+/gi, (match) => redactEndpointUrl(match));
+}
+
 export async function runScaleCheck({
   urlA = config.scaleCheck.urlA,
   urlB = config.scaleCheck.urlB,
@@ -112,7 +117,8 @@ export async function runScaleCheck({
   const safeA = redactEndpointUrl(urlA);
   const safeB = redactEndpointUrl(urlB);
   const checks = [];
-  const record = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
+  const record = (name, ok, detail) =>
+    checks.push({ name, ok: Boolean(ok), detail: scrubUrlsInText(detail) });
 
   let clientA = null;
   let clientB = null;
@@ -251,7 +257,10 @@ export async function runScaleCheck({
     initiatorSocket.emit('signal', {
       to: responderId,
       generation: generation + 50,
-      data: { candidate: 'candidate:1 1 UDP 2122252543 127.0.0.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 },
+      data: {
+        type: 'candidate',
+        candidate: { candidate: 'candidate:1 1 UDP 2122252543 127.0.0.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 },
+      },
     });
     const staleErr = await staleErrPromise;
     record(

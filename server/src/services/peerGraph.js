@@ -100,11 +100,18 @@ export class PeerGraph {
   }
 
   #dropRoomIfEmpty(room) {
-    if (room.users.size === 0) this.rooms.delete(room.roomId);
+    if (room.users.size !== 0) return;
+    this.rooms.delete(room.roomId);
+    const prefix = `${room.roomId}\u0000`;
+    for (const compositeKey of [...this.remoteNames.keys()]) {
+      if (compositeKey.startsWith(prefix)) this.remoteNames.delete(compositeKey);
+    }
   }
 
   rememberPeerName(roomId, userId, name) {
-    if (name) this.remoteNames.set(`${roomId}\u0000${userId}`, name);
+    if (name && this.#findRoom(roomId)) {
+      this.remoteNames.set(`${roomId}\u0000${userId}`, name);
+    }
   }
 
   forgetPeerName(roomId, userId) {

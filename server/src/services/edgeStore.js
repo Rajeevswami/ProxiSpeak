@@ -20,7 +20,7 @@
 
 export const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 export const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-export const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+export const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
 
 export function validateRoomId(roomId) {
   if (typeof roomId !== 'string' || !ROOM_ID_PATTERN.test(roomId)) {
@@ -38,7 +38,7 @@ export function validateUserId(userId) {
 
 export function validateKeyPrefix(prefix) {
   if (typeof prefix !== 'string' || !KEY_PREFIX_PATTERN.test(prefix)) {
-    throw new TypeError('keyPrefix must match /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/');
+    throw new TypeError('keyPrefix must match /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/');
   }
   return prefix;
 }
@@ -266,6 +266,15 @@ export class MemoryEdgeStore extends EdgeStore {
       if (roomId === undefined || edge.roomId === roomId) result.push({ ...edge });
     }
     return result.sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  countStoreKeys() {
+    return (
+      this.edgesByToken.size
+      + this.userEdges.size
+      + this.pairGenerations.size
+      + this.userPairs.size
+    );
   }
 
   size() {

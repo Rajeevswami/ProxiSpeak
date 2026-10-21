@@ -140,6 +140,17 @@ export function createSocketServer({
   io.removePeerEdges = (roomId, userId) => peers.leave(roomId, userId);
 
   const EXPIRE_SOCKET_EVENT = 'proxispeak:expire-socket';
+  const PEER_LEFT_EVENT = 'proxispeak:peer-left';
+  const announcePeerLeft = (roomId, userId) => {
+    peers.forgetPeerName(roomId, userId);
+    if (io.multiInstance) {
+      try {
+        io.serverSideEmit(PEER_LEFT_EVENT, { roomId, userId });
+      } catch {
+        /* adapter already closed */
+      }
+    }
+  };
   const closeLocalExpiredSocket = (roomId, sessionId) => {
     const local = io.sockets.sockets.get(sessionId);
     if (!local || local.data.roomId !== roomId) return false;
@@ -155,6 +166,7 @@ export function createSocketServer({
   io.closeRemoteSocket = (roomId, sessionId) => {
     validateRoomId(roomId);
     validateUserId(sessionId);
+    announcePeerLeft(roomId, sessionId);
     if (closeLocalExpiredSocket(roomId, sessionId)) return;
     if (io.multiInstance) {
       io.serverSideEmit(EXPIRE_SOCKET_EVENT, { roomId, sessionId });
@@ -173,6 +185,14 @@ export function createSocketServer({
     closeLocalExpiredSocket(roomId, sessionId);
   });
 
+  io.on(PEER_LEFT_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, userId } = payload;
+    if (typeof roomId === 'string' && typeof userId === 'string') {
+      peers.forgetPeerName(roomId, userId);
+    }
+  });
+
   if (redis?.enabled && redis.pubClient && redis.subClient) {
     attachRedisAdapter(io, {
       pubClient: redis.pubClient,
@@ -180,6 +200,12 @@ export function createSocketServer({
       keyPrefix: cfg.redis.keyPrefix,
       logger: log,
     });
+    const originalClose = io.close.bind(io);
+    io.close = (fn) => {
+      Promise.resolve(io.of('/').adapter.close?.())
+        .catch(() => {})
+        .finally(() => originalClose(fn));
+    };
   }
 
   if (redis?.enabled && typeof redis.setCallbacks === 'function') {
@@ -207,14 +233,16 @@ export function createSocketServer({
     while (pendingCleanups.size) await Promise.allSettled([...pendingCleanups]);
   };
 
-  io.on('connection', (socket) => registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers }));
+  io.on('connection', (socket) =>
+    registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft }),
+  );
 
   log.info(`Socket.io attached to the HTTP server (CORS: ${describeCorsOrigin(cfg)})`);
   return io;
 }
 
 function registerHandlers(socket, ctx) {
-  const { io, cfg, log, presence, rooms, geo, track, peers } = ctx;
+  const { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft } = ctx;
   const clientId = socket.id;
   const socketLog = log.child(clientId.slice(0, 6));
 
@@ -481,6 +509,7 @@ function registerHandlers(socket, ctx) {
     const { roomId } = session;
     session = null;
 
+    announcePeerLeft?.(roomId, clientId);
     try {
       await peers.leave(roomId, clientId);
     } catch (err) {

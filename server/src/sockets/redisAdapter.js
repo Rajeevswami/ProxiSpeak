@@ -11,6 +11,37 @@ import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import { validateKeyPrefix } from '../services/edgeStore.js';
 
+/**
+ * In `ioredis` v6, `publish`/`subscribe`/`unsubscribe`/`psubscribe`/`punsubscribe`
+ * reject asynchronously when the underlying connection closes mid-run or during
+ * shutdown, and `@socket.io/redis-adapter` calls several of those fire-and-forget.
+ * Attaching a `.catch()` on returned Promises routes transient outage errors to
+ * the adapter logger instead of firing Node's global `unhandledRejection`.
+ */
+function guardPubSubMethods(client, onRejected) {
+  const methods = [
+    'publish',
+    'subscribe',
+    'unsubscribe',
+    'psubscribe',
+    'punsubscribe',
+    'ssubscribe',
+    'sunsubscribe',
+  ];
+  for (const name of methods) {
+    if (typeof client[name] !== 'function') continue;
+    const original = client[name].bind(client);
+    // eslint-disable-next-line no-param-reassign
+    client[name] = (...args) => {
+      const result = original(...args);
+      if (result && typeof result.catch === 'function') {
+        result.catch(onRejected);
+      }
+      return result;
+    };
+  }
+}
+
 export function attachRedisAdapter(
   io,
   {
@@ -26,6 +57,12 @@ export function attachRedisAdapter(
   }
   const safePrefix = validateKeyPrefix(keyPrefix);
   const log = typeof baseLogger.child === 'function' ? baseLogger.child('redis-adapter') : baseLogger;
+
+  const onPubSubRejected = (err) => {
+    log.debug?.(`pub/sub command skipped while disconnected: ${err?.message ?? err}`);
+  };
+  guardPubSubMethods(pubClient, onPubSubRejected);
+  guardPubSubMethods(subClient, onPubSubRejected);
 
   io.adapter(createAdapter(pubClient, subClient, { key: `${safePrefix}:adapter` }));
   io.multiInstance = true;
