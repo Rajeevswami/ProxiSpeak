@@ -10,14 +10,15 @@ import http from 'node:http';
 
 import config from '../src/config/index.js';
 import { createLogger } from '../src/utils/logger.js';
+import { createScaleState } from '../src/db/redis.js';
 import { createApp } from '../src/app.js';
 
 const log = createLogger('error');
 
 /** Start the app on a free port, exactly as server/src/index.js does. */
-async function startApp(serverOverrides = {}) {
+async function startApp(serverOverrides = {}, { scaleState = null } = {}) {
   const cfg = { ...config, server: { ...config.server, ...serverOverrides } };
-  const app = createApp({ config: cfg, logger: log });
+  const app = createApp({ config: cfg, logger: log, scaleState });
   const server = http.createServer();
   server.on('request', app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -40,8 +41,27 @@ test('GET /health answers with the service status and no server banner', async (
   const body = await response.json();
   assert.equal(body.status, 'ok');
   assert.equal(body.service, 'proxispeak');
+  assert.equal(typeof body.instanceId, 'string');
+  assert.ok(body.instanceId.length > 0);
+  assert.equal(body.scaleMode, 'single');
   assert.equal(typeof body.uptimeSeconds, 'number');
   assert.ok(!Number.isNaN(Date.parse(body.time)), `time is a timestamp: ${body.time}`);
+});
+
+test('GET /health reports cached instanceId and live scaleMode transitions without backing-service I/O', async (t) => {
+  const scaleState = createScaleState('node-west-2', 'redis');
+  const app = await startApp({}, { scaleState });
+  t.after(app.close);
+
+  const healthy = await (await fetch(`${app.baseUrl}/health`)).json();
+  assert.equal(healthy.instanceId, 'node-west-2');
+  assert.equal(healthy.scaleMode, 'redis');
+
+  scaleState.setMode('redis-degraded');
+  const degraded = await (await fetch(`${app.baseUrl}/health`)).json();
+  assert.equal(degraded.status, 'ok');
+  assert.equal(degraded.instanceId, 'node-west-2');
+  assert.equal(degraded.scaleMode, 'redis-degraded');
 });
 
 test('an unknown route is a JSON 404, not an HTML error page', async (t) => {
