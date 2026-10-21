@@ -42,7 +42,7 @@ const list = (key, fallback) => {
 };
 
 const INSTANCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const REDIS_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+const REDIS_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
 
 function checkedPattern(key, value, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) {
@@ -149,8 +149,10 @@ export const config = Object.freeze({
   }),
 
   scaleCheck: Object.freeze({
-    url1: str('SCALE_CHECK_URL_1', 'http://127.0.0.1:4000'),
-    url2: str('SCALE_CHECK_URL_2', 'http://127.0.0.1:4001'),
+    url1: str('SCALE_CHECK_URL_1', str('SCALE_CHECK_URL_A', 'http://127.0.0.1:4000')),
+    url2: str('SCALE_CHECK_URL_2', str('SCALE_CHECK_URL_B', 'http://127.0.0.1:4001')),
+    urlA: str('SCALE_CHECK_URL_A', str('SCALE_CHECK_URL_1', 'http://127.0.0.1:4000')),
+    urlB: str('SCALE_CHECK_URL_B', str('SCALE_CHECK_URL_2', 'http://127.0.0.1:4001')),
     roomId: str('SCALE_CHECK_ROOM', 'lobby'),
   }),
 

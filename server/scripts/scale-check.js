@@ -109,8 +109,8 @@ export function scrubUrlsInText(text) {
 }
 
 export async function runScaleCheck({
-  urlA = config.scaleCheck.urlA,
-  urlB = config.scaleCheck.urlB,
+  urlA = config.scaleCheck.urlA ?? config.scaleCheck.url1,
+  urlB = config.scaleCheck.urlB ?? config.scaleCheck.url2,
   roomId = config.scaleCheck.roomId,
   logger: log = logger,
 } = {}) {
@@ -347,8 +347,8 @@ const isDirectEntry =
 if (isDirectEntry) {
   const cli = parseCliArgs(process.argv.slice(2));
   const report = await runScaleCheck({
-    urlA: cli.urlA ?? config.scaleCheck.urlA,
-    urlB: cli.urlB ?? config.scaleCheck.urlB,
+    urlA: cli.urlA ?? cli.url1 ?? config.scaleCheck.urlA ?? config.scaleCheck.url1,
+    urlB: cli.urlB ?? cli.url2 ?? config.scaleCheck.urlB ?? config.scaleCheck.url2,
     roomId: cli.room ?? cli.roomId ?? config.scaleCheck.roomId,
   });
   process.exit(report.ok ? 0 : 1);

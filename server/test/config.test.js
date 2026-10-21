@@ -39,10 +39,29 @@ test('INSTANCE_ID defaults to a unique random id per process and honours explici
   assert.equal(explicit.status, 0);
   assert.equal(explicit.stdout.trim(), 'office-node-7');
 
-  for (const badPrefix of ['bad prefix', 'bad*prefix', '../escape']) {
+  for (const badPrefix of ['bad prefix', 'bad*prefix', '../escape', 'app:prod', 'p'.repeat(49)]) {
     const invalid = spawnSync(process.execPath, ['--input-type=module', '-e', printId], {
       encoding: 'utf8', env: { ...envWithoutId, REDIS_KEY_PREFIX: badPrefix },
     });
     assert.notEqual(invalid.status, 0, `REDIS_KEY_PREFIX="${badPrefix}" must fail`);
   }
+});
+
+test('scaleCheck config exposes non-empty default URLs for bare npm run scale-check', () => {
+  const printScale = `import {config} from ${JSON.stringify(configHref)}; console.log(JSON.stringify(config.scaleCheck));`;
+  const envClean = { ...process.env };
+  delete envClean.SCALE_CHECK_URL_1;
+  delete envClean.SCALE_CHECK_URL_2;
+  delete envClean.SCALE_CHECK_URL_A;
+  delete envClean.SCALE_CHECK_URL_B;
+
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', printScale], {
+    encoding: 'utf8', env: envClean,
+  });
+  assert.equal(res.status, 0);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.urlA, 'http://127.0.0.1:4000');
+  assert.equal(parsed.urlB, 'http://127.0.0.1:4001');
+  assert.equal(parsed.url1, 'http://127.0.0.1:4000');
+  assert.equal(parsed.url2, 'http://127.0.0.1:4001');
 });
