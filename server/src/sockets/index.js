@@ -29,7 +29,7 @@ import { isPlainObject } from '../utils/validate.js';
 import { validateJoinPayload, validateMovePayload, validateSignalPayload } from './validation.js';
 import * as presenceStore from '../services/presenceStore.js';
 import * as roomService from '../services/roomService.js';
-import { MemoryEdgeStore } from '../services/edgeStore.js';
+import { MemoryEdgeStore, validateRoomId, validateUserId } from '../services/edgeStore.js';
 import { RedisEdgeStore } from '../services/redisEdgeStore.js';
 import { PeerGraph } from '../services/peerGraph.js';
 import { findNearby } from '../services/proximityService.js';
@@ -136,6 +136,40 @@ export function createSocketServer({
   io.peerGraph = peers;
   io.edgeStore = store;
   io.removePeerEdges = (roomId, userId) => peers.leave(roomId, userId);
+
+  const EXPIRE_SOCKET_EVENT = 'proxispeak:expire-socket';
+  const closeLocalExpiredSocket = (roomId, sessionId) => {
+    const local = io.sockets.sockets.get(sessionId);
+    if (!local || local.data.roomId !== roomId) return false;
+    local.data.presenceExpired = true;
+    local.data.expiryAnnounced = true;
+    peers.dropLocalUser(roomId, sessionId);
+    // Close raw Engine.IO transport — never socket.disconnect(true), so the
+    // client's automatic reconnection + Day 7 session recovery triggers cleanly.
+    local.conn.close();
+    return true;
+  };
+
+  io.closeRemoteSocket = (roomId, sessionId) => {
+    validateRoomId(roomId);
+    validateUserId(sessionId);
+    if (closeLocalExpiredSocket(roomId, sessionId)) return;
+    if (io.multiInstance) {
+      io.serverSideEmit(EXPIRE_SOCKET_EVENT, { roomId, sessionId });
+    }
+  };
+
+  io.on(EXPIRE_SOCKET_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, sessionId } = payload;
+    try {
+      validateRoomId(roomId);
+      validateUserId(sessionId);
+    } catch {
+      return;
+    }
+    closeLocalExpiredSocket(roomId, sessionId);
+  });
 
   if (redis?.enabled && redis.pubClient && redis.subClient) {
     attachRedisAdapter(io, {
