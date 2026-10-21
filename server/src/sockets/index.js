@@ -30,6 +30,7 @@ import { validateJoinPayload, validateMovePayload, validateSignalPayload } from 
 import * as presenceStore from '../services/presenceStore.js';
 import * as roomService from '../services/roomService.js';
 import { MemoryEdgeStore } from '../services/edgeStore.js';
+import { RedisEdgeStore } from '../services/redisEdgeStore.js';
 import { PeerGraph } from '../services/peerGraph.js';
 import { findNearby } from '../services/proximityService.js';
 import { attachRedisAdapter } from './redisAdapter.js';
@@ -81,7 +82,14 @@ export function createSocketServer({
 
   if (cfg.iceServersWarning) log.warn(cfg.iceServersWarning);
 
-  const store = edgeStore ?? new MemoryEdgeStore();
+  const store = edgeStore
+    ?? (redis?.enabled && redis.storeClient
+      ? new RedisEdgeStore({
+          client: redis.storeClient,
+          keyPrefix: cfg.redis.keyPrefix,
+          ttlSeconds: cfg.redis.edgeTtlSeconds,
+        })
+      : new MemoryEdgeStore());
   const resolvePeerName = async (roomId, userId) => {
     const localName = io.sockets.sockets.get(userId)?.data.name;
     if (localName) return localName;
