@@ -126,6 +126,8 @@ export function createSocketServer({
       }
     },
     onEdgeRemoved: (edge) => {
+      peers.forgetPeerName(edge.roomId, edge.a);
+      peers.forgetPeerName(edge.roomId, edge.b);
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
         io.to(recipient).emit('peer:disconnect', { peerId, generation: edge.generation });
       }
@@ -177,6 +179,14 @@ export function createSocketServer({
       subClient: redis.subClient,
       keyPrefix: cfg.redis.keyPrefix,
       logger: log,
+    });
+  }
+
+  if (redis?.enabled && typeof redis.setCallbacks === 'function') {
+    redis.setCallbacks({
+      onRecovered: async () => {
+        await peers.reconcileLocalUsers();
+      },
     });
   }
 

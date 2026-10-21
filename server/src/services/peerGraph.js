@@ -129,10 +129,19 @@ export class PeerGraph {
 
   /** Remove only local registration on this node without touching EdgeStore. */
   dropLocalUser(roomId, userId) {
+    if (roomId === undefined) {
+      for (const id of [...this.rooms.keys()]) {
+        this.dropLocalUser(id, userId);
+      }
+      for (const compositeKey of [...this.remoteNames.keys()]) {
+        if (compositeKey.endsWith(`\u0000${userId}`)) this.remoteNames.delete(compositeKey);
+      }
+      return;
+    }
     const room = this.#findRoom(roomId);
+    this.forgetPeerName(roomId, userId);
     if (!room) return;
     room.users.delete(userId);
-    this.forgetPeerName(roomId, userId);
     this.#dropRoomIfEmpty(room);
   }
 

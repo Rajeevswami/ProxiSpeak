@@ -13,6 +13,7 @@ import { createSocketServer } from './sockets/index.js';
 import { listenOn } from './utils/httpServer.js';
 import { listRoomIds } from './services/roomService.js';
 import { cleanupOnBoot, startPresenceCleanup } from './services/presenceCleanup.js';
+import { startOrphanEdgeSweep, sweepOrphanEdges } from './services/edgeSweep.js';
 
 const log = logger;
 
@@ -42,7 +43,15 @@ async function main() {
 
   const io = createSocketServer({ httpServer, config, logger: log, redis });
 
+  if (redis.enabled) {
+    await sweepOrphanEdges(io).catch((err) =>
+      log.warn('boot orphan edge sweep failed:', err?.message ?? err),
+    );
+  }
   const stopPresenceCleanup = startPresenceCleanup(io);
+  const stopEdgeSweep = redis.enabled
+    ? startOrphanEdgeSweep(io, { runOnStart: false })
+    : async () => {};
 
   await listenOn(httpServer, { port: config.server.port, host: config.server.host });
   log.info(
@@ -59,6 +68,7 @@ async function main() {
     log.info(`${signal} received, shutting down...`);
     setTimeout(() => process.exit(1), 10000).unref();
     await stopPresenceCleanup();
+    await stopEdgeSweep();
     await new Promise((resolve) => io.close(resolve));
     await io.drainSessions();
     await new Promise((resolve) => httpServer.close(resolve));
