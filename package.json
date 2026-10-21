@@ -12,6 +12,7 @@
     "dev:client": "npm --prefix client run dev",
     "seed": "npm --prefix server run seed",
     "audit": "npm --prefix server run audit --",
+    "scale-check": "npm --prefix server run scale-check --",
     "install:all": "npm run install:server && npm run install:client",
     "install:server": "npm install --prefix server",
     "install:client": "npm install --prefix client",
