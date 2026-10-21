@@ -30,15 +30,20 @@ if redis.call('EXISTS', KEYS[1]) == 1 then
   local existingGen = tonumber(redis.call('HGET', KEYS[1], 'generation'))
   return { 0, existingGen }
 end
-local gen = redis.call('INCR', KEYS[2])
+local base = tonumber(redis.call('GET', KEYS[2]) or '0')
+local floor = tonumber(ARGV[6]) or 0
+if floor > base then
+  base = floor
+end
+local gen = base + 1
 local ttl = tonumber(ARGV[5])
+redis.call('SET', KEYS[2], tostring(gen), 'EX', ttl)
 redis.call('HSET', KEYS[1], 'roomId', ARGV[1], 'a', ARGV[2], 'b', ARGV[3], 'generation', tostring(gen))
 redis.call('SADD', KEYS[3], ARGV[4])
 redis.call('SADD', KEYS[4], ARGV[4])
 redis.call('SADD', KEYS[5], ARGV[4])
 redis.call('SADD', KEYS[6], ARGV[4])
 redis.call('EXPIRE', KEYS[1], ttl)
-redis.call('EXPIRE', KEYS[2], ttl)
 redis.call('EXPIRE', KEYS[3], ttl)
 redis.call('EXPIRE', KEYS[4], ttl)
 redis.call('EXPIRE', KEYS[5], ttl)
@@ -87,6 +92,7 @@ const REMOVE_USER_LUA = `
 local prefix = ARGV[1]
 local userId = ARGV[2]
 local out = {}
+local floors = {}
 local liveTokens = redis.call('SMEMBERS', KEYS[1])
 for i = 1, #liveTokens do
   local token = liveTokens[i]
@@ -103,6 +109,8 @@ for i = 1, #liveTokens do
     out[#out + 1] = a
     out[#out + 1] = b
     out[#out + 1] = gen
+    floors[#floors + 1] = peer
+    floors[#floors + 1] = gen
   end
 end
 redis.call('DEL', KEYS[1])
@@ -116,11 +124,16 @@ for i = 1, #pairTokens do
   local c2 = string.find(token, ':', c1 + lenA + 2, true)
   local b = string.sub(token, c2 + 1)
   local peer = a == userId and b or a
+  local genVal = tonumber(redis.call('GET', prefix .. ':gen:' .. token) or '0')
+  if genVal and genVal > 0 then
+    floors[#floors + 1] = peer
+    floors[#floors + 1] = genVal
+  end
   redis.call('SREM', prefix .. ':user-pairs:' .. peer, token)
   redis.call('DEL', prefix .. ':gen:' .. token)
 end
 redis.call('DEL', KEYS[2])
-return out
+return { out, floors }
 `;
 
 function unpackEdgeTuples(flat) {
@@ -151,7 +164,26 @@ export class RedisEdgeStore extends EdgeStore {
       throw new RangeError('ttlSeconds must be a positive integer');
     }
     this.ttlSeconds = ttlSeconds;
+    /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
+    this.userGenFloor = new Map();
+    /** @type {Map<string, number>} pairToken -> highest generation issued in live session */
+    this.pairGenFloor = new Map();
     this.totalGenerations = 0;
+  }
+
+  recordUserFloor(userId, generation) {
+    validateUserId(userId);
+    if (!Number.isInteger(generation) || generation < 1) return;
+    const prev = this.userGenFloor.get(userId) ?? 0;
+    if (generation > prev) this.userGenFloor.set(userId, generation);
+  }
+
+  recordPairFloor(u1, u2, generation) {
+    if (!Number.isInteger(generation) || generation < 1) return;
+    const [a, b] = normalizePair(u1, u2);
+    const token = `${a.length}:${a}:${b.length}:${b}`;
+    const prev = this.pairGenFloor.get(token) ?? 0;
+    if (generation > prev) this.pairGenFloor.set(token, generation);
   }
 
   edgeHashKey(token) {
@@ -177,6 +209,11 @@ export class RedisEdgeStore extends EdgeStore {
     const [a, b] = normalizePair(u1, u2);
     const token = `${a.length}:${a}:${b.length}:${b}`;
 
+    const floor = Math.max(
+      this.pairGenFloor.get(token) ?? 0,
+      this.userGenFloor.get(a) ?? 0,
+      this.userGenFloor.get(b) ?? 0,
+    );
     const [createdFlag, rawGen] = await this.client.eval(
       CREATE_EDGE_LUA,
       6,
@@ -191,9 +228,13 @@ export class RedisEdgeStore extends EdgeStore {
       b,
       token,
       String(this.ttlSeconds),
+      String(floor),
     );
     const created = Number(createdFlag) === 1;
     const generation = Number(rawGen);
+    if (generation > (this.pairGenFloor.get(token) ?? 0)) {
+      this.pairGenFloor.set(token, generation);
+    }
     if (created) this.totalGenerations += 1;
     return { created, generation };
   }
@@ -243,7 +284,7 @@ export class RedisEdgeStore extends EdgeStore {
   async removeUser(userId) {
     const liveKey = this.userEdgesKey(userId);
     const pairsKey = this.userPairsKey(userId);
-    const flat = await this.client.eval(
+    const [flat, floors = []] = await this.client.eval(
       REMOVE_USER_LUA,
       2,
       liveKey,
@@ -251,6 +292,18 @@ export class RedisEdgeStore extends EdgeStore {
       this.keyPrefix,
       userId,
     );
+    for (let i = 0; i + 1 < floors.length; i += 2) {
+      this.recordUserFloor(floors[i], Number(floors[i + 1]));
+    }
+    for (const token of [...this.pairGenFloor.keys()]) {
+      const { a, b } = decodePairToken(token);
+      if (a === userId || b === userId) {
+        const peerId = a === userId ? b : a;
+        this.recordUserFloor(peerId, this.pairGenFloor.get(token) ?? 0);
+        this.pairGenFloor.delete(token);
+      }
+    }
+    this.userGenFloor.delete(userId);
     return unpackEdgeTuples(flat);
   }
 
@@ -321,6 +374,7 @@ export class RedisEdgeStore extends EdgeStore {
       await this.client.srem(this.userPairsKey(edge.a), token);
       // eslint-disable-next-line no-await-in-loop
       await this.client.srem(this.userPairsKey(edge.b), token);
+      this.pairGenFloor.delete(token);
     }
     return removed;
   }

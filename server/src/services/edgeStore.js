@@ -132,7 +132,16 @@ export class MemoryEdgeStore extends EdgeStore {
     this.pairGenerations = new Map();
     /** @type {Map<string, Set<string>>} userId -> Set<pairToken> of known pairs */
     this.userPairs = new Map();
+    /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
+    this.userGenFloor = new Map();
     this.totalGenerations = 0;
+  }
+
+  recordUserFloor(userId, generation) {
+    validateUserId(userId);
+    if (!Number.isInteger(generation) || generation < 1) return;
+    const prev = this.userGenFloor.get(userId) ?? 0;
+    if (generation > prev) this.userGenFloor.set(userId, generation);
   }
 
   #addSetEntry(map, key, value) {
@@ -161,7 +170,12 @@ export class MemoryEdgeStore extends EdgeStore {
       return { created: false, generation: existing.generation };
     }
 
-    const generation = (this.pairGenerations.get(token) ?? 0) + 1;
+    const base = Math.max(
+      this.pairGenerations.get(token) ?? 0,
+      this.userGenFloor.get(a) ?? 0,
+      this.userGenFloor.get(b) ?? 0,
+    );
+    const generation = base + 1;
     this.pairGenerations.set(token, generation);
     this.totalGenerations += 1;
 
@@ -235,11 +249,14 @@ export class MemoryEdgeStore extends EdgeStore {
       for (const token of [...pairTokens]) {
         const { a, b } = decodePairToken(token);
         const peerId = a === userId ? b : a;
+        const pairGen = this.pairGenerations.get(token) ?? 0;
+        if (pairGen > 0) this.recordUserFloor(peerId, pairGen);
         this.#deleteSetEntry(this.userPairs, peerId, token);
         this.pairGenerations.delete(token);
       }
       this.userPairs.delete(userId);
     }
+    this.userGenFloor.delete(userId);
 
     return removed.sort((left, right) => left.key.localeCompare(right.key));
   }

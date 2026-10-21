@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { connectRedis, createScaleState, redactRedisUrl } from '../src/db/redis.js';
 import { redactEndpointUrl, scrubUrlsInText } from '../scripts/scale-check.js';
+import { sweepOrphanEdges } from '../src/services/edgeSweep.js';
 import {
   connectTestClient,
   createMemoryLogger,
@@ -286,4 +287,109 @@ test('mid-run Redis kill enters "redis-degraded", never drops sockets, and autom
   const recoveredB = await (await fetch(`${nodeB.baseUrl}/health`)).json();
   assert.equal(recoveredA.scaleMode, 'redis');
   assert.equal(recoveredB.scaleMode, 'redis');
+});
+
+test('mid-run FLUSHALL while connected keeps sockets alive, self-heals edges strictly above prior generation, and cleans down to 0 keys', { skip: skipWithoutRedis }, async (t) => {
+  const redisPort = await getFreePort();
+  const redisDaemon = await spawnEphemeralRedisServer(redisPort);
+
+  const backing = createSharedClusterBacking();
+  const keyPrefix = `flush_${process.pid}`;
+  const nodeA = await startClusterNode({
+    instanceId: 'flush-a',
+    redisUrl: `redis://127.0.0.1:${redisPort}`,
+    keyPrefix,
+    backing,
+  });
+  const nodeB = await startClusterNode({
+    instanceId: 'flush-b',
+    redisUrl: `redis://127.0.0.1:${redisPort}`,
+    keyPrefix,
+    backing,
+  });
+  t.after(async () => {
+    await nodeA.close();
+    await nodeB.close();
+    await redisDaemon.killHard().catch(() => {});
+  });
+
+  const alice = await connectTestClient(nodeA.baseUrl);
+  const bob = await connectTestClient(nodeB.baseUrl);
+  t.after(() => {
+    alice.close();
+    bob.close();
+  });
+
+  const [jAlice, jBob] = await Promise.all([
+    (alice.emit('join', { roomId: 'lobby', name: 'Alice' }), waitEvent(alice, 'joined')),
+    (bob.emit('join', { roomId: 'lobby', name: 'Bob' }), waitEvent(bob, 'joined')),
+  ]);
+
+  // Reach generation 2 before FLUSHALL so any reset to generation 1 would regress below 2
+  const firstConnect = Promise.all([
+    waitEvent(alice, 'peer:connect', (c) => c.peerId === jBob.selfId),
+    waitEvent(bob, 'peer:connect', (c) => c.peerId === jAlice.selfId),
+  ]);
+  alice.emit('move', { x: 200, y: 200 });
+  bob.emit('move', { x: 240, y: 200 });
+  const [g1] = await firstConnect;
+  assert.equal(g1.generation, 1);
+
+  const firstDisc = Promise.all([
+    waitEvent(alice, 'peer:disconnect', (d) => d.peerId === jBob.selfId),
+    waitEvent(bob, 'peer:disconnect', (d) => d.peerId === jAlice.selfId),
+  ]);
+  alice.emit('move', { x: 600, y: 200 });
+  await firstDisc;
+
+  const secondConnect = Promise.all([
+    waitEvent(alice, 'peer:connect', (c) => c.peerId === jBob.selfId),
+    waitEvent(bob, 'peer:connect', (c) => c.peerId === jAlice.selfId),
+  ]);
+  alice.emit('move', { x: 230, y: 200 });
+  const [g2] = await secondConnect;
+  assert.equal(g2.generation, 2);
+  await delay(30);
+
+  // Execute real Redis FLUSHALL while both nodes & sockets are live and standing still
+  const healed = Promise.all([
+    waitEvent(alice, 'peer:connect', (c) => c.peerId === jBob.selfId),
+    waitEvent(bob, 'peer:connect', (c) => c.peerId === jAlice.selfId),
+  ]);
+  await nodeA.redis.storeClient.flushall();
+  assert.equal(await nodeA.io.edgeStore.countStoreKeys(), 0, 'FLUSHALL wiped all stored Redis keys');
+
+  await Promise.all([
+    sweepOrphanEdges(nodeA.io, { presenceModel: backing.presenceModel }),
+    sweepOrphanEdges(nodeB.io, { presenceModel: backing.presenceModel }),
+  ]);
+
+  const [healedA, healedB] = await healed;
+  assert.equal(alice.connected, true);
+  assert.equal(bob.connected, true);
+  assert.ok(healedA.generation > g2.generation, `expected healed gen > ${g2.generation}, got ${healedA.generation}`);
+  assert.equal(healedA.generation, healedB.generation);
+
+  // Signaling works immediately on the healed generation AND walk-away cleanly disconnects it
+  const relayed = waitEvent(bob, 'signal', (s) => s.from === jAlice.selfId);
+  alice.emit('signal', {
+    to: jBob.selfId,
+    generation: healedA.generation,
+    data: { type: 'offer', sdp: 'v=0\r\n' },
+  });
+  assert.equal((await relayed).generation, healedA.generation);
+
+  const walkAwayDisc = Promise.all([
+    waitEvent(alice, 'peer:disconnect', (d) => d.peerId === jBob.selfId),
+    waitEvent(bob, 'peer:disconnect', (d) => d.peerId === jAlice.selfId),
+  ]);
+  alice.emit('move', { x: 700, y: 200 });
+  const [discA] = await walkAwayDisc;
+  assert.equal(discA.generation, healedA.generation);
+
+  alice.disconnect();
+  bob.disconnect();
+  await delay(60);
+  await Promise.all([nodeA.io.drainSessions(), nodeB.io.drainSessions()]);
+  assert.equal(await nodeA.io.edgeStore.countStoreKeys(), 0);
 });

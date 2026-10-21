@@ -115,6 +115,17 @@ export function createSocketServer({
 
   peers.setListeners({
     onEdgeAdded: (edge) => {
+      if (io.multiInstance) {
+        try {
+          io.serverSideEmit('proxispeak:edge-created', {
+            a: edge.a,
+            b: edge.b,
+            generation: edge.generation,
+          });
+        } catch {
+          /* adapter already closed */
+        }
+      }
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
         io.to(recipient).emit('peer:connect', {
           peerId,
@@ -141,11 +152,16 @@ export function createSocketServer({
 
   const EXPIRE_SOCKET_EVENT = 'proxispeak:expire-socket';
   const PEER_LEFT_EVENT = 'proxispeak:peer-left';
-  const announcePeerLeft = (roomId, userId) => {
+  const EDGE_CREATED_EVENT = 'proxispeak:edge-created';
+  const announcePeerLeft = (roomId, userId, removedEdges = []) => {
     peers.forgetPeerName(roomId, userId);
+    const floors = removedEdges.map((edge) => ({
+      peerId: edge.a === userId ? edge.b : edge.a,
+      generation: edge.generation,
+    }));
     if (io.multiInstance) {
       try {
-        io.serverSideEmit(PEER_LEFT_EVENT, { roomId, userId });
+        io.serverSideEmit(PEER_LEFT_EVENT, { roomId, userId, floors });
       } catch {
         /* adapter already closed */
       }
@@ -187,9 +203,37 @@ export function createSocketServer({
 
   io.on(PEER_LEFT_EVENT, (payload) => {
     if (!isPlainObject(payload)) return;
-    const { roomId, userId } = payload;
+    const { roomId, userId, floors } = payload;
     if (typeof roomId === 'string' && typeof userId === 'string') {
       peers.forgetPeerName(roomId, userId);
+      try {
+        store.userGenFloor?.delete?.(userId);
+      } catch {
+        /* ignore invalid foreign id */
+      }
+    }
+    if (Array.isArray(floors)) {
+      for (const item of floors) {
+        try {
+          if (item && typeof item.peerId === 'string' && Number.isInteger(item.generation)) {
+            store.recordUserFloor?.(item.peerId, item.generation);
+          }
+        } catch {
+          /* ignore malformed floor entry */
+        }
+      }
+    }
+  });
+
+  io.on(EDGE_CREATED_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { a, b, generation } = payload;
+    try {
+      if (typeof a === 'string' && typeof b === 'string' && Number.isInteger(generation)) {
+        store.recordPairFloor?.(a, b, generation);
+      }
+    } catch {
+      /* ignore malformed entry */
     }
   });
 
@@ -509,12 +553,13 @@ function registerHandlers(socket, ctx) {
     const { roomId } = session;
     session = null;
 
-    announcePeerLeft?.(roomId, clientId);
+    let removedEdges = [];
     try {
-      await peers.leave(roomId, clientId);
+      removedEdges = (await peers.leave(roomId, clientId)) ?? [];
     } catch (err) {
       socketLog.error('peer graph cleanup failed:', err?.message ?? err);
     }
+    announcePeerLeft?.(roomId, clientId, removedEdges);
 
     if (!socket.data.expiryAnnounced) socket.to(roomId).emit('user:left', { id: clientId });
 

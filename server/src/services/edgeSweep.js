@@ -36,6 +36,9 @@ export async function sweepOrphanEdges(
     candidateIds.add(edge.b);
   }
   if (candidateIds.size === 0) {
+    if (io?.peerGraph?.rooms?.size) {
+      await io.peerGraph.reconcileLocalUsers();
+    }
     return { removedEdges: 0, cleanedUsers: 0 };
   }
 

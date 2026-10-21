@@ -187,6 +187,26 @@ function defineEdgeStoreContractSuite(label, { skipReason = false, makeCluster }
       await cluster.cleanup();
     }
   });
+
+  test(`[${label}] reconnecting peer after removeUser advances generation strictly past surviving peer floor`, testOpts, async () => {
+    const cluster = await makeCluster();
+    try {
+      const [s1, s2] = cluster.stores;
+      const initial = await s1.createEdge('lobby', 'dana_old', 'bob_live');
+      assert.deepEqual(initial, { created: true, generation: 1 });
+
+      await s1.removeUser('dana_old');
+      const reconnected = await s1.createEdge('lobby', 'dana_fresh', 'bob_live');
+      assert.equal(reconnected.created, true);
+      assert.ok(reconnected.generation > initial.generation, 'reconnect edge strictly exceeds departed generation');
+
+      await s2.removeUser('dana_fresh');
+      await s1.removeUser('bob_live');
+      assert.equal(await cluster.countKeys(), 0);
+    } finally {
+      await cluster.cleanup();
+    }
+  });
 }
 
 // 1. Always verify MemoryEdgeStore
