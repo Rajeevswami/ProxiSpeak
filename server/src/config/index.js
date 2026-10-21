@@ -1,12 +1,9 @@
 /**
  * Central configuration. Every tunable lives here and is sourced from .env
- * (server/.env wins over the repo-root .env). Nothing else in the codebase
- * reads process.env directly.
- *
- * Day 2 adds the mongo block (connection lifecycle). The world-projection and
- * Redis/socket config blocks are added on the days that actually introduce
- * those dependencies.
+ * (server/.env wins over the repo-root .env). Nothing else in the server
+ * codebase reads process.env directly.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +41,16 @@ const list = (key, fallback) => {
     .filter(Boolean);
 };
 
+const INSTANCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const REDIS_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+
+function checkedPattern(key, value, pattern) {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    throw new Error(`Env ${key} has an unsupported format`);
+  }
+  return value;
+}
+
 const nodeEnv = str('NODE_ENV', 'development');
 
 // Malformed JSON must never stop the server from booting: the parser always
@@ -51,15 +58,15 @@ const nodeEnv = str('NODE_ENV', 'development');
 const ice = parseIceServers(str('ICE_SERVERS', ''));
 
 const world = Object.freeze({
-    // Tangent-plane projection the 2dsphere schema depends on: the pixel
-    // plane is mapped onto a tiny globe patch centred on (centerLat,
-    // centerLon). 10 pixels per metre === 1 px is exactly 0.1 m to MongoDB.
-    width: num('WORLD_WIDTH', 1920, { min: 200 }),
-    height: num('WORLD_HEIGHT', 1080, { min: 200 }),
-    centerLat: num('WORLD_CENTER_LAT', 37.7749, { min: -90, max: 90 }),
-    centerLon: num('WORLD_CENTER_LON', -122.4194, { min: -180, max: 180 }),
-    pixelsPerMeter: num('PIXELS_PER_METER', 10, { min: 0.0001, max: 1e6 }),
-  });
+  // Tangent-plane projection the 2dsphere schema depends on: the pixel
+  // plane is mapped onto a tiny globe patch centred on (centerLat,
+  // centerLon). 10 pixels per metre === 1 px is exactly 0.1 m to MongoDB.
+  width: num('WORLD_WIDTH', 1920, { min: 200 }),
+  height: num('WORLD_HEIGHT', 1080, { min: 200 }),
+  centerLat: num('WORLD_CENTER_LAT', 37.7749, { min: -90, max: 90 }),
+  centerLon: num('WORLD_CENTER_LON', -122.4194, { min: -180, max: 180 }),
+  pixelsPerMeter: num('PIXELS_PER_METER', 10, { min: 0.0001, max: 1e6 }),
+});
 
 export const config = Object.freeze({
   nodeEnv,
@@ -85,11 +92,15 @@ export const config = Object.freeze({
      */
     clientOrigins: list('CLIENT_URL', ''),
     /**
-     * Identifies this process in presence documents. Redis-backed multi-instance
-     * scaling arrives on its own day; until then one process owns the rooms it
-     * serves, and this string is what a document records as its writer.
+     * Unique per-process identifier. Defaults to a random id so two processes
+     * launched without overrides never collide; override via INSTANCE_ID so a
+     * restarted node can reclaim and purge its own stale rows at boot.
      */
-    instanceId: str('INSTANCE_ID', 'node-local'),
+    instanceId: checkedPattern(
+      'INSTANCE_ID',
+      str('INSTANCE_ID', `node-${crypto.randomBytes(6).toString('hex')}`),
+      INSTANCE_ID_PATTERN,
+    ),
   }),
 
   mongo: Object.freeze({
@@ -99,9 +110,24 @@ export const config = Object.freeze({
     serverSelectionTimeoutMS: num('MONGO_TIMEOUT_MS', 8000, { min: 500 }),
   }),
 
+  redis: Object.freeze({
+    // Optional: empty string keeps pure single-instance in-memory behaviour.
+    // Supports both `redis://` and `rediss://` (TLS). Always redacted in logs.
+    url: str('REDIS_URL', ''),
+    keyPrefix: checkedPattern(
+      'REDIS_KEY_PREFIX',
+      str('REDIS_KEY_PREFIX', 'proxispeak'),
+      REDIS_PREFIX_PATTERN,
+    ),
+    edgeSweepIntervalMs: num('EDGE_SWEEP_INTERVAL_MS', 30000, { min: 1, max: 2 ** 31 - 1 }),
+    connectTimeoutMs: num('REDIS_CONNECT_TIMEOUT_MS', 3000, { min: 100, max: 60000 }),
+    edgeTtlSeconds: num('REDIS_EDGE_TTL_SECONDS', 3600, { min: 60, max: 604800 }),
+  }),
+
   proximity: Object.freeze({
     radiusPx: num('PROXIMITY_RADIUS_PX', 100, { min: 0, max: Math.hypot(world.width, world.height) }),
   }),
+
   presence: Object.freeze({
     // Node clamps overflowing intervals to 1 ms; reject them before boot.
     cleanupIntervalMs: num('PRESENCE_CLEANUP_INTERVAL_MS', 30000, { min: 1, max: 2 ** 31 - 1 }),
@@ -109,33 +135,23 @@ export const config = Object.freeze({
   }),
 
   socket: Object.freeze({
-    /**
-     * Accepted `move` events per socket per second (token bucket: bursts up to
-     * this many events are allowed, everything above is dropped).
-     */
     moveEventsPerSec: num('SOCKET_MOVE_EPS', 30, { min: 1, max: 1000 }),
-    /**
-     * Largest distance (pixels) an avatar may travel in one accepted `move`.
-     * The room is 1920 px wide, so the default is a short hop: a single event
-     * can never teleport an avatar across the floor plan.
-     */
     maxStepPx: num('SOCKET_MAX_STEP_PX', 120, { min: 1, max: 100000 }),
-    /**
-     * `signal` events per socket per second. ICE trickling is naturally
-     * bursty, so the bucket starts with `signalBurst` tokens (a whole
-     * candidate batch may arrive at once) and refills at this sustained rate.
-     */
     signalEventsPerSec: num('SOCKET_SIGNAL_EPS', 30, { min: 1, max: 1000 }),
     signalBurst: num('SOCKET_SIGNAL_BURST', 200, { min: 1, max: 10000 }),
   }),
 
   audit: Object.freeze({
-    // Guarded Mid-Review endpoint/script: on by default outside production,
-    // off by default in production; AUDIT_ENABLED=true/false overrides.
     enabled: process.env.AUDIT_ENABLED === undefined || process.env.AUDIT_ENABLED === ''
       ? nodeEnv !== 'production'
       : ['1', 'true', 'yes'].includes(String(process.env.AUDIT_ENABLED).toLowerCase()),
     targetMs: num('AUDIT_TARGET_MS', 20, { min: 0.001, max: 60000 }),
+  }),
+
+  scaleCheck: Object.freeze({
+    url1: str('SCALE_CHECK_URL_1', 'http://127.0.0.1:4000'),
+    url2: str('SCALE_CHECK_URL_2', 'http://127.0.0.1:4001'),
+    roomId: str('SCALE_CHECK_ROOM', 'lobby'),
   }),
 
   world,
