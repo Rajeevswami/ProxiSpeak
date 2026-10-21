@@ -1,9 +1,11 @@
-# Requirements Trace — up to Day 11
+# Requirements Trace — up to Day 12
 
-Company requirements through the Mid-Project Review plus Week 3 Day 11, traced
-to files, tests and exact commands. Status is honest: there is no local MongoDB
-or browser/Chromium here, so their live runs are marked NOT VERIFIED; see
-`docs/DAY11.md` and `DEMO_MIDREVIEW.md` for rerun steps.
+Company requirements through the Mid-Project Review plus Week 3 Days 11–12, traced
+to files, tests and exact commands. Status is honest: `redis-server` 7.4.2 is
+running locally (`24/24` Day 12 tests verified with `0` skipped), whereas there is
+no local MongoDB (`mongod`) or browser/Chromium binary in this sandbox so their
+live runs remain marked NOT VERIFIED; see `docs/REDIS_SCALING.md`, `docs/DAY11.md`
+and `DEMO_MIDREVIEW.md` for rerun steps.
 
 | # | Requirement | Implementing files | Test files | Command that demonstrates it | Status |
 |---|---|---|---|---|---|
@@ -23,10 +25,10 @@ or browser/Chromium here, so their live runs are marked NOT VERIFIED; see
 | 14 | Day 10: fast whole-room clustering (one roster query + in-memory grid + union-find), old `$near` algorithm kept as cross-check | `server/src/services/proximityService.js` (`computeClusters`, `computeClustersViaNear`) | `server/test/proximity.roster.test.js`, `server/test/spatialAudit.test.js` (20-layout equivalence) | `node --test server/test/proximity.roster.test.js server/test/spatialAudit.test.js` | DONE for mocked one-query unit test; 20 Mongo-backed layouts NOT VERIFIED (Mongo unavailable) |
 | 15 | Day 10: signal burst covers ~20-user clusters | `server/src/config/index.js` (`SOCKET_SIGNAL_BURST=200`), `.env.example` | `server/test/signal.ratelimit.headroom.test.js` | `node --test server/test/signal.ratelimit.headroom.test.js` | DONE |
 | 16 | Week 3 — Dynamic Attenuation: distance-based GainNode for remote WebRTC tracks | `client/src/audio/attenuation.js`, `client/src/audio/audioMixer.js`, `client/src/webrtc/peerManager.js`, `client/src/webrtc/remoteAudio.js`, `client/src/hooks/useSocket.js`, `client/src/App.jsx`, `client/src/components/AudioStatus.jsx`; server sends `proximityRadiusPx` in `server/src/sockets/index.js` | `client/test/audio.attenuation.test.js`, `client/test/audio.audioMixer.test.js`, `server/test/socket.integration.test.js` | `npm test`; `npm run build --prefix client`; manual two-window hearing steps: `docs/DAY11.md` | DONE in code and client unit tests; server joined-payload assertion NOT VERIFIED (32 server tests skipped: no MongoDB); real two-browser hearing NOT VERIFIED (no browser/Chromium) |
-| 17 | Week 3 — Mesh Scaling | — | — | — | MISSING / not started (later day; excluded from Day 11) |
-| 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io (Day 12) | — | — | — | MISSING / not started — next planned step; excluded from Day 11 |
+| 17 | Week 3 — Mesh Scaling | — | — | — | MISSING / not started (Day 13 — excluded from Day 12) |
+| 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io & shared edge state (Day 12) | `server/src/db/redis.js`, `server/src/sockets/redisAdapter.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/edgeSweep.js`, `server/src/services/peerGraph.js`, `server/src/services/presenceCleanup.js`, `server/src/sockets/index.js`, `server/src/app.js`, `server/src/config/index.js`, `server/scripts/scale-check.js` | `server/test/edgeStore.contract.test.js`, `server/test/redis.failure.test.js`, `server/test/redis.scale.integration.test.js`, `server/test/app.test.js`, `server/test/config.test.js` | `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`; `npm run scale-check -- --urlA=http://127.0.0.1:3001 --urlB=http://127.0.0.1:3002`; `docs/REDIS_SCALING.md` | DONE — 24/24 Day 12 contract, TLS (`rediss://`), outage/reconcile, two-instance, 200-way race, `SCAN` crash-sweep, 50-cycle leak & 50-user benchmark tests verified live against Redis 7.4.2 (`0` skipped); live Mongo-backed `server/src/index.js` two-process + browser check NOT VERIFIED here (no local `mongod` / Chromium) |
 
 Nothing else was found PARTIAL or MISSING within Week 1, Week 2 or the
-Mid-Review scope. Week 3 rows distinguish the Day 11 attenuation deliverable
-from later Mesh Scaling and Redis work. Stereo panning and occlusion remain
-Week 4 scope, not started.
+Mid-Review scope. Week 3 rows distinguish the completed Day 11 attenuation and
+Day 12 Redis multi-instance scaling slices from **Day 13 Mesh Scaling (`MISSING`)**.
+Stereo panning and occlusion remain Week 4 scope, not started.

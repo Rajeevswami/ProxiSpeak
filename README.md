@@ -22,8 +22,8 @@ and talk.
 ## Tech stack
 
 * **Backend** — Node.js, Express, Socket.io, MongoDB (`$near` / `$geoWithin`,
-  `2dsphere`). Redis Pub/Sub is planned for Day 12; it and the Socket.io Redis
-  adapter are not installed or implemented.
+  `2dsphere`), optional Redis Pub/Sub + Lua edge state (`@socket.io/redis-adapter`,
+  `ioredis` — Day 12).
 * **Frontend** — React, HTML5 Canvas API, WebRTC (`getUserMedia`), Web Audio API
   (Day 11 distance attenuation; panning/occlusion remain Week 4).
 
@@ -34,10 +34,10 @@ database.
 
 | Module | What it does | Status |
 | --- | --- | --- |
-| `server/` — Express app | Health endpoint, JSON API surface, config + logger | **Day 1 — done** |
+| `server/` — Express app | Health endpoint (`instanceId`, `scaleMode`), JSON API surface, config + logger | **Day 1 & Day 12 — done** |
 | Geospatial engine | MongoDB `2dsphere` queries (`$near`, `$geoWithin`) mapped onto the 2D world plane | Week 1–2 |
-| Presence & signaling | Socket.io gateway, presence lifecycle, in-process peer graph; Redis Pub/Sub multi-instance scaling is planned for Day 12 | Week 2 done; backend scaling not started |
-| Voice mesh | WebRTC peer connections; mesh optimization is planned for Day 13 | Week 2 done; optimization not started |
+| Presence & signaling | Socket.io gateway, atomic presence sweeps, `EdgeStore` (`MemoryEdgeStore` + Lua `RedisEdgeStore`), `@socket.io/redis-adapter`, `SCAN` orphan sweep | **Week 2 & Day 12 — done** |
+| Voice mesh | WebRTC peer connections; mesh optimization is planned for Day 13 | Week 2 done; **Day 13 optimization not started** |
 | Spatial audio | Web Audio API distance attenuation (GainNode) | Day 11 done; panning and wall occlusion are Week 4 |
 | Client | React + Canvas live map, avatar movement, WebRTC audio and read-only audio status | Week 1–3 slices done |
 
@@ -47,7 +47,7 @@ database.
 | --- | --- | --- | --- |
 | **Week 1** | Foundations & data layer | Project setup (Day 1), MongoDB connection, `UserPresence` / `Room` schemas with `2dsphere` index, seed script, health endpoint | Week 1 review: server boots green, geo data seeds and queries |
 | **Week 2** | Real-time presence, proximity & P2P audio | Socket.io gateway, presence lifecycle, `$near` queries, in-process peer graph and WebRTC signaling/audio | Week 2 review: presence and proximity behavior |
-| **Week 3** | Frontend attenuation; backend scaling (planned) | Day 11 Web Audio distance gain is done; Day 12 Redis Pub/Sub and Day 13 mesh optimization are not started | Review gain fades by pixel distance; backend multi-instance work follows |
+| **Week 3** | Frontend attenuation & Redis scaling (Days 11–12 done; Day 13 planned) | Day 11 Web Audio distance gain and Day 12 multi-instance Redis Pub/Sub + shared edge state are done; Day 13 mesh optimization is not started | Review gain curve + two-instance `npm run scale-check`; mesh scaling follows |
 | **Week 4** | Spatial audio and hardening | Stereo panning, obstacle occlusion, load testing and production hardening | Final review: end-to-end multi-user demo |
 
 ## Week 1 — what is done (Day 1–6)
@@ -151,6 +151,8 @@ Root scripts:
 | `npm start` / `npm run dev:server` | Server (once / with `node --watch`) |
 | `npm run dev:client` | Vite dev server for the client |
 | `npm run seed` | Creates the index and the default rooms (re-running is safe) |
+| `npm run audit` | Runs the Day 10 geospatial latency & accuracy audit |
+| `npm run scale-check` | Verifies cross-instance presence, single edge creation, WebRTC signaling, and disconnects across two running server instances |
 | `npm test` | **Both** suites: server first, then client; fails if either fails |
 | `npm run test:server` / `npm run test:client` | One suite on its own |
 | `npm run build` (alias `build:client`) | Production build into `client/dist/` |
@@ -1044,3 +1046,31 @@ Implementation and exact manual steps: [docs/DAY11.md](docs/DAY11.md). Unit
 coverage: `node --test client/test/audio.attenuation.test.js client/test/audio.audioMixer.test.js`.
 Real two-browser audio is not verifiable by Node tests. Stereo panning and
 left/right ear logic, plus obstacle occlusion, are Week 4—not Day 11.
+
+## Week 3 — Day 12: Multi-instance Redis scaling
+
+Backend-only horizontal scaling slice (`client/` untouched): when `REDIS_URL`
+(`redis://` or `rediss://`) is set, multiple ProxiSpeak Node.js instances attach
+`@socket.io/redis-adapter` for room/socket event fan-out and share active peer
+edges through `RedisEdgeStore` (atomic Lua `createEdge`, `removeEdge`, and
+`removeUser` with monotonic per-pair `INCR` generations). Leaving `REDIS_URL`
+empty keeps single-instance `MemoryEdgeStore` behavior with zero network
+round-trips; an unreachable `REDIS_URL` at boot logs one redacted warning and
+falls back cleanly to `scaleMode: "single"`.
+
+- **Health surface:** `GET /health` adds `instanceId` and `scaleMode`
+  (`"single" | "redis" | "redis-degraded"`) from cached state with zero DB or
+  Redis I/O.
+- **Sweeps & crash recovery:** Periodic `cleanupStale` claims expired rows
+  atomically across instances and closes remote sockets' raw transports via
+  `io.serverSideEmit` so client auto-reconnect + session recovery trigger cleanly;
+  `sweepOrphanEdges` uses cursor `SCAN` (never `KEYS`) on boot and every
+  `EDGE_SWEEP_INTERVAL_MS` to purge `kill -9` orphans; mid-run Redis recovery
+  runs `PeerGraph.reconcileLocalUsers()`.
+- **Verification & docs:** Architecture diagram, full Redis key table, failure
+  modes, sticky-session notes, local two-instance commands, and measured 50-user
+  latency benchmarks are in [docs/REDIS_SCALING.md](docs/REDIS_SCALING.md). Run
+  `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` and
+  `npm run scale-check -- --urlA=http://127.0.0.1:3001 --urlB=http://127.0.0.1:3002`.
+  **Mesh optimization remains Day 13 scope and is not started.**
+
