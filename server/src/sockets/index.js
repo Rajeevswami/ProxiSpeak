@@ -32,6 +32,7 @@ import * as roomService from '../services/roomService.js';
 import { MemoryEdgeStore } from '../services/edgeStore.js';
 import { PeerGraph } from '../services/peerGraph.js';
 import { findNearby } from '../services/proximityService.js';
+import { attachRedisAdapter } from './redisAdapter.js';
 
 /** Deterministic colour for avatars: the Day 3 `join` payload carries a name only. */
 const DEFAULT_AVATAR_COLOR = '#4f8cff';
@@ -56,6 +57,7 @@ export function createSocketServer({
   rooms = roomService,
   findNearby: neighborQuery = findNearby,
   edgeStore,
+  redis = null,
   multiInstance = false,
 } = {}) {
   if (!httpServer) throw new Error('createSocketServer requires the HTTP server to attach to');
@@ -71,7 +73,7 @@ export function createSocketServer({
     maxHttpBufferSize: 100_000,
   });
 
-  io.multiInstance = Boolean(multiInstance);
+  io.multiInstance = Boolean(multiInstance || redis?.enabled);
 
   // One transform per process: the room is a flat pixel plane, MongoDB wants
   // GeoJSON, and both must always agree.
@@ -126,6 +128,15 @@ export function createSocketServer({
   io.peerGraph = peers;
   io.edgeStore = store;
   io.removePeerEdges = (roomId, userId) => peers.leave(roomId, userId);
+
+  if (redis?.enabled && redis.pubClient && redis.subClient) {
+    attachRedisAdapter(io, {
+      pubClient: redis.pubClient,
+      subClient: redis.subClient,
+      keyPrefix: cfg.redis.keyPrefix,
+      logger: log,
+    });
+  }
 
   /**
    * Presence cleanups that have started but not finished. Sockets disconnect

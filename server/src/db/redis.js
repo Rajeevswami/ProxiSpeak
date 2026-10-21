@@ -118,24 +118,28 @@ async function closeOneClient(client, graceMs = 500) {
  * Falls back to single-instance without throwing or looping if unreachable at boot.
  */
 export async function connectRedis({
-  url = config.redis.url,
-  connectTimeoutMs = config.redis.connectTimeoutMs,
+  config: cfg = config,
+  url,
+  connectTimeoutMs,
   tls,
   clientFactory = (targetUrl, opts) => new Redis(targetUrl, opts),
   logger: baseLogger = logger,
-  scaleState = createScaleState(config.server.instanceId, 'single'),
+  scaleState,
   onDegraded,
   onRecovered,
 } = {}) {
+  const effectiveUrl = url ?? cfg.redis.url;
+  const effectiveTimeoutMs = connectTimeoutMs ?? cfg.redis.connectTimeoutMs;
+  const state = scaleState ?? createScaleState(cfg.server.instanceId, 'single');
   const log = typeof baseLogger.child === 'function' ? baseLogger.child('redis') : baseLogger;
-  const trimmed = typeof url === 'string' ? url.trim() : '';
+  const trimmed = typeof effectiveUrl === 'string' ? effectiveUrl.trim() : '';
 
   if (!trimmed) {
-    scaleState.setMode('single');
+    state.setMode('single');
     return {
       enabled: false,
       fallback: false,
-      scaleState,
+      scaleState: state,
       storeClient: null,
       pubClient: null,
       subClient: null,
@@ -155,11 +159,11 @@ export async function connectRedis({
     log.warn(
       `Invalid REDIS_URL "${safeUrl}" (${err?.message ?? err}) — falling back to single-instance mode`,
     );
-    scaleState.setMode('single');
+    state.setMode('single');
     return {
       enabled: false,
       fallback: true,
-      scaleState,
+      scaleState: state,
       storeClient: null,
       pubClient: null,
       subClient: null,
@@ -171,15 +175,15 @@ export async function connectRedis({
   const allowReconnectRef = { current: false };
   const storeClient = clientFactory(
     trimmed,
-    buildRedisOptions(parsedUrl, { connectTimeoutMs, allowReconnectRef, tls, forStore: true }),
+    buildRedisOptions(parsedUrl, { connectTimeoutMs: effectiveTimeoutMs, allowReconnectRef, tls, forStore: true }),
   );
   const pubClient = clientFactory(
     trimmed,
-    buildRedisOptions(parsedUrl, { connectTimeoutMs, allowReconnectRef, tls, forStore: false }),
+    buildRedisOptions(parsedUrl, { connectTimeoutMs: effectiveTimeoutMs, allowReconnectRef, tls, forStore: false }),
   );
   const subClient = clientFactory(
     trimmed,
-    buildRedisOptions(parsedUrl, { connectTimeoutMs, allowReconnectRef, tls, forStore: false }),
+    buildRedisOptions(parsedUrl, { connectTimeoutMs: effectiveTimeoutMs, allowReconnectRef, tls, forStore: false }),
   );
   const allClients = [storeClient, pubClient, subClient];
 
@@ -190,8 +194,8 @@ export async function connectRedis({
 
   const markDegraded = (reason) => {
     if (!booted || closing) return;
-    if (scaleState.mode !== 'redis-degraded') {
-      scaleState.setMode('redis-degraded');
+    if (state.mode !== 'redis-degraded') {
+      state.setMode('redis-degraded');
       log.warn(
         `Redis connection lost at ${safeUrl} (${reason}) — scaleMode is now "redis-degraded"; `
           + 'existing WebRTC peers stay connected, new cross-instance edges paused until recovery',
@@ -229,8 +233,8 @@ export async function connectRedis({
     client.on('ready', () => {
       readySet.add(client);
       if (!booted || closing) return;
-      if (readySet.size === allClients.length && scaleState.mode === 'redis-degraded') {
-        scaleState.setMode('redis');
+      if (readySet.size === allClients.length && state.mode === 'redis-degraded') {
+        state.setMode('redis');
         log.info(`Redis connection restored at ${safeUrl} — reconciling local peer edges`);
         Promise.resolve(onRecovered?.()).catch((err) => {
           log.error('Redis recovery reconcile failed:', err?.message ?? err);
@@ -248,8 +252,8 @@ export async function connectRedis({
       })(),
       new Promise((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`timed out after ${connectTimeoutMs}ms`)),
-          connectTimeoutMs,
+          () => reject(new Error(`timed out after ${effectiveTimeoutMs}ms`)),
+          effectiveTimeoutMs,
         );
         timer.unref();
       }),
@@ -267,11 +271,11 @@ export async function connectRedis({
       `WARNING: Cannot reach Redis at "${safeUrl}" (${reason}). `
         + 'Falling back to single-instance in-memory mode — cross-instance scaling is inactive.',
     );
-    scaleState.setMode('single');
+    state.setMode('single');
     return {
       enabled: false,
       fallback: true,
-      scaleState,
+      scaleState: state,
       storeClient: null,
       pubClient: null,
       subClient: null,
@@ -285,13 +289,13 @@ export async function connectRedis({
   for (const client of allClients) readySet.add(client);
   allowReconnectRef.current = true;
   booted = true;
-  scaleState.setMode('redis');
+  state.setMode('redis');
   log.info(`Redis connected at ${safeUrl} (scaleMode: "redis")`);
 
   const handle = {
     enabled: true,
     fallback: false,
-    scaleState,
+    scaleState: state,
     storeClient,
     pubClient,
     subClient,
@@ -299,7 +303,7 @@ export async function connectRedis({
       onDegraded = nextDegraded;
       onRecovered = nextRecovered;
     },
-    isReady: () => !closing && scaleState.mode === 'redis' && readySet.size === allClients.length,
+    isReady: () => !closing && state.mode === 'redis' && readySet.size === allClients.length,
     close: async () => {
       if (closing) return;
       closing = true;
