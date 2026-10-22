@@ -281,7 +281,11 @@ export class PeerGraph {
     // CONNECT radius. An entry without a distance can never prove <= 100 px, so it
     // is never used to create a new edge (existing edges may still hold).
     const candidates = dropEntries
-      .filter((e) => Number.isFinite(e.distancePx) && e.distancePx <= this.radiusPx)
+      .filter((e) => (Number.isFinite(e.distancePx)
+        ? e.distancePx <= this.radiusPx
+        // With no hysteresis band the query radius IS the connect radius, so a
+        // distance-less entry from an injected source keeps its Day 12 meaning.
+        : this.dropRadiusPx === this.radiusPx))
       .sort((left, right) => {
         if (left.distancePx !== right.distancePx) return left.distancePx - right.distancePx;
         return left.id.localeCompare(right.id);

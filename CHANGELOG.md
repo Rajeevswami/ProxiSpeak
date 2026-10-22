@@ -473,3 +473,86 @@ statuses for checks blocked by unavailable MongoDB/browser tooling.*
   here (no browser binary in sandbox); exact steps are in `docs/REDIS_SCALING.md`
   and `docs/DAY11.md`.
 
+## Week 3 — Day 13 — 2026-10-22 — WebRTC mesh optimization (cap + hysteresis)
+
+*Commits: `ed398c0`, `4b7abcc`, `70d6dc5`, `1231b85`, `19d2307`, `49603ab`, `7113c57`, `07f07e0` (this documentation commit follows them)*
+
+**Added**
+
+- `MAX_PEERS_PER_USER` (default `8`, `0` = unlimited) and
+  `PEER_DISCONNECT_RADIUS_PX` (default radius + 15 = `115`, validated
+  `radius … 3 × radius`) in `server/src/config/index.js`, documented in
+  `.env.example`.
+- Symmetric, atomic degree cap inside both `EdgeStore` implementations:
+  `MemoryEdgeStore.createEdge` checks both `Set` sizes in one synchronous step;
+  `RedisEdgeStore.createEdge` adds two `SCARD`s to the existing `CREATE_EDGE_LUA`
+  script (same round-trip, no new Redis key). Refused pairs return
+  `{ created: false, capped: true }` and emit nothing.
+- Hysteresis in `PeerGraph`: one neighbour query at the drop radius, new edges
+  only for finite distances `<= PROXIMITY_RADIUS_PX`, existing edges kept until
+  the distance exceeds the drop radius. The 100–115 px band stays silent because
+  the Day 11 gain curve is 0 at 100 px.
+- Nearest-first deterministic candidate ordering `(distancePx, userId)`, bounded
+  slot reclaim (one extra sync per endpoint, `isReclaim` prevents cascades),
+  cross-instance `proxispeak:edge-removed` reclaim signal, and per-instance mesh
+  counters (`edgesCreated`, `edgesRemoved`, `cappedRejections`,
+  `hysteresisHolds`) logged at debug level and exposed through `stats().mesh` /
+  `meshStats()`.
+- `joined` now carries `maxPeers` and `peerDisconnectRadiusPx`; the existing audio
+  overlay shows `connected N / max` and `M nearby, not connected (cap)` via the
+  pure helper `client/src/realtime/meshIndicator.js` (no new protocol, no new
+  library, positions stay out of React state).
+- `server/scripts/mesh-check.js` + `npm run mesh-check`: real sockets against two
+  embedded instances sharing real Redis (or `--url` / `--urlA` / `--urlB` for
+  running servers), tight clusters at N = 10/20/50 with before/after numbers,
+  boundary approach and 100-crossing jitter, brute-force invariants, exit code 1
+  on failure, cleanup in `finally`.
+- `docs/MESH_OPTIMIZATION.md`, updated `docs/REDIS_SCALING.md`, README and
+  requirements trace. Tests: `peerGraph.mesh.test.js`, `mesh.twoInstance.test.js`,
+  `mesh.config.test.js`, `client/test/meshIndicator.test.js`, plus cap suites in
+  `edgeStore.contract.test.js`.
+
+**Changed**
+
+- The Day 8 `peerGraph.integration.test.js` suite asserts the Day 12
+  unlimited/no-hysteresis contract, so it now sets `MAX_PEERS_PER_USER=0` and
+  `PEER_DISCONNECT_RADIUS_PX = PROXIMITY_RADIUS_PX` explicitly in its test config
+  (no assertion weakened).
+- `peerGraph.unit.test.js` now expects the single neighbour query at the drop
+  radius (hysteresis needs the wider query).
+
+**Measured (`npm run mesh-check`, two instances + redis-server 6.2.14)**
+
+| Tight cluster | Edges before (unlimited) | Edges after (cap 8) | Max connections/browser before → after |
+| --- | ---: | ---: | ---: |
+| N = 10 | 45 | 36 | 9 → 8 |
+| N = 20 | 190 | 73 | 19 → 8 |
+| N = 50 | **1225** | **190** | **49 → 8** |
+
+100 boundary crossings: **0** connect/disconnect events with the 115 px drop
+radius versus **100 / 100** with the drop radius equal to the connect radius.
+Result: **PASS 37/37 checks**, 0 dropped signals at the default burst.
+
+**Verified in this environment (2026-10-22)**
+
+- Redis: real `redis-server` **6.2.14** (apt is offline here, so the binary came
+  from the environment tool `redislite`). Redis-dependent suites ran with
+  `REDIS_URL_TEST` and **0 skipped**.
+- `REDIS_URL_TEST="redis://127.0.0.1:6399" npm test` -> server **135 passed /
+  0 failed / 32 skipped**, client **151 passed / 0 failed / 0 skipped**.
+  `npm run build --prefix client` succeeded.
+- The **32 skips are all MongoDB-backed suites**: no `mongod` is installed and
+  the sandbox cannot download one (`apt` and `fastdl.mongodb.org` are
+  unreachable). Live MongoDB behaviour and a real two-browser audible check are
+  therefore **NOT VERIFIED here**; with a local MongoDB, skipped must be 0.
+- `npm run mesh-check` -> **PASS (37/37)**; the exact output is in
+  `docs/MESH_OPTIMIZATION.md`.
+
+**Scope boundary**
+
+- No new dependency, no TypeScript, no SFU/MCU, no TURN, no deploy config, no
+  Express-served client build, no other client change. With
+  `MAX_PEERS_PER_USER=0` and `PEER_DISCONNECT_RADIUS_PX = PROXIMITY_RADIUS_PX`
+  the Day 12 behaviour is unchanged (covered by an explicit test).
+- Stereo panning and obstacle occlusion remain Week 4 scope, not started.
+

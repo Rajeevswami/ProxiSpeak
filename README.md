@@ -815,6 +815,8 @@ Throttled signals are dropped silently; the socket stays connected.
 | `ICE_SERVERS` | `[{"urls":"stun:stun.l.google.com:19302"}]` | JSON array for `RTCPeerConnection`; STUN/STUNS only (no TURN on Day 8). Malformed values fall back to the default with one warning line at boot. |
 | `SOCKET_SIGNAL_EPS` | `30` | Sustained `signal` events per socket per second. |
 | `SOCKET_SIGNAL_BURST` | `200` | Burst capacity for trickled ICE candidates (Day 10: a ~20-user mutually-near cluster sends ~20×(1 SDP+7 candidates)=160 signals per socket; 200 covers it, refill adds 15 more in 500 ms). |
+| `MAX_PEERS_PER_USER` | `8` | Day 13 symmetric degree cap for both endpoints of a new edge; `0` = unlimited (Day 12 behaviour). |
+| `PEER_DISCONNECT_RADIUS_PX` | `radius + 15` (`115`) | Day 13 drop radius (hysteresis). Valid `radius … 3 × radius`; equal to the radius = Day 12 behaviour. |
 
 ### Tests
 
@@ -1074,3 +1076,45 @@ falls back cleanly to `scaleMode: "single"`.
   `npm run scale-check -- --urlA=http://127.0.0.1:3001 --urlB=http://127.0.0.1:3002`.
   **Mesh optimization remains Day 13 scope and is not started.**
 
+
+## Week 3 — Day 13: Mesh optimization
+
+The WebRTC mesh is now bounded and stable. `MAX_PEERS_PER_USER` (default `8`,
+`0` = unlimited) caps the degree of **both** endpoints of every new edge; the
+check runs inside the store's atomic create (two `Set.size` reads in
+`MemoryEdgeStore`, two `SCARD`s inside the existing `CREATE_EDGE_LUA` for
+`RedisEdgeStore`), so two instances can never both take a hub's last slot and a
+refused pair reports `capped` and stays silent. `PROXIMITY_RADIUS_PX` remains the
+**connect** radius (offers/answers are still only initiated at ≤ 100 px), while
+the new `PEER_DISCONNECT_RADIUS_PX` (default `115`, valid `radius … 3 × radius`)
+is the **drop** radius: an existing edge survives until the distance exceeds it.
+That 100–115 px band is silent anyway because the Day 11 gain curve reaches 0 at
+100 px.
+
+Candidates are processed nearest-first with user-id tie-breaking, so results are
+reproducible; existing edges are never evicted for a closer newcomer (documented
+limitation), and a removal triggers at most one extra sync per endpoint so freed
+slots are refilled without cascades. The client overlay now shows
+`connected N / max` and, when applicable, `M nearby, not connected (cap)` — both
+fed by the `joined` payload's new `maxPeers` / `peerDisconnectRadiusPx` fields and
+the existing world positions (still no extra protocol or React state).
+
+```bash
+# self-contained run: two throwaway instances + real Redis, no MongoDB needed
+REDIS_URL="redis://127.0.0.1:6379" npm run mesh-check
+# against running servers instead:
+npm run mesh-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001 --room=lobby
+```
+
+Measured on a tight 50-user cluster: **1225 edges before → 190 after** (−84.5%),
+worst browser **49 → 8** connections, and **0** connect/disconnect churn for 100
+boundary crossings with hysteresis (versus 100 disconnects with the drop radius
+equal to the connect radius). The full policy, numbers, failure modes and the
+four-window manual test are in
+[docs/MESH_OPTIMIZATION.md](docs/MESH_OPTIMIZATION.md). Redis key space is
+unchanged (degree comes from the existing `user-edges` sets); see
+[docs/REDIS_SCALING.md](docs/REDIS_SCALING.md).
+
+**Not in Day 13:** stereo panning, obstacle occlusion, room persistence, an
+SFU/MCU or any media server, TURN, Express serving `client/dist`, deploy configs,
+TypeScript and any new dependency.

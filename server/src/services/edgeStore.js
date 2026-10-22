@@ -2,11 +2,14 @@
  * Peer-edge store abstraction and default in-memory implementation.
  *
  * Interface contract (shared identically by MemoryEdgeStore and RedisEdgeStore):
- *   - createEdge(room, a, b)  -> { created: boolean, generation: number } (or Promise)
+ *   - createEdge(room, a, b)  -> { created: boolean, generation: number, capped?: true } (or Promise)
  *     Atomic and idempotent for unordered pair {a, b}. Only the caller that
  *     transitions the pair from absent -> live receives `created: true` and
  *     emits `peer:connect`; concurrent losers receive `created: false` with the
  *     winning generation. Generations increase monotonically per pair.
+ *     Day 13: the create is also the atomic degree gate — if either endpoint is
+ *     at `maxPeersPerUser` it returns `{ created: false, capped: true }` and
+ *     writes nothing (a capped pair is not an error and emits no socket event).
  *   - removeEdge(room, a, b)  -> boolean (or Promise<boolean>)
  *     Returns `true` ONLY for the caller that actually removed the live edge in
  *     `room` (only that caller emits `peer:disconnect`); `false` otherwise.

@@ -521,6 +521,12 @@ async function runConfigSuite({ label, maxPeers, dropRadius, redisUrl, keyPrefix
       // eslint-disable-next-line no-await-in-loop
       const result = await measureTightCluster({ n, urls: runner.urls, roomId: runRoom, maxPeers, dropRadius });
       checks.push(...verifyCluster(result).map((check) => ({ ...check, scenario: `N=${n}` })));
+      checks.push({
+        scenario: `N=${n}`,
+        name: 'joined publishes maxPeers + peerDisconnectRadiusPx',
+        ok: result.joined.every((payload) => payload.maxPeers === maxPeers && payload.peerDisconnectRadiusPx === dropRadius),
+        detail: `maxPeers=${result.joined[0]?.maxPeers}, peerDisconnectRadiusPx=${result.joined[0]?.peerDisconnectRadiusPx}`,
+      });
       table.push({
         config: label,
         scenario: `N=${n}`,
@@ -722,6 +728,8 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
     }
   }
   lines.push('');
+  lines.push('drops = signals not delivered within 4 s; the gateway drops a rate-limited signal silently.');
+  lines.push('settle = join + walk to the target + 700 ms with no edge event (wall clock).');
   lines.push(`RESULT: ${ok ? 'PASS' : 'FAIL'} (${checks.filter((check) => check.ok).length}/${checks.length} checks passed)`);
   lines.push('Note: embedded mode needs no MongoDB — presence/rooms are the Day 12 in-memory harness; '
     + 'sockets, gateway, PeerGraph, EdgeStore and Redis are real.');
