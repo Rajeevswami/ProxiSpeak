@@ -91,6 +91,7 @@ export function useSocket() {
   const [error, setError] = useState(null);
   // Set once per successful `joined` (never per move): { roomId, roomName, selfId, name }.
   const [joinedInfo, setJoinedInfo] = useState(null);
+  const [meshLimits, setMeshLimits] = useState({ maxPeers: 8, peerDisconnectRadiusPx: 115, proximityRadiusPx: 100 });
   // Microphone truth for the UI (Day 9): 'on', 'off' (requested but failed —
   // the join continues listen-only) or 'listen-only' (the user's choice).
   const [mic, setMic] = useState({ state: 'listen-only', notice: null });
@@ -211,6 +212,17 @@ export function useSocket() {
       socket.on('joined', (payload) => {
         if (!payload || typeof payload !== 'object') return;
         audioMixerRef.current.setProximityRadius(payload.proximityRadiusPx);
+        setMeshLimits({
+          maxPeers: Number.isFinite(payload.maxPeers) ? payload.maxPeers : Number.isFinite(payload.maxPeersPerUser) ? payload.maxPeersPerUser : 8,
+          peerDisconnectRadiusPx: Number.isFinite(payload.peerDisconnectRadiusPx) ? payload.peerDisconnectRadiusPx : 115,
+          proximityRadiusPx: Number.isFinite(payload.proximityRadiusPx) ? payload.proximityRadiusPx : 100,
+        });
+        // Store on world ref for overlay (keeps positions out of React state, overlay polls once/sec)
+        worldRef.current.meshLimits = {
+          maxPeers: Number.isFinite(payload.maxPeers) ? payload.maxPeers : Number.isFinite(payload.maxPeersPerUser) ? payload.maxPeersPerUser : 8,
+          peerDisconnectRadiusPx: Number.isFinite(payload.peerDisconnectRadiusPx) ? payload.peerDisconnectRadiusPx : 115,
+          proximityRadiusPx: Number.isFinite(payload.proximityRadiusPx) ? payload.proximityRadiusPx : 100,
+        };
         const world = worldRef.current;
         applyJoinedSnapshot(world, payload, {
           selfId: payload.selfId ?? socket.id ?? null,
@@ -339,7 +351,7 @@ export function useSocket() {
     );
   }, []);
 
-  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains };
+  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains, meshLimits };
 }
 
 export default useSocket;
