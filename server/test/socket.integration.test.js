@@ -195,6 +195,10 @@ test('two clients can join the same room and both receive the room snapshot', as
     const joinedA = await joinRoom(a, { roomId, name: 'Ada' });
     assert.equal(joinedA.selfId, a.id);
     assert.equal(joinedA.proximityRadiusPx, config.proximity.radiusPx);
+    // Day 13: the snapshot also publishes the mesh limits so the client can
+    // render "connected N / max" and know the hysteresis drop radius.
+    assert.equal(joinedA.maxPeers, config.proximity.maxPeersPerUser);
+    assert.equal(joinedA.peerDisconnectRadiusPx, config.proximity.peerDisconnectRadiusPx);
     assert.equal(joinedA.room.width, config.world.width);
     assert.equal(joinedA.room.height, config.world.height);
     assert.ok(joinedA.room.obstacles.length > 0, 'obstacles travel with the room data');

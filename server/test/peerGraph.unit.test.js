@@ -84,7 +84,9 @@ test('a sync queries only the moving user', async () => {
 
   assert.equal(world.calls.length - before, 1, 'exactly one neighbor query for one accepted move');
   assert.equal(world.calls.at(-1).userId, 'b');
-  assert.equal(world.calls.at(-1).radiusPx, graph.radiusPx);
+  // Day 13: the single neighbor query now runs at the DROP radius so existing
+  // edges between radius and drop radius can hold without a second query.
+  assert.equal(world.calls.at(-1).radiusPx, graph.dropRadiusPx);
 });
 
 test('same pixel is a valid edge, a user never connects to itself, rooms never mix', async () => {

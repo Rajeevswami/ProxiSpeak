@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { countNearbyNotConnected, formatMeshSummary } from '../realtime/meshIndicator.js';
+
 /**
  * Audio connection status overlay (Day 9) — the visible proof for the
  * Mid-Project Review "Audio Check".
@@ -28,11 +30,9 @@ export function formatBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-import { countNearbyNotConnected } from '../realtime/meshIndicator.js';
-
 export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radiusPx }) {
   const [rows, setRows] = useState([]);
-  const [meshInfo, setMeshInfo] = useState({ connected: 0, nearbyNotConnected: 0 });
+  const [meshInfo, setMeshInfo] = useState({ connected: 0, maxPeers: 8, nearbyNotConnected: 0 });
 
   useEffect(() => {
     const read = () => {
@@ -49,8 +49,14 @@ export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radi
         const radius = Number.isFinite(radiusPx) ? radiusPx : 100;
         const connectedIds = new Set(next.map((r) => r.peerId));
         const nearbyNotConnected = world ? countNearbyNotConnected({ users: world.users, selfId: world.selfId, connectedIds, radiusPx: radius }) : 0;
-        const nextInfo = { connected, max, nearbyNotConnected };
-        setMeshInfo((prev) => (prev.connected === nextInfo.connected && prev.max === nextInfo.max && prev.nearbyNotConnected === nextInfo.nearbyNotConnected ? prev : nextInfo));
+        const nextInfo = { connected, maxPeers: max, nearbyNotConnected };
+        setMeshInfo((prev) => (
+          prev.connected === nextInfo.connected
+          && prev.maxPeers === nextInfo.maxPeers
+          && prev.nearbyNotConnected === nextInfo.nearbyNotConnected
+            ? prev
+            : nextInfo
+        ));
       } catch {
         /* ignore */
       }
@@ -60,8 +66,6 @@ export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radi
     return () => clearInterval(timer);
   }, [getSnapshot, worldRef, maxPeers, radiusPx]);
 
-  const maxLabel = meshInfo.max === 0 ? '∞' : String(meshInfo.max);
-
   return (
     <aside className="audio-status" role="status" aria-live="polite" aria-label="Audio connections">
       <div className="audio-status-mic">
@@ -69,8 +73,7 @@ export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radi
         {mic?.notice ? <span className="audio-status-notice">{mic.notice}</span> : null}
       </div>
       <div className="audio-status-mesh">
-        connected {meshInfo.connected} / {maxLabel}
-        {meshInfo.nearbyNotConnected > 0 ? <span> · {meshInfo.nearbyNotConnected} nearby, not connected (cap)</span> : null}
+        {formatMeshSummary(meshInfo)}
       </div>
       {rows.length === 0 ? (
         <div className="audio-status-empty">no nearby peers yet</div>

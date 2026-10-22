@@ -74,6 +74,11 @@ export class PeerGraph {
     this.log = logger;
     this.onEdgeAdded = typeof onEdgeAdded === 'function' ? onEdgeAdded : null;
     this.onEdgeRemoved = typeof onEdgeRemoved === 'function' ? onEdgeRemoved : null;
+    // One source of truth for the cap: an injected store without an explicit cap
+    // inherits the graph's configured value (the server always passes both).
+    if (edgeStore && edgeStore.maxPeersPerUser === null && Number.isInteger(maxPeersPerUser)) {
+      edgeStore.maxPeersPerUser = maxPeersPerUser;
+    }
     // Mesh optimization counters (cheap, in-memory, per instance)
     this.meshCounters = {
       edgesCreated: 0,
@@ -217,6 +222,17 @@ export class PeerGraph {
     return next;
   }
 
+  /**
+   * Wait until every queued per-user sync (including the bounded reclaim syncs
+   * a removal schedules) has finished. Used by tests and by a clean shutdown.
+   */
+  async drainSyncs() {
+    for (let guard = 0; guard < 100 && this.pendingSyncs.size > 0; guard += 1) {
+      // eslint-disable-next-line no-await-in-loop -- draining is inherently sequential
+      await Promise.allSettled([...this.pendingSyncs.values()]);
+    }
+  }
+
   async #sync(roomId, userId, { isReclaim = false } = {}) {
     const room = this.#findRoom(roomId);
     const state = room?.users.get(userId);
@@ -261,13 +277,11 @@ export class PeerGraph {
     const dropMap = new Map(dropEntries.map((e) => [e.id, e.distancePx]));
     const dropSet = new Set(dropEntries.map((e) => e.id));
 
-    // Candidates for NEW edges: only those within connect radius (<= radiusPx).
-    // If distance is unknown (Infinity from string entry), treat as within connect
-    // because the query was bounded by dropRadius and in that case string means
-    // the caller considered it in range; hysteresis without distances degrades to
-    // connect-only logic which is correct when dropRadius==radiusPx.
+    // Candidates for NEW edges: only peers whose measured distance is inside the
+    // CONNECT radius. An entry without a distance can never prove <= 100 px, so it
+    // is never used to create a new edge (existing edges may still hold).
     const candidates = dropEntries
-      .filter((e) => !Number.isFinite(e.distancePx) || e.distancePx <= this.radiusPx)
+      .filter((e) => Number.isFinite(e.distancePx) && e.distancePx <= this.radiusPx)
       .sort((left, right) => {
         if (left.distancePx !== right.distancePx) return left.distancePx - right.distancePx;
         return left.id.localeCompare(right.id);
@@ -306,14 +320,9 @@ export class PeerGraph {
     // candidates (still sorted). This is the mover's own reclaim without extra sync.
     for (const { id: peerId } of candidates) {
       if (currentByPeer.has(peerId)) continue;
-      // If this peer was just removed above, it is no longer in currentByPeer, so it
-      // would be a candidate for immediate re-creation only if it is within connect
-      // radius — but we removed it because it was beyond drop radius, so it cannot
-      // be in candidates (candidates are within connect radius). Thus no thrash.
-      if (removed.some((e) => (e.a === peerId && e.b === userId) || (e.b === peerId && e.a === userId))) {
-        // This peer was just removed; it is beyond drop, so skip (already not in candidates)
-        continue;
-      }
+      // Our own degree is known locally: once full, no further create can win,
+      // so stop instead of making the store reject every farther candidate.
+      if (this.maxPeersPerUser !== 0 && currentByPeer.size + added.length >= this.maxPeersPerUser) break;
       if (!this.allowRemotePeers && !room.users.get(peerId)) continue;
 
       if (!this.nameOf(roomId, peerId) && this.resolvePeerName) {

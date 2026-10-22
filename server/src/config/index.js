@@ -68,6 +68,46 @@ const world = Object.freeze({
   pixelsPerMeter: num('PIXELS_PER_METER', 10, { min: 0.0001, max: 1e6 }),
 });
 
+/**
+ * Proximity mesh settings (Week 3, Day 13).
+ *
+ *  - radiusPx (PROXIMITY_RADIUS_PX, default 100) is the CONNECT radius: a new
+ *    edge is created only for pairs at <= radiusPx.
+ *  - peerDisconnectRadiusPx (PEER_DISCONNECT_RADIUS_PX) is the DROP radius,
+ *    default radiusPx + 15 and validated to radiusPx..3 x radiusPx. Setting it
+ *    equal to radiusPx restores the Day 12 connect/disconnect behaviour exactly.
+ *  - maxPeersPerUser (MAX_PEERS_PER_USER, default 8, 0 = unlimited) caps the
+ *    degree of both endpoints of every new edge.
+ */
+function buildProximityConfig() {
+  const radiusPx = num('PROXIMITY_RADIUS_PX', 100, { min: 0, max: Math.hypot(world.width, world.height) });
+
+  const rawMax = process.env.MAX_PEERS_PER_USER;
+  const maxPeersPerUser = rawMax === undefined || rawMax === '' ? 8 : Number(rawMax);
+  if (!Number.isInteger(maxPeersPerUser)) {
+    throw new Error(`Env MAX_PEERS_PER_USER must be an integer, got "${rawMax}"`);
+  }
+  if (maxPeersPerUser < 0 || maxPeersPerUser > 100000) {
+    throw new Error(`Env MAX_PEERS_PER_USER must be within [0, 100000], got ${maxPeersPerUser}`);
+  }
+
+  const rawDrop = process.env.PEER_DISCONNECT_RADIUS_PX;
+  const peerDisconnectRadiusPx = rawDrop === undefined || rawDrop === ''
+    ? (radiusPx === 0 ? 0 : Math.min(radiusPx + 15, radiusPx * 3))
+    : Number(rawDrop);
+  if (!Number.isFinite(peerDisconnectRadiusPx)) {
+    throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be a number, got "${rawDrop}"`);
+  }
+  if (peerDisconnectRadiusPx < radiusPx) {
+    throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be >= PROXIMITY_RADIUS_PX (${radiusPx}), got ${peerDisconnectRadiusPx}`);
+  }
+  if (peerDisconnectRadiusPx > radiusPx * 3) {
+    throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be <= 3 x PROXIMITY_RADIUS_PX (${radiusPx * 3}), got ${peerDisconnectRadiusPx}`);
+  }
+
+  return { radiusPx, peerDisconnectRadiusPx, maxPeersPerUser };
+}
+
 export const config = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
@@ -124,44 +164,7 @@ export const config = Object.freeze({
     edgeTtlSeconds: num('REDIS_EDGE_TTL_SECONDS', 3600, { min: 60, max: 604800 }),
   }),
 
-  proximity: Object.freeze((() => {
-    const radiusPx = num('PROXIMITY_RADIUS_PX', 100, { min: 0, max: Math.hypot(world.width, world.height) });
-    // MAX_PEERS_PER_USER: 0 = unlimited (Day-12 behaviour), otherwise cap per user.
-    const rawMax = process.env.MAX_PEERS_PER_USER;
-    const maxPeersPerUser = rawMax === undefined || rawMax === '' ? 8 : Number(rawMax);
-    if (!Number.isInteger(maxPeersPerUser) || !Number.isFinite(maxPeersPerUser)) {
-      throw new Error(`Env MAX_PEERS_PER_USER must be an integer, got "${rawMax}"`);
-    }
-    if (maxPeersPerUser < 0 || maxPeersPerUser > 100000) {
-      throw new Error(`Env MAX_PEERS_PER_USER must be within [0, 100000], got ${maxPeersPerUser}`);
-    }
-    // PEER_DISCONNECT_RADIUS_PX: hysteresis drop radius. Default radius + 15.
-    // Validated: >= radiusPx and <= 3 * radiusPx (equal to radius = Day-12 behaviour).
-    const rawDrop = process.env.PEER_DISCONNECT_RADIUS_PX;
-    let peerDisconnectRadiusPx;
-    if (rawDrop === undefined || rawDrop === '') {
-      peerDisconnectRadiusPx = radiusPx + 15;
-      // Clamp default into valid range for edge cases (e.g. radius 0 where 15 > 0)
-      if (peerDisconnectRadiusPx > 3 * radiusPx) peerDisconnectRadiusPx = 3 * radiusPx;
-      if (peerDisconnectRadiusPx < radiusPx) peerDisconnectRadiusPx = radiusPx;
-    } else {
-      peerDisconnectRadiusPx = Number(rawDrop);
-      if (!Number.isFinite(peerDisconnectRadiusPx)) {
-        throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be a number, got "${rawDrop}"`);
-      }
-      if (peerDisconnectRadiusPx < radiusPx) {
-        throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be >= PROXIMITY_RADIUS_PX (${radiusPx}), got ${peerDisconnectRadiusPx}`);
-      }
-      if (peerDisconnectRadiusPx > 3 * radiusPx) {
-        throw new Error(`Env PEER_DISCONNECT_RADIUS_PX must be <= 3 * PROXIMITY_RADIUS_PX (${3 * radiusPx}), got ${peerDisconnectRadiusPx}`);
-      }
-    }
-    return {
-      radiusPx,
-      maxPeersPerUser,
-      peerDisconnectRadiusPx,
-    };
-  })()),
+  proximity: Object.freeze(buildProximityConfig()),
 
   presence: Object.freeze({
     // Node clamps overflowing intervals to 1 ms; reject them before boot.

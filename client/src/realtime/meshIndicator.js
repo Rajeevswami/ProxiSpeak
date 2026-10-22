@@ -32,3 +32,20 @@ export function countNearbyNotConnected({ users, selfId, connectedIds, radiusPx 
 }
 
 export default countNearbyNotConnected;
+
+/**
+ * Overlay text for the mesh indicator.
+ *  - cap 0 is unlimited and is shown as the infinity sign.
+ *  - the "not connected (cap)" note only appears when somebody is actually
+ *    nearby without a live peer connection.
+ *
+ * @param {{connected:number, maxPeers:number, nearbyNotConnected:number}} summary
+ * @returns {string}
+ */
+export function formatMeshSummary({ connected, maxPeers, nearbyNotConnected } = {}) {
+  const live = Number.isFinite(connected) && connected > 0 ? Math.floor(connected) : 0;
+  const cap = Number.isFinite(maxPeers) && maxPeers >= 0 ? Math.floor(maxPeers) : 8;
+  const nearby = Number.isFinite(nearbyNotConnected) && nearbyNotConnected > 0 ? Math.floor(nearbyNotConnected) : 0;
+  const base = `connected ${live} / ${cap === 0 ? '∞' : cap}`;
+  return nearby > 0 ? `${base} · ${nearby} nearby, not connected (cap)` : base;
+}
