@@ -200,10 +200,11 @@ export class PeerGraph {
    * Serialised per user so a move arriving while join is in flight cannot apply
    * out of order.
    */
-  sync(roomId, userId) {
+  sync(roomId, userId, opts = {}) {
     const key = `${roomId}\u0000${userId}`;
     const previous = this.pendingSyncs.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(() => this.#sync(roomId, userId));
+    const isReclaim = Boolean(opts?.isReclaim);
+    const next = previous.catch(() => {}).then(() => this.#sync(roomId, userId, { isReclaim }));
     this.pendingSyncs.set(key, next);
     next.then(
       () => {
@@ -216,15 +217,15 @@ export class PeerGraph {
     return next;
   }
 
-  async #sync(roomId, userId) {
+  async #sync(roomId, userId, { isReclaim = false } = {}) {
     const room = this.#findRoom(roomId);
     const state = room?.users.get(userId);
     if (!state) return emptyDiff();
 
     const started = performance.now();
-    let nearby;
+    let nearbyDrop;
     try {
-      nearby = await this.findNearby(roomId, userId, this.radiusPx);
+      nearbyDrop = await this.findNearby(roomId, userId, this.dropRadiusPx);
     } catch (err) {
       this.syncFailures += 1;
       this.#recordLatency(performance.now() - started);
@@ -248,20 +249,29 @@ export class PeerGraph {
     // Abort if the user left while queries were in flight.
     if (this.#findRoom(roomId)?.users.get(userId) !== state) return emptyDiff();
 
-    // Nearest-first deterministic: candidates sorted by ascending distance, ties by id.
-    // Build candidate list with distance for deterministic ordering before cap checks.
-    const candidates = [];
-    for (const neighbor of nearby ?? []) {
+    // Build drop and connect sets from single hysteresis-aware query (drop radius).
+    // nearbyDrop contains all peers within dropRadiusPx (including those within connect radius).
+    const dropEntries = [];
+    for (const neighbor of nearbyDrop ?? []) {
       const id = typeof neighbor === 'string' ? neighbor : neighbor?.id;
       if (typeof id !== 'string' || id === userId) continue;
       const dist = typeof neighbor === 'object' && Number.isFinite(neighbor.distancePx) ? neighbor.distancePx : Infinity;
-      candidates.push({ id, distancePx: dist });
+      dropEntries.push({ id, distancePx: dist });
     }
-    candidates.sort((left, right) => {
-      if (left.distancePx !== right.distancePx) return left.distancePx - right.distancePx;
-      return left.id.localeCompare(right.id);
-    });
-    const next = new Set(candidates.map((c) => c.id));
+    const dropMap = new Map(dropEntries.map((e) => [e.id, e.distancePx]));
+    const dropSet = new Set(dropEntries.map((e) => e.id));
+
+    // Candidates for NEW edges: only those within connect radius (<= radiusPx).
+    // If distance is unknown (Infinity from string entry), treat as within connect
+    // because the query was bounded by dropRadius and in that case string means
+    // the caller considered it in range; hysteresis without distances degrades to
+    // connect-only logic which is correct when dropRadius==radiusPx.
+    const candidates = dropEntries
+      .filter((e) => !Number.isFinite(e.distancePx) || e.distancePx <= this.radiusPx)
+      .sort((left, right) => {
+        if (left.distancePx !== right.distancePx) return left.distancePx - right.distancePx;
+        return left.id.localeCompare(right.id);
+      });
 
     const currentByPeer = new Map();
     for (const edge of currentEdges) {
@@ -272,12 +282,40 @@ export class PeerGraph {
     const added = [];
     const removed = [];
 
+    // First, remove edges that have drifted beyond drop radius (or peer gone).
+    // Existing edges with distance between radius and drop are kept (hysteresis).
+    for (const [peerId, edge] of currentByPeer) {
+      if (dropSet.has(peerId)) {
+        const dist = dropMap.get(peerId);
+        if (Number.isFinite(dist) && dist > this.radiusPx && dist <= this.dropRadiusPx) {
+          this.meshCounters.hysteresisHolds += 1;
+          this.log?.debug?.(`hysteresis hold ${userId}<->${peerId} dist=${dist}`);
+        }
+        continue;
+      }
+      const result = await this.#removeSingleEdge(roomId, userId, peerId, edge);
+      if (!result) continue;
+      this.forgetPeerName(roomId, peerId);
+      removed.push(result);
+      this.meshCounters.edgesRemoved += 1;
+      this.log?.debug?.(`edge removed ${result.a}<->${result.b} gen=${result.generation}`);
+      this.onEdgeRemoved?.(result);
+    }
+
+    // Slot reclaim: if we just freed slots, try to fill them with nearest unconnected
+    // candidates (still sorted). This is the mover's own reclaim without extra sync.
     for (const { id: peerId } of candidates) {
       if (currentByPeer.has(peerId)) continue;
+      // If this peer was just removed above, it is no longer in currentByPeer, so it
+      // would be a candidate for immediate re-creation only if it is within connect
+      // radius — but we removed it because it was beyond drop radius, so it cannot
+      // be in candidates (candidates are within connect radius). Thus no thrash.
+      if (removed.some((e) => (e.a === peerId && e.b === userId) || (e.b === peerId && e.a === userId))) {
+        // This peer was just removed; it is beyond drop, so skip (already not in candidates)
+        continue;
+      }
       if (!this.allowRemotePeers && !room.users.get(peerId)) continue;
 
-      // Resolve remote peer's display name BEFORE creating the edge in Redis so
-      // `onEdgeAdded` can emit synchronously immediately on winning the create.
       if (!this.nameOf(roomId, peerId) && this.resolvePeerName) {
         try {
           const resolved = await this.resolvePeerName(roomId, peerId);
@@ -312,15 +350,18 @@ export class PeerGraph {
       this.onEdgeAdded?.(edge);
     }
 
-    for (const [peerId, edge] of currentByPeer) {
-      if (next.has(peerId)) continue;
-      const result = await this.#removeSingleEdge(roomId, userId, peerId, edge);
-      if (!result) continue;
-      this.forgetPeerName(roomId, peerId);
-      removed.push(result);
-      this.meshCounters.edgesRemoved += 1;
-      this.log?.debug?.(`edge removed ${result.a}<->${result.b} gen=${result.generation}`);
-      this.onEdgeRemoved?.(result);
+    // Cross-endpoint reclaim: after we removed edges, the other endpoint may have
+    // free slots. Trigger at most one extra sync per endpoint, without cascades
+    // (isReclaim flag prevents those syncs from triggering further reclaims).
+    if (!isReclaim && removed.length > 0) {
+      for (const edge of removed) {
+        const peerId = edge.a === userId ? edge.b : edge.a;
+        if (this.#findRoom(roomId)?.users.get(peerId)) {
+          // Fire-and-forget reclaim sync for the peer on this instance.
+          // Do not await to keep current sync latency bounded; still serialized via pendingSyncs.
+          this.sync(roomId, peerId, { isReclaim: true }).catch(() => {});
+        }
+      }
     }
 
     return { added, removed };
@@ -344,6 +385,7 @@ export class PeerGraph {
   /**
    * Remove a user and every edge it owns, reporting each removal only once.
    * Synchronous when backed by MemoryEdgeStore; returns a Promise for async stores.
+   * Slot reclaim: surviving peers get one extra sync to fill freed slots.
    */
   leave(roomId, userId) {
     const room = this.#findRoom(roomId);
@@ -369,13 +411,22 @@ export class PeerGraph {
       for (const edge of removed) {
         const peerId = edge.a === userId ? edge.b : edge.a;
         this.forgetPeerName(edge.roomId, peerId);
+        this.meshCounters.edgesRemoved += 1;
+        this.log?.debug?.(`edge removed ${edge.a}<->${edge.b} gen=${edge.generation} (leave)`);
         this.onEdgeRemoved?.(edge);
+      }
+      // Slot reclaim for survivors (bounded, no cascades)
+      for (const edge of removed) {
+        const peerId = edge.a === userId ? edge.b : edge.a;
+        if (this.#findRoom(edge.roomId)?.users.get(peerId)) {
+          this.sync(edge.roomId, peerId, { isReclaim: true }).catch(() => {});
+        }
       }
       return removed;
     };
 
     if (isPromise(raw)) {
-      return raw.then(finish, (err) => {
+      return raw.then((removed) => finish(removed), (err) => {
         this.syncFailures += 1;
         this.log?.warn('edge store removeUser failed (failing safe):', err?.message ?? err);
         return [];
@@ -499,8 +550,13 @@ export class PeerGraph {
       failures: this.syncFailures,
       generation: this.edgeStore.totalGenerations ?? 0,
       latency: this.latencySummary(),
+      mesh: { ...this.meshCounters },
     });
     return chain(rawEdges, finish);
+  }
+
+  meshStats() {
+    return { ...this.meshCounters };
   }
 
   #recordLatency(durationMs) {
