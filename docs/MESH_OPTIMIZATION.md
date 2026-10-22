@@ -310,8 +310,8 @@ comparisons (cap bounds the mesh, hysteresis removes churn, no signal dropped).
 ## 7. Verification status (honest)
 
 * **Run here:** `npm run mesh-check` (embedded, two instances, real Redis
-  `6.2.14`) → **PASS 37/37**; full server suite **135 passed / 0 failed / 32
-  skipped** and client suite **151 passed / 0 failed / 0 skipped** with
+  `6.2.14`) → **PASS 37/37**; full server suite **136 passed / 0 failed / 32
+  skipped** (168 tests) and client suite **151 passed / 0 failed / 0 skipped** with
   `REDIS_URL_TEST` set. The 32 skipped are the MongoDB-backed suites: this
   sandbox has no `mongod` and cannot download one (apt and `fastdl.mongodb.org`
   are unreachable), so *any* MongoDB-dependent test is **NOT VERIFIED here**;

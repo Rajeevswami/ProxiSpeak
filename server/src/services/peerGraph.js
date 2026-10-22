@@ -322,11 +322,15 @@ export class PeerGraph {
 
     // Slot reclaim: if we just freed slots, try to fill them with nearest unconnected
     // candidates (still sorted). This is the mover's own reclaim without extra sync.
+    // `currentByPeer` still holds the edges removed above (the map is built before
+    // the removal pass), so the degree this sync can actually offer is the old
+    // degree minus the removals plus whatever it has already created.
+    const liveDegree = currentByPeer.size - removed.length;
     for (const { id: peerId } of candidates) {
       if (currentByPeer.has(peerId)) continue;
       // Our own degree is known locally: once full, no further create can win,
       // so stop instead of making the store reject every farther candidate.
-      if (this.maxPeersPerUser !== 0 && currentByPeer.size + added.length >= this.maxPeersPerUser) break;
+      if (this.maxPeersPerUser !== 0 && liveDegree + added.length >= this.maxPeersPerUser) break;
       if (!this.allowRemotePeers && !room.users.get(peerId)) continue;
 
       if (!this.nameOf(roomId, peerId) && this.resolvePeerName) {

@@ -194,6 +194,36 @@ test('a removed edge frees a slot and the survivors refill it with the nearest u
   assert.equal((await graph.edges('room')).length, 2);
 });
 
+test('a user at the cap refills its OWN freed slots in the same sync (no waiting for the next move)', async () => {
+  const world = createWorld();
+  const { graph, added } = makeGraph(world, { maxPeersPerUser: 4 });
+  seat(graph, world, 'hub', 500, 500);
+  for (let i = 1; i <= 4; i += 1) seat(graph, world, `old${i}`, 500 + i * 10, 500);
+
+  const everyone = ['hub', 'old1', 'old2', 'old3', 'old4'];
+  for (const id of everyone) {
+    // eslint-disable-next-line no-await-in-loop
+    await graph.sync('room', id);
+  }
+  await graph.drainSyncs();
+  assert.deepEqual(await graph.neighbors('room', 'hub'), ['old1', 'old2', 'old3', 'old4'], 'hub is at the cap');
+
+  // All four held peers walk out of the drop radius at once; a fresh peer is 20 px away.
+  for (let i = 1; i <= 4; i += 1) world.move(`old${i}`, 1500, 500);
+  seat(graph, world, 'fresh', 500, 520);
+
+  const createdBefore = added.length;
+  await graph.sync('room', 'hub');
+  await graph.drainSyncs();
+
+  assert.deepEqual(
+    await graph.neighbors('room', 'hub'),
+    ['fresh'],
+    'the freed slot is filled by the same sync that removed the stale edges',
+  );
+  assert.equal(added.length, createdBefore + 1, 'exactly one new edge, no duplicate create');
+});
+
 test('star scenario: 8 users at (100,100) + outsider Z at (180,100), cap 4, 100 rounds of sync = zero churn', async () => {
   const world = createWorld();
   const { graph, added, removed } = makeGraph(world, { maxPeersPerUser: 4 });
