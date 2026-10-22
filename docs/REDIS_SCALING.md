@@ -270,8 +270,8 @@ cycles:
 3. **Environment verification note (2026-10-22, Day 13):** the Day 13 Redis
    suites (edge-store cap contract, cross-instance cap/reclaim/sweep, embedded
    two-instance `mesh-check`) ran live against `redis-server` **6.2.14** with
-   **0 skipped**; the full server suite was **135 passed / 0 failed / 32
-   skipped** and the client suite **151 passed / 0 failed** here. The 32 skips
+   **0 skipped**; the full server suite was **136 passed / 0 failed / 32
+   skipped** (168 tests) and the client suite **151 passed / 0 failed** here. The 32 skips
    are all MongoDB-backed suites: this sandbox has no `mongod` and cannot
    download one (no apt or `fastdl.mongodb.org` access), so the MongoDB path and
    a two-browser audible check remain **NOT VERIFIED here**; run with

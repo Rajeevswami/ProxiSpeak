@@ -4,7 +4,7 @@ Company requirements through the Mid-Project Review plus Week 3 Days 11–13, tr
 to files, tests and exact commands. Status is honest. Days 1–12 were verified with
 MongoDB Community Server `8.0.0` and `redis-server` `7.4.2` (`287 / 287` tests,
 `0` skipped). **Day 13 (2026-10-22) was verified live against `redis-server` `6.2.14`
-with `REDIS_URL_TEST` — server `135` passed / `32` skipped (all MongoDB-backed),
+with `REDIS_URL_TEST` — server `136` passed / `32` skipped of `168` (all MongoDB-backed),
 client `151` passed, plus `npm run mesh-check` `PASS 37/37` — but this sandbox has
 no `mongod` and cannot download one, so the MongoDB path and live two-browser
 WebRTC hearing checks remain `NOT VERIFIED` here; see

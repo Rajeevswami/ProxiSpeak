@@ -37,7 +37,7 @@ database.
 | `server/` — Express app | Health endpoint (`instanceId`, `scaleMode`), JSON API surface, config + logger | **Day 1 & Day 12 — done** |
 | Geospatial engine | MongoDB `2dsphere` queries (`$near`, `$geoWithin`) mapped onto the 2D world plane | Week 1–2 |
 | Presence & signaling | Socket.io gateway, atomic presence sweeps, `EdgeStore` (`MemoryEdgeStore` + Lua `RedisEdgeStore`), `@socket.io/redis-adapter`, `SCAN` orphan sweep | **Week 2 & Day 12 — done** |
-| Voice mesh | WebRTC peer connections; mesh optimization is planned for Day 13 | Week 2 done; **Day 13 optimization not started** |
+| Voice mesh | WebRTC peer connections; bounded mesh (symmetric cap, hysteresis, nearest-first) | **Week 2 & Day 13 — done** |
 | Spatial audio | Web Audio API distance attenuation (GainNode) | Day 11 done; panning and wall occlusion are Week 4 |
 | Client | React + Canvas live map, avatar movement, WebRTC audio and read-only audio status | Week 1–3 slices done |
 
@@ -47,7 +47,7 @@ database.
 | --- | --- | --- | --- |
 | **Week 1** | Foundations & data layer | Project setup (Day 1), MongoDB connection, `UserPresence` / `Room` schemas with `2dsphere` index, seed script, health endpoint | Week 1 review: server boots green, geo data seeds and queries |
 | **Week 2** | Real-time presence, proximity & P2P audio | Socket.io gateway, presence lifecycle, `$near` queries, in-process peer graph and WebRTC signaling/audio | Week 2 review: presence and proximity behavior |
-| **Week 3** | Frontend attenuation & Redis scaling (Days 11–12 done; Day 13 planned) | Day 11 Web Audio distance gain and Day 12 multi-instance Redis Pub/Sub + shared edge state are done; Day 13 mesh optimization is not started | Review gain curve + two-instance `npm run scale-check`; mesh scaling follows |
+| **Week 3** | Frontend attenuation, Redis scaling & mesh optimization (Days 11–13 done) | Day 11 Web Audio distance gain, Day 12 multi-instance Redis Pub/Sub + shared edge state, and Day 13 mesh optimization are done | Review gain curve, two-instance `npm run scale-check`, and `npm run mesh-check` |
 | **Week 4** | Spatial audio and hardening | Stereo panning, obstacle occlusion, load testing and production hardening | Final review: end-to-end multi-user demo |
 
 ## Week 1 — what is done (Day 1–6)
@@ -1074,7 +1074,7 @@ falls back cleanly to `scaleMode: "single"`.
   latency benchmarks are in [docs/REDIS_SCALING.md](docs/REDIS_SCALING.md). Run
   `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` and
   `npm run scale-check -- --urlA=http://127.0.0.1:3001 --urlB=http://127.0.0.1:3002`.
-  **Mesh optimization remains Day 13 scope and is not started.**
+  **Mesh optimization is Day 13 scope — see the Day 13 section below.**
 
 
 ## Week 3 — Day 13: Mesh optimization
