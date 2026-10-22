@@ -984,7 +984,7 @@ occlusion remain Week 4; Redis Pub/Sub and mesh optimization are planned for
 Days 12 and 13 and are not started. TURN, deployment configs, Express serving
 `client/dist`, TypeScript and new dependencies remain out of scope.
 
-## Week 3 — Day 11: Dynamic attenuation
+## Day 11: Dynamic attenuation
 
 Remote WebRTC tracks now pass through the browser's Web Audio API. The server
 includes `proximityRadiusPx` in `joined` from its configured
@@ -1049,7 +1049,7 @@ coverage: `node --test client/test/audio.attenuation.test.js client/test/audio.a
 Real two-browser audio is not verifiable by Node tests. Stereo panning and
 left/right ear logic, plus obstacle occlusion, are Week 4—not Day 11.
 
-## Week 3 — Day 12: Multi-instance Redis scaling
+## Day 12: Multi-instance Redis scaling
 
 Backend-only horizontal scaling slice (`client/` untouched): when `REDIS_URL`
 (`redis://` or `rediss://`) is set, multiple ProxiSpeak Node.js instances attach
@@ -1077,7 +1077,7 @@ falls back cleanly to `scaleMode: "single"`.
   **Mesh optimization is Day 13 scope — see the Day 13 section below.**
 
 
-## Week 3 — Day 13: Mesh optimization
+## Day 13: Mesh optimization
 
 The WebRTC mesh is now bounded and stable. `MAX_PEERS_PER_USER` (default `8`,
 `0` = unlimited) caps the degree of **both** endpoints of every new edge; the
