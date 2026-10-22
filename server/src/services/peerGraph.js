@@ -44,6 +44,8 @@ export class PeerGraph {
   constructor({
     findNearby = defaultFindNearby,
     radiusPx = config.proximity.radiusPx,
+    dropRadiusPx = config.proximity.peerDisconnectRadiusPx ?? radiusPx + 15,
+    maxPeersPerUser = config.proximity.maxPeersPerUser ?? 8,
     edgeStore = new MemoryEdgeStore(),
     allowRemotePeers = false,
     resolvePeerName = null,
@@ -55,15 +57,30 @@ export class PeerGraph {
     if (!Number.isFinite(radiusPx) || radiusPx < 0) {
       throw new RangeError('radiusPx must be a finite, non-negative number');
     }
+    if (!Number.isFinite(dropRadiusPx) || dropRadiusPx < radiusPx) {
+      throw new RangeError('dropRadiusPx must be a finite number >= radiusPx');
+    }
+    if (!Number.isInteger(maxPeersPerUser) || maxPeersPerUser < 0) {
+      throw new RangeError('maxPeersPerUser must be a non-negative integer');
+    }
 
     this.findNearby = findNearby;
     this.radiusPx = radiusPx;
+    this.dropRadiusPx = dropRadiusPx;
+    this.maxPeersPerUser = maxPeersPerUser;
     this.edgeStore = edgeStore;
     this.allowRemotePeers = Boolean(allowRemotePeers);
     this.resolvePeerName = typeof resolvePeerName === 'function' ? resolvePeerName : null;
     this.log = logger;
     this.onEdgeAdded = typeof onEdgeAdded === 'function' ? onEdgeAdded : null;
     this.onEdgeRemoved = typeof onEdgeRemoved === 'function' ? onEdgeRemoved : null;
+    // Mesh optimization counters (cheap, in-memory, per instance)
+    this.meshCounters = {
+      edgesCreated: 0,
+      edgesRemoved: 0,
+      cappedRejections: 0,
+      hysteresisHolds: 0,
+    };
 
     /** roomId -> { roomId, users: Map<userId, { id, name }> } */
     this.rooms = new Map();
@@ -231,12 +248,20 @@ export class PeerGraph {
     // Abort if the user left while queries were in flight.
     if (this.#findRoom(roomId)?.users.get(userId) !== state) return emptyDiff();
 
-    const next = new Set();
+    // Nearest-first deterministic: candidates sorted by ascending distance, ties by id.
+    // Build candidate list with distance for deterministic ordering before cap checks.
+    const candidates = [];
     for (const neighbor of nearby ?? []) {
       const id = typeof neighbor === 'string' ? neighbor : neighbor?.id;
       if (typeof id !== 'string' || id === userId) continue;
-      next.add(id);
+      const dist = typeof neighbor === 'object' && Number.isFinite(neighbor.distancePx) ? neighbor.distancePx : Infinity;
+      candidates.push({ id, distancePx: dist });
     }
+    candidates.sort((left, right) => {
+      if (left.distancePx !== right.distancePx) return left.distancePx - right.distancePx;
+      return left.id.localeCompare(right.id);
+    });
+    const next = new Set(candidates.map((c) => c.id));
 
     const currentByPeer = new Map();
     for (const edge of currentEdges) {
@@ -247,7 +272,7 @@ export class PeerGraph {
     const added = [];
     const removed = [];
 
-    for (const peerId of next) {
+    for (const { id: peerId } of candidates) {
       if (currentByPeer.has(peerId)) continue;
       if (!this.allowRemotePeers && !room.users.get(peerId)) continue;
 
@@ -271,11 +296,19 @@ export class PeerGraph {
         this.log?.warn('edge store create failed (failing safe):', err?.message ?? err);
         continue;
       }
-      if (!outcome?.created) continue;
+      if (!outcome?.created) {
+        if (outcome?.capped) {
+          this.meshCounters.cappedRejections += 1;
+          this.log?.debug?.(`cap rejected edge ${userId}<->${peerId} (capped)`);
+        }
+        continue;
+      }
 
       const [a, b] = normalizePair(userId, peerId);
       const edge = buildEdgeRecord(roomId, a, b, outcome.generation);
       added.push(edge);
+      this.meshCounters.edgesCreated += 1;
+      this.log?.debug?.(`edge created ${a}<->${b} gen=${outcome.generation}`);
       this.onEdgeAdded?.(edge);
     }
 
@@ -285,6 +318,8 @@ export class PeerGraph {
       if (!result) continue;
       this.forgetPeerName(roomId, peerId);
       removed.push(result);
+      this.meshCounters.edgesRemoved += 1;
+      this.log?.debug?.(`edge removed ${result.a}<->${result.b} gen=${result.generation}`);
       this.onEdgeRemoved?.(result);
     }
 
