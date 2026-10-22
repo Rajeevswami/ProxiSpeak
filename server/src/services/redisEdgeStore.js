@@ -28,7 +28,13 @@ import {
 const CREATE_EDGE_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 1 then
   local existingGen = tonumber(redis.call('HGET', KEYS[1], 'generation'))
-  return { 0, existingGen }
+  return { 0, existingGen, 0 }
+end
+local cap = tonumber(ARGV[7]) or 0
+if cap > 0 then
+  if redis.call('SCARD', KEYS[3]) >= cap or redis.call('SCARD', KEYS[4]) >= cap then
+    return { 0, 0, 1 }
+  end
 end
 local base = tonumber(redis.call('GET', KEYS[2]) or '0')
 local floor = tonumber(ARGV[6]) or 0
@@ -48,7 +54,7 @@ redis.call('EXPIRE', KEYS[3], ttl)
 redis.call('EXPIRE', KEYS[4], ttl)
 redis.call('EXPIRE', KEYS[5], ttl)
 redis.call('EXPIRE', KEYS[6], ttl)
-return { 1, gen }
+return { 1, gen, 0 }
 `;
 
 const REMOVE_EDGE_LUA = `
@@ -155,6 +161,7 @@ export class RedisEdgeStore extends EdgeStore {
     client,
     keyPrefix = config.redis.keyPrefix,
     ttlSeconds = config.redis.edgeTtlSeconds,
+    maxPeersPerUser,
   } = {}) {
     super();
     if (!client) throw new TypeError('RedisEdgeStore requires a Redis client');
@@ -164,11 +171,27 @@ export class RedisEdgeStore extends EdgeStore {
       throw new RangeError('ttlSeconds must be a positive integer');
     }
     this.ttlSeconds = ttlSeconds;
+    if (maxPeersPerUser !== undefined) {
+      if (!Number.isInteger(maxPeersPerUser) || maxPeersPerUser < 0) {
+        throw new RangeError('maxPeersPerUser must be a non-negative integer');
+      }
+      this.maxPeersPerUser = maxPeersPerUser;
+    } else {
+      this.maxPeersPerUser = null;
+    }
     /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
     this.userGenFloor = new Map();
     /** @type {Map<string, number>} pairToken -> highest generation issued in live session */
     this.pairGenFloor = new Map();
     this.totalGenerations = 0;
+  }
+
+  getMaxPeers() {
+    if (Number.isInteger(this.maxPeersPerUser)) return this.maxPeersPerUser;
+    try {
+      if (config?.proximity?.maxPeersPerUser !== undefined) return config.proximity.maxPeersPerUser;
+    } catch {}
+    return 8;
   }
 
   recordUserFloor(userId, generation) {
@@ -214,7 +237,8 @@ export class RedisEdgeStore extends EdgeStore {
       this.userGenFloor.get(a) ?? 0,
       this.userGenFloor.get(b) ?? 0,
     );
-    const [createdFlag, rawGen] = await this.client.eval(
+    const cap = this.getMaxPeers();
+    const [createdFlag, rawGen, cappedFlag] = await this.client.eval(
       CREATE_EDGE_LUA,
       6,
       this.edgeHashKey(token),
@@ -229,13 +253,16 @@ export class RedisEdgeStore extends EdgeStore {
       token,
       String(this.ttlSeconds),
       String(floor),
+      String(cap),
     );
     const created = Number(createdFlag) === 1;
+    const capped = Number(cappedFlag) === 1;
     const generation = Number(rawGen);
     if (generation > (this.pairGenFloor.get(token) ?? 0)) {
       this.pairGenFloor.set(token, generation);
     }
     if (created) this.totalGenerations += 1;
+    if (capped) return { created: false, capped: true, generation: generation || 0 };
     return { created, generation };
   }
 

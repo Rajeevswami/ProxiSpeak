@@ -18,6 +18,8 @@
  *     per-pair bookkeeping so no stale entries remain.
  */
 
+import config from '../config/index.js';
+
 export const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 export const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 export const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
@@ -122,7 +124,7 @@ export class EdgeStore {
  * promise overhead on the hot path.
  */
 export class MemoryEdgeStore extends EdgeStore {
-  constructor() {
+  constructor({ maxPeersPerUser } = {}) {
     super();
     /** @type {Map<string, object>} pairToken -> frozen PeerEdge */
     this.edgesByToken = new Map();
@@ -135,6 +137,22 @@ export class MemoryEdgeStore extends EdgeStore {
     /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
     this.userGenFloor = new Map();
     this.totalGenerations = 0;
+    if (maxPeersPerUser !== undefined) {
+      if (!Number.isInteger(maxPeersPerUser) || maxPeersPerUser < 0) {
+        throw new RangeError('maxPeersPerUser must be a non-negative integer');
+      }
+      this.maxPeersPerUser = maxPeersPerUser;
+    } else {
+      this.maxPeersPerUser = null; // resolved lazily via getMaxPeers()
+    }
+  }
+
+  getMaxPeers() {
+    if (Number.isInteger(this.maxPeersPerUser)) return this.maxPeersPerUser;
+    try {
+      if (config?.proximity?.maxPeersPerUser !== undefined) return config.proximity.maxPeersPerUser;
+    } catch {}
+    return 8;
   }
 
   recordUserFloor(userId, generation) {
@@ -168,6 +186,16 @@ export class MemoryEdgeStore extends EdgeStore {
     const existing = this.edgesByToken.get(token);
     if (existing) {
       return { created: false, generation: existing.generation };
+    }
+
+    // Symmetric, atomic cap check: single synchronous step using SCARD-equivalent sizes.
+    const cap = this.getMaxPeers();
+    if (cap !== 0) {
+      const degA = this.userEdges.get(a)?.size ?? 0;
+      const degB = this.userEdges.get(b)?.size ?? 0;
+      if (degA >= cap || degB >= cap) {
+        return { created: false, capped: true, generation: this.pairGenerations.get(token) ?? 0 };
+      }
     }
 
     const base = Math.max(
