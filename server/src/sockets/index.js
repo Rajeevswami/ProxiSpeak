@@ -88,8 +88,9 @@ export function createSocketServer({
           client: redis.storeClient,
           keyPrefix: cfg.redis.keyPrefix,
           ttlSeconds: cfg.redis.edgeTtlSeconds,
+          maxPeersPerUser: cfg.proximity.maxPeersPerUser,
         })
-      : new MemoryEdgeStore());
+      : new MemoryEdgeStore({ maxPeersPerUser: cfg.proximity.maxPeersPerUser }));
   const resolvePeerName = async (roomId, userId) => {
     const localName = io.sockets.sockets.get(userId)?.data.name;
     if (localName) return localName;
@@ -104,6 +105,8 @@ export function createSocketServer({
   const peers = new PeerGraph({
     findNearby: neighborQuery,
     radiusPx: cfg.proximity.radiusPx,
+    dropRadiusPx: cfg.proximity.peerDisconnectRadiusPx,
+    maxPeersPerUser: cfg.proximity.maxPeersPerUser,
     edgeStore: store,
     allowRemotePeers: io.multiInstance,
     resolvePeerName,
@@ -139,6 +142,18 @@ export function createSocketServer({
     onEdgeRemoved: (edge) => {
       peers.forgetPeerName(edge.roomId, edge.a);
       peers.forgetPeerName(edge.roomId, edge.b);
+      if (io.multiInstance) {
+        try {
+          io.serverSideEmit('proxispeak:edge-removed', {
+            roomId: edge.roomId,
+            a: edge.a,
+            b: edge.b,
+            generation: edge.generation,
+          });
+        } catch {
+          /* adapter already closed */
+        }
+      }
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
         io.to(recipient).emit('peer:disconnect', { peerId, generation: edge.generation });
       }
@@ -234,6 +249,19 @@ export function createSocketServer({
       }
     } catch {
       /* ignore malformed entry */
+    }
+  });
+
+  const EDGE_REMOVED_EVENT = 'proxispeak:edge-removed';
+  io.on(EDGE_REMOVED_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, a, b } = payload;
+    if (typeof roomId !== 'string' || typeof a !== 'string' || typeof b !== 'string') return;
+    // Trigger reclaim sync for local peers that lost an edge (bounded, no cascade)
+    for (const peerId of [a, b]) {
+      if (peers.isRegistered(roomId, peerId)) {
+        peers.sync(roomId, peerId, { isReclaim: true }).catch(() => {});
+      }
     }
   });
 
