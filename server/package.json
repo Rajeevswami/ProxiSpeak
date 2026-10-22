@@ -13,7 +13,8 @@
     "test": "node --test test/*.test.js",
     "seed": "node scripts/seed.js",
     "audit": "node scripts/audit.js",
-    "scale-check": "node scripts/scale-check.js"
+    "scale-check": "node scripts/scale-check.js",
+    "mesh-check": "node scripts/mesh-check.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

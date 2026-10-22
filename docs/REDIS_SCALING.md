@@ -7,8 +7,8 @@ sweeps, and crash recovery through Redis — **with zero client changes and zero
 new packages outside `@socket.io/redis-adapter` and `ioredis`**.
 
 > **Scope note:** Day 12 scales the backend signaling and edge plane across
-> multiple Node instances. **Mesh optimization / peer caps remain Day 13 scope
-> and have not been started.**
+> multiple Node instances. **Day 13 (mesh optimization) now builds on this key
+> space without adding a key** — see [MESH_OPTIMIZATION.md](MESH_OPTIMIZATION.md).
 
 ---
 
@@ -90,7 +90,7 @@ distinct pairs can **never** alias the same key (for example
 | --- | --- | --- | --- | --- |
 | `<prefix>:edge:<pairToken>` | `HASH` (`roomId`, `a`, `b`, `generation`) | Single source of truth that an earshot edge is live between `a` and `b`. | `3600 s` (`EXPIRE` refreshed on write) | Deleted atomically by `removeEdge`, `removeUser`, or `sweepOrphanEdges`. |
 | `<prefix>:gen:<pairToken>` | `STRING` (integer via `INCR`) | Monotonically increasing generation counter per pair across instances so stale WebRTC offers/ICE for prior edges are rejected. | `3600 s` (`EXPIRE` refreshed on create/remove) | Deleted atomically by `removeUser` / `sweepOrphanEdges` once either user leaves. |
-| `<prefix>:user-edges:<userId>` | `SET` of `<pairToken>` | Fast `O(degree)` lookup for `edgesOf(userId)` and disconnect cleanup. | `3600 s` | Entries removed on `removeEdge`; set deleted on `removeUser` / `sweepOrphanEdges`. |
+| `<prefix>:user-edges:<userId>` | `SET` of `<pairToken>` | Fast `O(degree)` lookup for `edgesOf(userId)` and disconnect cleanup. **Day 13:** the same set is the degree source for the peer cap — `CREATE_EDGE_LUA` runs `SCARD` on both endpoints inside the atomic create, so no new key and no extra round-trip is needed. | `3600 s` | Entries removed on `removeEdge`; set deleted on `removeUser` / `sweepOrphanEdges`. |
 | `<prefix>:user-pairs:<userId>` | `SET` of `<pairToken>` | Tracks every pair counter opened during `userId`'s session so `<prefix>:gen:<pairToken>` is cleaned on exit without scanning all keys. | `3600 s` | Cleaned on both endpoints and deleted on `removeUser` / `sweepOrphanEdges`. |
 | `<prefix>:adapter#*` | Pub/Sub channels (ephemeral, zero stored keys) | Socket.io room broadcasts, point-to-point `io.to(socketId)` relays, and `io.serverSideEmit` control events. | Ephemeral (in-flight Pub/Sub only) | Unsubscribed automatically on room empty / `adapter.close()`. |
 
@@ -257,16 +257,23 @@ cycles:
 
 ### Current limitations (honest architectural boundaries)
 
-1. **No mesh peer cap / topology optimization yet (Day 13 — not started):**
-   Every pair within `PROXIMITY_RADIUS_PX` still opens a direct P2P WebRTC edge
-   (`O(k²)` connections inside a dense crowd of `k` co-located speakers).
+1. **Mesh optimization is Day 13 (implemented):** the default policy is a
+   symmetric cap of `MAX_PEERS_PER_USER=8` plus a 115 px drop radius, so a
+   dense crowd no longer forms an `O(k²)` mesh. Existing edges are never evicted
+   for closer newcomers; that limitation, the measurements and the star
+   no-thrash proof are in [MESH_OPTIMIZATION.md](MESH_OPTIMIZATION.md).
+   `MAX_PEERS_PER_USER=0` with `PEER_DISCONNECT_RADIUS_PX` equal to the radius
+   reproduces the Day 12 behaviour exactly.
 2. **Standalone Redis topology:** Connects to one `REDIS_URL` (`redis://` or
    `rediss://`). Redis Sentinel / Redis Cluster sharded Pub/Sub and TURN servers
    are outside Day 12 scope.
-3. **Environment verification note (2026-10-21):** All 24 Day 12 contract, TLS,
-   outage/recovery, race, sweep, leak, and 50-user benchmark tests ran live
-   against `redis-server` 7.4.2 with **0 skipped**. Full `server/src/index.js`
-   multi-process boot against a live `mongod` and two real browsers remain
-   **NOT VERIFIED in this sandbox** because no local `mongod` or Chromium binary
-   is installed; run with `MONGO_URI_TEST` + `REDIS_URL_TEST` on a machine with
-   MongoDB and Redis for `0` skipped across all 138 server tests.
+3. **Environment verification note (2026-10-22, Day 13):** the Day 13 Redis
+   suites (edge-store cap contract, cross-instance cap/reclaim/sweep, embedded
+   two-instance `mesh-check`) ran live against `redis-server` **6.2.14** with
+   **0 skipped**; the full server suite was **136 passed / 0 failed / 32
+   skipped** (168 tests) and the client suite **151 passed / 0 failed** here. The 32 skips
+   are all MongoDB-backed suites: this sandbox has no `mongod` and cannot
+   download one (no apt or `fastdl.mongodb.org` access), so the MongoDB path and
+   a two-browser audible check remain **NOT VERIFIED here**; run with
+   `MONGO_URI_TEST` + `REDIS_URL_TEST` on a machine with MongoDB and Redis for
+   `0` skipped.

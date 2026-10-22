@@ -5,7 +5,7 @@
  * the Express port and the `/health` endpoint keeps working untouched.
  *
  * Event contract (every inbound payload is validated server-side):
- *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users, iceServers, proximityRadiusPx }
+ *   C -> S  join     { roomId, name }   S -> C  joined     { selfId, room, users, iceServers, proximityRadiusPx, maxPeers, peerDisconnectRadiusPx }
  *   C -> S  move     { x, y }           S -> C  user:moved { id, x, y }
  *   C -> S  signal   { to, generation, data }
  *                                       S -> C  signal     { from, generation, data }
@@ -88,8 +88,9 @@ export function createSocketServer({
           client: redis.storeClient,
           keyPrefix: cfg.redis.keyPrefix,
           ttlSeconds: cfg.redis.edgeTtlSeconds,
+          maxPeersPerUser: cfg.proximity.maxPeersPerUser,
         })
-      : new MemoryEdgeStore());
+      : new MemoryEdgeStore({ maxPeersPerUser: cfg.proximity.maxPeersPerUser }));
   const resolvePeerName = async (roomId, userId) => {
     const localName = io.sockets.sockets.get(userId)?.data.name;
     if (localName) return localName;
@@ -104,6 +105,8 @@ export function createSocketServer({
   const peers = new PeerGraph({
     findNearby: neighborQuery,
     radiusPx: cfg.proximity.radiusPx,
+    dropRadiusPx: cfg.proximity.peerDisconnectRadiusPx,
+    maxPeersPerUser: cfg.proximity.maxPeersPerUser,
     edgeStore: store,
     allowRemotePeers: io.multiInstance,
     resolvePeerName,
@@ -139,6 +142,18 @@ export function createSocketServer({
     onEdgeRemoved: (edge) => {
       peers.forgetPeerName(edge.roomId, edge.a);
       peers.forgetPeerName(edge.roomId, edge.b);
+      if (io.multiInstance) {
+        try {
+          io.serverSideEmit('proxispeak:edge-removed', {
+            roomId: edge.roomId,
+            a: edge.a,
+            b: edge.b,
+            generation: edge.generation,
+          });
+        } catch {
+          /* adapter already closed */
+        }
+      }
       for (const [recipient, peerId] of [[edge.a, edge.b], [edge.b, edge.a]]) {
         io.to(recipient).emit('peer:disconnect', { peerId, generation: edge.generation });
       }
@@ -234,6 +249,19 @@ export function createSocketServer({
       }
     } catch {
       /* ignore malformed entry */
+    }
+  });
+
+  const EDGE_REMOVED_EVENT = 'proxispeak:edge-removed';
+  io.on(EDGE_REMOVED_EVENT, (payload) => {
+    if (!isPlainObject(payload)) return;
+    const { roomId, a, b } = payload;
+    if (typeof roomId !== 'string' || typeof a !== 'string' || typeof b !== 'string') return;
+    // Trigger reclaim sync for local peers that lost an edge (bounded, no cascade)
+    for (const peerId of [a, b]) {
+      if (peers.isRegistered(roomId, peerId)) {
+        peers.sync(roomId, peerId, { isReclaim: true }).catch(() => {});
+      }
     }
   });
 
@@ -356,7 +384,7 @@ function registerHandlers(socket, ctx) {
 
       if (session && session.roomId === roomId) {
         const users = await snapshotUsers(presence, roomId);
-        socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers, cfg.proximity.radiusPx));
+        socket.emit('joined', buildJoined(clientId, session.room, users, cfg.iceServers, cfg.proximity.radiusPx, cfg.proximity.maxPeersPerUser, cfg.proximity.peerDisconnectRadiusPx));
         socketLog.debug(`duplicate join ignored (already in "${roomId}")`);
         return;
       }
@@ -428,7 +456,7 @@ function registerHandlers(socket, ctx) {
     for (const entry of users) {
       if (entry.id !== clientId && entry.name) peers.rememberPeerName(roomId, entry.id, entry.name);
     }
-    socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers, cfg.proximity.radiusPx));
+    socket.emit('joined', buildJoined(clientId, room, users, cfg.iceServers, cfg.proximity.radiusPx, cfg.proximity.maxPeersPerUser, cfg.proximity.peerDisconnectRadiusPx));
 
     try {
       await peers.join(roomId, clientId, { name: user.name });
@@ -592,12 +620,14 @@ function registerHandlers(socket, ctx) {
 
 // ------------------------------------------------------------- wire format ---
 
-const buildJoined = (selfId, room, users, iceServers, proximityRadiusPx) => ({
+const buildJoined = (selfId, room, users, iceServers, proximityRadiusPx, maxPeers, peerDisconnectRadiusPx) => ({
   selfId,
   room: toRoomPayload(room),
   users,
   iceServers: iceServers ?? [],
   proximityRadiusPx,
+  maxPeers,
+  peerDisconnectRadiusPx,
 });
 
 function toRoomPayload(room) {

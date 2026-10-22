@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { countNearbyNotConnected, formatMeshSummary } from '../realtime/meshIndicator.js';
+
 /**
  * Audio connection status overlay (Day 9) — the visible proof for the
  * Mid-Project Review "Audio Check".
@@ -28,26 +30,50 @@ export function formatBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function AudioStatus({ mic, getSnapshot }) {
+export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radiusPx }) {
   const [rows, setRows] = useState([]);
+  const [meshInfo, setMeshInfo] = useState({ connected: 0, maxPeers: 8, nearbyNotConnected: 0 });
 
   useEffect(() => {
     const read = () => {
       const next = typeof getSnapshot === 'function' ? getSnapshot() ?? [] : [];
       const serialized = JSON.stringify(next);
-      // Only commit real changes: a steady peer list must not re-render.
       setRows((prev) => (JSON.stringify(prev) === serialized ? prev : next));
+
+      // Mesh indicator: connected N / max and M nearby not connected (cap)
+      // Positions stay out of React state (existing refs; overlay updates at most once per second as today).
+      try {
+        const world = worldRef?.current ?? null;
+        const connected = next.length;
+        const max = Number.isFinite(maxPeers) ? maxPeers : 8;
+        const radius = Number.isFinite(radiusPx) ? radiusPx : 100;
+        const connectedIds = new Set(next.map((r) => r.peerId));
+        const nearbyNotConnected = world ? countNearbyNotConnected({ users: world.users, selfId: world.selfId, connectedIds, radiusPx: radius }) : 0;
+        const nextInfo = { connected, maxPeers: max, nearbyNotConnected };
+        setMeshInfo((prev) => (
+          prev.connected === nextInfo.connected
+          && prev.maxPeers === nextInfo.maxPeers
+          && prev.nearbyNotConnected === nextInfo.nearbyNotConnected
+            ? prev
+            : nextInfo
+        ));
+      } catch {
+        /* ignore */
+      }
     };
     read();
     const timer = setInterval(read, 1000); // at most once per second
     return () => clearInterval(timer);
-  }, [getSnapshot]);
+  }, [getSnapshot, worldRef, maxPeers, radiusPx]);
 
   return (
     <aside className="audio-status" role="status" aria-live="polite" aria-label="Audio connections">
       <div className="audio-status-mic">
         Audio · {MIC_LABEL[mic?.state] ?? 'listen only'}
         {mic?.notice ? <span className="audio-status-notice">{mic.notice}</span> : null}
+      </div>
+      <div className="audio-status-mesh">
+        {formatMeshSummary(meshInfo)}
       </div>
       {rows.length === 0 ? (
         <div className="audio-status-empty">no nearby peers yet</div>

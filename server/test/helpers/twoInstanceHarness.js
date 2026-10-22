@@ -53,12 +53,13 @@ export function createMemoryLogger() {
  * Mongoose-compatible `presenceStore`, `roomService`, `findNearby`, AND
  * `presenceModel` methods (`find(...).lean()`, `deleteOne(...)`, `deleteMany(...)`).
  */
-export function createSharedClusterBacking() {
+export function createSharedClusterBacking({ roomIds = [] } = {}) {
   const rows = new Map(); // sessionId -> doc
   const rooms = new Map([
     ['lobby', buildDefaultRoom('lobby', config.world)],
     ['garden', buildDefaultRoom('garden', config.world)],
   ]);
+  for (const roomId of roomIds) rooms.set(roomId, buildDefaultRoom(roomId, config.world));
   let docSeq = 1;
 
   const matchesFilter = (doc, filter = {}) => {
@@ -125,6 +126,14 @@ export function createSharedClusterBacking() {
     },
     async listRoomIds() {
       return [...rooms.keys()];
+    },
+    /** Throwaway room used by QA scripts; removed with `removeRoom`. */
+    addRoom(roomId) {
+      if (!rooms.has(roomId)) rooms.set(roomId, buildDefaultRoom(roomId, config.world));
+      return rooms.get(roomId);
+    },
+    removeRoom(roomId) {
+      return rooms.delete(roomId);
     },
   };
 
@@ -195,6 +204,7 @@ export async function startClusterNode({
   maxStepPx = 2000,
   backing,
   tlsOptions,
+  proximity = null,
   logger = createLogger('error'),
 } = {}) {
   const cfg = {
@@ -218,6 +228,9 @@ export async function startClusterNode({
       edgeTtlSeconds,
       connectTimeoutMs,
     },
+    ...(proximity
+      ? { proximity: { ...config.proximity, ...proximity } }
+      : {}),
   };
 
   const scaleState = createScaleState(instanceId, 'single');

@@ -20,6 +20,7 @@
     "test:server": "npm --prefix server test",
     "test:client": "npm --prefix client test",
     "build": "npm --prefix client run build",
-    "build:client": "npm --prefix client run build"
+    "build:client": "npm --prefix client run build",
+    "mesh-check": "npm --prefix server run mesh-check --"
   }
 }

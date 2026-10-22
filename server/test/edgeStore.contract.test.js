@@ -22,6 +22,9 @@ import {
 import { RedisEdgeStore } from '../src/services/redisEdgeStore.js';
 import { redactRedisUrl } from '../src/db/redis.js';
 
+/** Constructor options a cap suite passes into each store implementation. */
+const CAP_CONSTRUCTOR = Symbol('capConstructor');
+
 const REDIS_URL_TEST = (process.env.REDIS_URL_TEST ?? '').trim();
 
 if (!REDIS_URL_TEST) {
@@ -250,6 +253,121 @@ defineEdgeStoreContractSuite('RedisEdgeStore', {
     return {
       stores,
       countKeys: () => stores[0].countStoreKeys(),
+      cleanup: async () => {
+        const keys = await stores[0].scanKeys(`${keyPrefix}:*`);
+        if (keys.length) await redisPool[0].del(...keys);
+      },
+    };
+  },
+});
+
+
+/**
+ * Day 13: the symmetric degree cap is an EdgeStore invariant, so the exact same
+ * suite runs against MemoryEdgeStore and RedisEdgeStore. `makeStore(cap)`
+ * returns a store plus its cleanup.
+ */
+function definePeerCapSuite(label, { skipReason = false, makeStore } = {}) {
+  const testOpts = skipReason ? { skip: skipReason } : {};
+
+  test(`[${label}] cap is symmetric: both endpoints must have a free slot`, testOpts, async () => {
+    const { store, cleanup } = await makeStore(2);
+    try {
+      assert.deepEqual(await store.createEdge('lobby', 'hub', 'a'), { created: true, generation: 1 });
+      assert.equal((await store.createEdge('lobby', 'hub', 'b')).created, true);
+      // hub is full: both endpoints are checked, so this is refused...
+      const capped = await store.createEdge('lobby', 'hub', 'c');
+      assert.equal(capped.created, false);
+      assert.equal(capped.capped, true, 'the caller learns WHY the edge was not created');
+      // ...and 'c' itself still has free slots for an unrelated peer.
+      assert.equal((await store.createEdge('lobby', 'c', 'd')).created, true);
+      // Fill b's second slot: now b is the other full endpoint.
+      assert.equal((await store.createEdge('lobby', 'b', 'x')).created, true);
+      assert.equal((await store.createEdge('lobby', 'e', 'b')).capped, true);
+      assert.equal((await store.edgesOf('hub')).length, 2);
+      assert.equal((await store.edgesOf('b')).length, 2);
+      assert.equal(await store.getEdge('hub', 'c'), null, 'a capped edge leaves no record');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test(`[${label}] 200 concurrent creates around one hub never exceed the cap`, testOpts, async () => {
+    const { store, stores, cleanup } = await makeStore(3);
+    try {
+      const outcomes = await Promise.all(
+        Array.from({ length: 200 }, (_, index) => {
+          const target = stores[index % stores.length] ?? store;
+          return target.createEdge('lobby', 'hub', `peer_${String(index).padStart(3, '0')}`);
+        }),
+      );
+      const created = outcomes.filter((outcome) => outcome.created === true);
+      assert.equal(created.length, 3, 'exactly the cap number of edges won');
+      assert.equal(outcomes.filter((outcome) => outcome.capped === true).length, 197);
+      assert.equal(outcomes.every((outcome) => outcome.created || outcome.capped), true, 'every loser is reported as capped');
+
+      const hubEdges = await store.edgesOf('hub');
+      assert.equal(hubEdges.length, 3);
+      assert.equal(new Set(hubEdges.map((edge) => edge.key)).size, 3);
+      // Every created edge has exactly one peer on the other end.
+      for (const edge of hubEdges) assert.ok(edge.a === 'hub' || edge.b === 'hub');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test(`[${label}] removing an edge frees the slot immediately`, testOpts, async () => {
+    const { store, cleanup } = await makeStore(1);
+    try {
+      assert.equal((await store.createEdge('lobby', 'alice', 'bob')).created, true);
+      assert.equal((await store.createEdge('lobby', 'alice', 'carol')).capped, true);
+
+      assert.equal(await store.removeEdge('lobby', 'alice', 'bob'), true);
+      const retried = await store.createEdge('lobby', 'alice', 'carol');
+      assert.equal(retried.created, true);
+      assert.equal(retried.capped, undefined);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test(`[${label}] cap 0 means unlimited (Day 12 behaviour)`, testOpts, async () => {
+    const { store, cleanup } = await makeStore(0);
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const outcome = await store.createEdge('lobby', 'hub', `peer_${index}`);
+        assert.equal(outcome.created, true);
+      }
+      assert.equal((await store.edgesOf('hub')).length, 12);
+    } finally {
+      await cleanup();
+    }
+  });
+}
+
+// Memory: one synchronous store, two "instances" is the same object.
+definePeerCapSuite('MemoryEdgeStore', {
+  async makeStore(cap) {
+    const shared = new MemoryEdgeStore({ maxPeersPerUser: cap });
+    return { store: shared, stores: [shared, shared], cleanup: async () => {} };
+  },
+});
+
+// Redis: three independent clients, so this is a real cross-instance race.
+definePeerCapSuite('RedisEdgeStore', {
+  skipReason: REDIS_URL_TEST
+    ? false
+    : 'NOT VERIFIED — set REDIS_URL_TEST="redis://127.0.0.1:6379" to run RedisEdgeStore cap suite',
+  async makeStore(cap) {
+    prefixCounter += 1;
+    const keyPrefix = `cap_${process.pid}_${prefixCounter}`;
+    const stores = redisPool.map(
+      (client) => new RedisEdgeStore({ client, keyPrefix, ttlSeconds: 120, maxPeersPerUser: cap }),
+    );
+    return {
+      store: stores[0],
+      stores,
       cleanup: async () => {
         const keys = await stores[0].scanKeys(`${keyPrefix}:*`);
         if (keys.length) await redisPool[0].del(...keys);

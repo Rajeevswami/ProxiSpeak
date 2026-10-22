@@ -2,11 +2,14 @@
  * Peer-edge store abstraction and default in-memory implementation.
  *
  * Interface contract (shared identically by MemoryEdgeStore and RedisEdgeStore):
- *   - createEdge(room, a, b)  -> { created: boolean, generation: number } (or Promise)
+ *   - createEdge(room, a, b)  -> { created: boolean, generation: number, capped?: true } (or Promise)
  *     Atomic and idempotent for unordered pair {a, b}. Only the caller that
  *     transitions the pair from absent -> live receives `created: true` and
  *     emits `peer:connect`; concurrent losers receive `created: false` with the
  *     winning generation. Generations increase monotonically per pair.
+ *     Day 13: the create is also the atomic degree gate — if either endpoint is
+ *     at `maxPeersPerUser` it returns `{ created: false, capped: true }` and
+ *     writes nothing (a capped pair is not an error and emits no socket event).
  *   - removeEdge(room, a, b)  -> boolean (or Promise<boolean>)
  *     Returns `true` ONLY for the caller that actually removed the live edge in
  *     `room` (only that caller emits `peer:disconnect`); `false` otherwise.
@@ -17,6 +20,8 @@
  *     the edges actually removed by this call, and cleans up all per-user /
  *     per-pair bookkeeping so no stale entries remain.
  */
+
+import config from '../config/index.js';
 
 export const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 export const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -122,7 +127,7 @@ export class EdgeStore {
  * promise overhead on the hot path.
  */
 export class MemoryEdgeStore extends EdgeStore {
-  constructor() {
+  constructor({ maxPeersPerUser } = {}) {
     super();
     /** @type {Map<string, object>} pairToken -> frozen PeerEdge */
     this.edgesByToken = new Map();
@@ -135,6 +140,22 @@ export class MemoryEdgeStore extends EdgeStore {
     /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
     this.userGenFloor = new Map();
     this.totalGenerations = 0;
+    if (maxPeersPerUser !== undefined) {
+      if (!Number.isInteger(maxPeersPerUser) || maxPeersPerUser < 0) {
+        throw new RangeError('maxPeersPerUser must be a non-negative integer');
+      }
+      this.maxPeersPerUser = maxPeersPerUser;
+    } else {
+      this.maxPeersPerUser = null; // resolved lazily via getMaxPeers()
+    }
+  }
+
+  getMaxPeers() {
+    if (Number.isInteger(this.maxPeersPerUser)) return this.maxPeersPerUser;
+    try {
+      if (config?.proximity?.maxPeersPerUser !== undefined) return config.proximity.maxPeersPerUser;
+    } catch {}
+    return 8;
   }
 
   recordUserFloor(userId, generation) {
@@ -168,6 +189,16 @@ export class MemoryEdgeStore extends EdgeStore {
     const existing = this.edgesByToken.get(token);
     if (existing) {
       return { created: false, generation: existing.generation };
+    }
+
+    // Symmetric, atomic cap check: single synchronous step using SCARD-equivalent sizes.
+    const cap = this.getMaxPeers();
+    if (cap !== 0) {
+      const degA = this.userEdges.get(a)?.size ?? 0;
+      const degB = this.userEdges.get(b)?.size ?? 0;
+      if (degA >= cap || degB >= cap) {
+        return { created: false, capped: true, generation: this.pairGenerations.get(token) ?? 0 };
+      }
     }
 
     const base = Math.max(

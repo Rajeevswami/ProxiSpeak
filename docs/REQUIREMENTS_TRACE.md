@@ -1,13 +1,14 @@
-# Requirements Trace — up to Day 12
+# Requirements Trace — up to Day 13
 
-Company requirements through the Mid-Project Review plus Week 3 Days 11–12, traced
-to files, tests and exact commands. Status is honest: MongoDB Community Server
-`8.0.0` (`127.0.0.1:27017`) and `redis-server` `7.4.2` (`127.0.0.1:6379`) were both
-verified live (`142` server tests + `145` client tests = **`287 / 287` passed with `0`
-skipped**, plus `npm run seed`, `npm run audit` at `users = 50, 100, 250, 500`, and
-two-process `npm run scale-check` on ports `4000` & `4001`), whereas live two-browser
-WebRTC hearing checks remain marked `NOT VERIFIED` in this headless sandbox (no
-browser binary); see `docs/REDIS_SCALING.md`, `docs/DAY11.md` and `docs/DEMO_MIDREVIEW.md`.
+Company requirements through the Mid-Project Review plus Week 3 Days 11–13, traced
+to files, tests and exact commands. Status is honest. Days 1–12 were verified with
+MongoDB Community Server `8.0.0` and `redis-server` `7.4.2` (`287 / 287` tests,
+`0` skipped). **Day 13 (2026-10-22) was verified live against `redis-server` `6.2.14`
+with `REDIS_URL_TEST` — server `136` passed / `32` skipped of `168` (all MongoDB-backed),
+client `151` passed, plus `npm run mesh-check` `PASS 37/37` — but this sandbox has
+no `mongod` and cannot download one, so the MongoDB path and live two-browser
+WebRTC hearing checks remain `NOT VERIFIED` here; see
+`docs/MESH_OPTIMIZATION.md`, `docs/REDIS_SCALING.md` and `docs/DAY11.md`.
 
 | # | Requirement | Implementing files | Test files | Command that demonstrates it | Status |
 |---|---|---|---|---|---|
@@ -27,10 +28,11 @@ browser binary); see `docs/REDIS_SCALING.md`, `docs/DAY11.md` and `docs/DEMO_MID
 | 14 | Day 10: fast whole-room clustering (one roster query + in-memory grid + union-find), old `$near` algorithm kept as cross-check | `server/src/services/proximityService.js` (`computeClusters`, `computeClustersViaNear`) | `server/test/proximity.roster.test.js`, `server/test/spatialAudit.test.js` (20-layout equivalence) | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" node --test server/test/proximity.roster.test.js server/test/spatialAudit.test.js` | DONE (20 MongoDB layouts verified live, `0` mismatches) |
 | 15 | Day 10: signal burst covers ~20-user clusters | `server/src/config/index.js` (`SOCKET_SIGNAL_BURST=200`), `.env.example` | `server/test/signal.ratelimit.headroom.test.js` | `node --test server/test/signal.ratelimit.headroom.test.js` | DONE |
 | 16 | Week 3 — Dynamic Attenuation: distance-based GainNode for remote WebRTC tracks | `client/src/audio/attenuation.js`, `client/src/audio/audioMixer.js`, `client/src/webrtc/peerManager.js`, `client/src/webrtc/remoteAudio.js`, `client/src/hooks/useSocket.js`, `client/src/App.jsx`, `client/src/components/AudioStatus.jsx`; server sends `proximityRadiusPx` in `server/src/sockets/index.js` | `client/test/audio.attenuation.test.js`, `client/test/audio.audioMixer.test.js`, `server/test/socket.integration.test.js` | `npm test`; `npm run build --prefix client`; manual two-window hearing steps: `docs/DAY11.md` | DONE in code, Node unit tests & live `joined.proximityRadiusPx` socket test (audible browser check NOT VERIFIED — no browser) |
-| 17 | Week 3 — Mesh Scaling | — | — | — | MISSING / not started (Day 13 — excluded from Day 12) |
+| 17 | Week 3 — Mesh Scaling (cap + hysteresis + nearest-first + reclaim + mesh-check) | `server/src/config/index.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/peerGraph.js`, `server/src/sockets/index.js`, `server/scripts/mesh-check.js`, `client/src/realtime/meshIndicator.js`, `client/src/components/AudioStatus.jsx` | `server/test/mesh.config.test.js`, `server/test/edgeStore.contract.test.js`, `server/test/peerGraph.mesh.test.js`, `server/test/mesh.twoInstance.test.js`, `client/test/meshIndicator.test.js` | `REDIS_URL="redis://127.0.0.1:6379" npm run mesh-check`; `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` | DONE (`mesh-check` PASS `37/37`; cap `49 → 8` connections on N=50, edges `1225 → 190`, `0` boundary churn vs `100`; MongoDB path NOT VERIFIED here — no `mongod`) |
 | 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io & shared edge state (Day 12) | `server/src/db/redis.js`, `server/src/sockets/redisAdapter.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/edgeSweep.js`, `server/src/services/peerGraph.js`, `server/src/services/presenceCleanup.js`, `server/src/sockets/index.js`, `server/src/app.js`, `server/src/config/index.js`, `server/scripts/scale-check.js` | `server/test/edgeStore.contract.test.js`, `server/test/redis.failure.test.js`, `server/test/redis.scale.integration.test.js`, `server/test/app.test.js`, `server/test/config.test.js` | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`; `npm run scale-check`; `docs/REDIS_SCALING.md` | DONE (`8/8` live `scale-check` checks passed on `:4000` & `:4001`; `287/287` tests passed with `0` skipped; live browser check NOT VERIFIED — no browser) |
 
 Nothing else was found PARTIAL or MISSING within Week 1, Week 2 or the
-Mid-Review scope. Week 3 rows distinguish the completed Day 11 attenuation and
-Day 12 Redis multi-instance scaling slices from **Day 13 Mesh Scaling (`MISSING`)**.
-Stereo panning and occlusion remain Week 4 scope, not started.
+Mid-Review scope. All three Week 3 slices are now DONE: Day 11 attenuation,
+Day 12 Redis multi-instance scaling and Day 13 mesh optimization.
+**Week 4 rows (stereo panning, obstacle occlusion, room persistence, deploy)
+remain MISSING / not started.**

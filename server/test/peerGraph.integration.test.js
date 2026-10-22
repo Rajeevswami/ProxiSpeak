@@ -101,7 +101,17 @@ afterEach(async () => {
   createdRoomIds.clear();
 });
 
-/** Test config: teleport-friendly moves and a wide signaling bucket. */
+/**
+ * Test config: teleport-friendly moves and a wide signaling bucket.
+ *
+ * Day 13 note: this Day 8 suite asserts the Day 12 connect/disconnect contract
+ * (an edge at 101 px is dropped, every in-range pair is connected). Those are
+ * the documented "unlimited peers, no hysteresis" settings, so they are set
+ * EXPLICITLY here instead of relying on the new defaults:
+ *   MAX_PEERS_PER_USER=0                     -> no degree cap
+ *   PEER_DISCONNECT_RADIUS_PX=radiusPx       -> drop exactly at 100 px
+ * The new default policy is covered by peerGraph.mesh.test.js.
+ */
 const TEST_CONFIG = Object.freeze({
   ...config,
   socket: {
@@ -111,6 +121,11 @@ const TEST_CONFIG = Object.freeze({
     signalEventsPerSec: 500,
     signalBurst: 1000,
   },
+  proximity: Object.freeze({
+    ...config.proximity,
+    maxPeersPerUser: 0,
+    peerDisconnectRadiusPx: config.proximity.radiusPx,
+  }),
 });
 
 // --------------------------------------------------------------- server & clients
