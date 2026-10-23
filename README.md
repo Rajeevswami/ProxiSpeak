@@ -1114,7 +1114,3 @@ four-window manual test are in
 [docs/MESH_OPTIMIZATION.md](docs/MESH_OPTIMIZATION.md). Redis key space is
 unchanged (degree comes from the existing `user-edges` sets); see
 [docs/REDIS_SCALING.md](docs/REDIS_SCALING.md).
-
-**Not in Day 13:** stereo panning, obstacle occlusion, room persistence, an
-SFU/MCU or any media server, TURN, Express serving `client/dist`, deploy configs,
-TypeScript and any new dependency.
