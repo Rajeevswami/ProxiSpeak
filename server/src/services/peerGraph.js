@@ -361,6 +361,15 @@ export class PeerGraph {
 
       const [a, b] = normalizePair(userId, peerId);
       const edge = buildEdgeRecord(roomId, a, b, outcome.generation);
+
+      // leave() does not wait for an in-flight Redis create. If it won the
+      // race, removeUser already ran and this create would otherwise resurrect
+      // an orphan edge and emit peer:connect for a departed local session.
+      if (this.#findRoom(roomId)?.users.get(userId) !== state) {
+        await this.#removeSingleEdge(roomId, userId, peerId, edge);
+        return { added, removed };
+      }
+
       added.push(edge);
       this.meshCounters.edgesCreated += 1;
       this.log?.debug?.(`edge created ${a}<->${b} gen=${outcome.generation}`);

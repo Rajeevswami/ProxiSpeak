@@ -10,6 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PeerGraph, edgeKey, pickInitiator } from '../src/services/peerGraph.js';
+import { MemoryEdgeStore } from '../src/services/edgeStore.js';
 
 /** Mutable world + a call log, mirroring findNearby's contract. */
 function createWorld(users = []) {
@@ -178,6 +179,44 @@ test('a leave during an in-flight query aborts the sync without recreating edges
   assert.equal(graph.stats('room').edges, 0);
   assert.equal(graph.isRegistered('room', 'a'), false);
   assert.equal(graph.isRegistered('room', 'b'), true);
+});
+
+test('an edge created after leave is rolled back without a late connect event', async () => {
+  let releaseCreate;
+  let markCreateStarted;
+  const createStarted = new Promise((resolve) => { markCreateStarted = resolve; });
+  const createGate = new Promise((resolve) => { releaseCreate = resolve; });
+
+  class GatedEdgeStore extends MemoryEdgeStore {
+    async createEdge(...args) {
+      markCreateStarted();
+      await createGate;
+      return super.createEdge(...args);
+    }
+  }
+
+  const edgeStore = new GatedEdgeStore({ maxPeersPerUser: 8 });
+  const added = [];
+  const removed = [];
+  const graph = new PeerGraph({
+    edgeStore,
+    findNearby: async () => [{ id: 'b', distancePx: 40 }],
+    onEdgeAdded: (edge) => added.push(edge),
+    onEdgeRemoved: (edge) => removed.push(edge),
+  });
+  graph.register('room', 'a', { name: 'Ada' });
+  graph.register('room', 'b', { name: 'Bob' });
+
+  const pending = graph.sync('room', 'a');
+  await createStarted;
+  graph.leave('room', 'a'); // removeUser runs before the delayed create.
+  releaseCreate();
+  const diff = await pending;
+
+  assert.deepEqual(diff, { added: [], removed: [] });
+  assert.equal(edgeStore.getEdge('a', 'b'), null, 'no edge may survive its departed endpoint');
+  assert.deepEqual(added, [], 'no peer:connect may be emitted after teardown');
+  assert.deepEqual(removed, [], 'an unannounced edge is rolled back silently');
 });
 
 test('syncs for one user are serialized, so a move cannot overtake its join', async () => {
