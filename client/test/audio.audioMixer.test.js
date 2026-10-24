@@ -188,6 +188,29 @@ test('suspended context resumes on the Join gesture and on a visible-tab event',
   await mixer.closeAll();
 });
 
+test('Safari interrupted contexts resume from the existing gesture and visibility paths', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+
+  await mixer.resume();
+  assert.equal(contexts[0].resumeCalls, 1);
+  contexts[0].state = 'interrupted';
+  await mixer.resume();
+  assert.equal(contexts[0].resumeCalls, 2, 'a user gesture also resumes interrupted audio');
+
+  contexts[0].state = 'interrupted';
+  document.dispatch('visibilitychange');
+  await Promise.resolve();
+  assert.equal(contexts[0].resumeCalls, 3, 'returning to a visible tab resumes interrupted audio');
+  await mixer.closeAll();
+});
+
 test('a failed Web Audio setup disconnects partial nodes before element fallback', async () => {
   const contexts = [];
   class BrokenConnectContext extends FakeAudioContext {

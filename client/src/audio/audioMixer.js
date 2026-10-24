@@ -69,7 +69,8 @@ export function createAudioMixer({
   };
 
   function onVisibilityChange() {
-    if (doc?.visibilityState === 'visible' && context?.state === 'suspended') {
+    if (doc?.visibilityState === 'visible'
+      && (context?.state === 'suspended' || context?.state === 'interrupted')) {
       void resume();
     }
   }
@@ -79,7 +80,8 @@ export function createAudioMixer({
     ensureVisibilityListener();
     const audioContext = ensureContext();
     if (!audioContext) return false;
-    if (audioContext.state === 'suspended' && typeof audioContext.resume === 'function') {
+    if ((audioContext.state === 'suspended' || audioContext.state === 'interrupted')
+      && typeof audioContext.resume === 'function') {
       try {
         await audioContext.resume();
       } catch {
