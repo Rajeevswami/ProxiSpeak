@@ -97,6 +97,37 @@ test('stopAll leaves zero timers and zero rows — closeAll leaves nothing behin
   assert.deepEqual(stats.snapshot(), []);
 });
 
+test('late getStats reads cannot revive stopped rows or overwrite a replacement peer', async () => {
+  const timers = createFakeTimers();
+  const stats = createRtcStats({ setIntervalFn: timers.setIntervalFn, clearIntervalFn: timers.clearIntervalFn });
+  let resolveOld;
+  let resolveNew;
+  const oldPc = fakePc(null);
+  const newPc = fakePc(null);
+  oldPc.getStats = () => new Promise((resolve) => { resolveOld = resolve; });
+  newPc.getStats = () => new Promise((resolve) => { resolveNew = resolve; });
+
+  stats.watch('bob', oldPc);
+  stats.watch('bob', newPc);
+  resolveNew(reportWith({ type: 'inbound-rtp', kind: 'audio', bytesReceived: 200 }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stats.get('bob').bytesReceived, 200);
+
+  resolveOld(reportWith({ type: 'inbound-rtp', kind: 'audio', bytesReceived: 100 }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stats.get('bob').bytesReceived, 200, 'the old pc cannot overwrite current metrics');
+
+  let resolveStopped;
+  const stoppedPc = fakePc(null);
+  stoppedPc.getStats = () => new Promise((resolve) => { resolveStopped = resolve; });
+  stats.watch('cat', stoppedPc);
+  stats.stopAll();
+  resolveStopped(reportWith({ type: 'inbound-rtp', kind: 'audio', bytesReceived: 300 }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(stats.snapshot(), [], 'stopAll stays final even when an old read resolves');
+  assert.equal(stats.activeTimers(), 0);
+});
+
 test('a failing getStats is logged and never breaks the poll', async () => {
   const timers = createFakeTimers();
   const debugs = [];

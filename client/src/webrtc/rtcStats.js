@@ -27,6 +27,8 @@ export function createRtcStats({
 } = {}) {
   /** peerId -> interval handle. One timer per watched peer. */
   const timers = new Map();
+  /** peerId -> RTCPeerConnection; also invalidates late async reads. */
+  const watched = new Map();
   /** peerId -> { connectionState, bytesReceived, updatedAt }. */
   const latest = new Map();
 
@@ -51,6 +53,9 @@ export function createRtcStats({
   const poll = async (peerId, pc) => {
     try {
       const report = await pc.getStats();
+      // unwatch/stopAll or a replacement watch may have happened while the
+      // browser was producing this report. A late result must stay discarded.
+      if (watched.get(peerId) !== pc) return;
       latest.set(peerId, {
         connectionState: pc.connectionState ?? 'new',
         bytesReceived: readReport(report),
@@ -58,7 +63,9 @@ export function createRtcStats({
       });
     } catch (err) {
       // Stats are proof-of-life only: a failing read must never break audio.
-      logger?.debug?.(`getStats for ${peerId} failed:`, err?.message ?? err);
+      if (watched.get(peerId) === pc) {
+        logger?.debug?.(`getStats for ${peerId} failed:`, err?.message ?? err);
+      }
     }
   };
 
@@ -66,6 +73,7 @@ export function createRtcStats({
     /** Start the ~1 s poll for one peer (replacing any previous one). */
     watch(peerId, pc) {
       this.unwatch(peerId);
+      watched.set(peerId, pc);
       poll(peerId, pc); // first read immediately so the overlay is not empty
       const handle = setIntervalFn(() => poll(peerId, pc), intervalMs);
       timers.set(peerId, handle);
@@ -78,6 +86,7 @@ export function createRtcStats({
         clearIntervalFn(handle);
         timers.delete(peerId);
       }
+      watched.delete(peerId);
       latest.delete(peerId);
     },
 
@@ -85,6 +94,7 @@ export function createRtcStats({
     stopAll() {
       for (const handle of timers.values()) clearIntervalFn(handle);
       timers.clear();
+      watched.clear();
       latest.clear();
     },
 
