@@ -140,8 +140,10 @@ export function createSocketServer({
       }
     },
     onEdgeRemoved: (edge) => {
-      peers.forgetPeerName(edge.roomId, edge.a);
-      peers.forgetPeerName(edge.roomId, edge.b);
+      // Do NOT forget names here: both endpoints may still be registered with
+      // other edges, and other peers rely on their cached names for display.
+      // Name cache eviction happens in leave()/dropLocalUser()/clearRoom()
+      // when the user actually departs.
       if (io.multiInstance) {
         try {
           io.serverSideEmit('proxispeak:edge-removed', {
