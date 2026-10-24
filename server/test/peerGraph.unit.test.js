@@ -244,7 +244,11 @@ test('syncs for one user are serialized, so a move cannot overtake its join', as
 
   releaseFirst();
   await Promise.all([joinSync, moveSync]);
-  assert.deepEqual(order, ['a', 'a']);
+  assert.deepEqual(
+    order,
+    ['a', 'a', 'a'],
+    'initial query + post-create confirmation finish before the queued move query',
+  );
   assert.equal(graph.stats('room').edges, 1, 'the pair is still stored exactly once');
 });
 

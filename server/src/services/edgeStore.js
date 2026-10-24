@@ -2,8 +2,11 @@
  * Peer-edge store abstraction and default in-memory implementation.
  *
  * Interface contract (shared identically by MemoryEdgeStore and RedisEdgeStore):
- *   - createEdge(room, a, b)  -> { created: boolean, generation: number, capped?: true } (or Promise)
- *     Atomic and idempotent for unordered pair {a, b}. Only the caller that
+ *   - createEdge(room, a, b, { expectedRevisions }?) -> { created, generation, capped?, stale? }
+ *     Atomic and idempotent for unordered pair {a, b}. When expectedRevisions
+ *     is supplied it must contain both endpoint revisions; an absent edge is
+ *     created only if both still match, otherwise `{ stale: true }` is returned.
+ *     Only the caller that
  *     transitions the pair from absent -> live receives `created: true` and
  *     emits `peer:connect`; concurrent losers receive `created: false` with the
  *     winning generation. Generations increase monotonically per pair.
@@ -74,6 +77,24 @@ export function normalizePair(u1, u2) {
  * Both length-prefixing AND alphabet disjointness make collisions impossible
  * (for example `("a_b", "c")` -> `"3:a_b:1:c"` vs `("a", "b_c")` -> `"1:a:3:b_c"`).
  */
+export function normalizeExpectedRevisions(expectedRevisions, a, b) {
+  if (expectedRevisions === undefined) return null;
+  if (expectedRevisions === null || typeof expectedRevisions !== 'object') {
+    throw new TypeError('expectedRevisions must contain both endpoint revisions');
+  }
+  if (!Object.prototype.hasOwnProperty.call(expectedRevisions, a)
+      || !Object.prototype.hasOwnProperty.call(expectedRevisions, b)) {
+    throw new TypeError('expectedRevisions must contain both endpoint revisions');
+  }
+  const revisionA = expectedRevisions[a];
+  const revisionB = expectedRevisions[b];
+  if (!Number.isSafeInteger(revisionA) || revisionA < 0
+      || !Number.isSafeInteger(revisionB) || revisionB < 0) {
+    throw new TypeError('position revisions must be non-negative safe integers');
+  }
+  return [revisionA, revisionB];
+}
+
 export function encodePairToken(u1, u2) {
   const [a, b] = normalizePair(u1, u2);
   return `${a.length}:${a}:${b.length}:${b}`;
@@ -119,6 +140,10 @@ export class EdgeStore {
   getEdge() { throw new Error('EdgeStore.getEdge not implemented'); }
   edgesOf() { throw new Error('EdgeStore.edgesOf not implemented'); }
   removeUser() { throw new Error('EdgeStore.removeUser not implemented'); }
+  bumpPositionRevision() { throw new Error('EdgeStore.bumpPositionRevision not implemented'); }
+  ensurePositionRevision() { throw new Error('EdgeStore.ensurePositionRevision not implemented'); }
+  getPositionRevision() { throw new Error('EdgeStore.getPositionRevision not implemented'); }
+  getPositionRevisions() { throw new Error('EdgeStore.getPositionRevisions not implemented'); }
 }
 
 /**
@@ -139,6 +164,8 @@ export class MemoryEdgeStore extends EdgeStore {
     this.userPairs = new Map();
     /** @type {Map<string, number>} userId -> highest generation seen on departed peers */
     this.userGenFloor = new Map();
+    /** @type {Map<string, number>} userId -> monotonic accepted-position revision */
+    this.positionRevisions = new Map();
     this.totalGenerations = 0;
     if (maxPeersPerUser !== undefined) {
       if (!Number.isInteger(maxPeersPerUser) || maxPeersPerUser < 0) {
@@ -181,14 +208,30 @@ export class MemoryEdgeStore extends EdgeStore {
     if (set.size === 0) map.delete(key);
   }
 
-  createEdge(roomId, u1, u2) {
+  createEdge(roomId, u1, u2, { expectedRevisions } = {}) {
     validateRoomId(roomId);
     const [a, b] = normalizePair(u1, u2);
+    const expected = normalizeExpectedRevisions(expectedRevisions, a, b);
     const token = `${a.length}:${a}:${b.length}:${b}`;
 
     const existing = this.edgesByToken.get(token);
     if (existing) {
       return { created: false, generation: existing.generation };
+    }
+
+    if (expected) {
+      const [expectedA, expectedB] = expected;
+      // Join initializes every active user to revision >= 1. Zero therefore
+      // means unknown/lost state and must never authorize a new fenced edge.
+      if (expectedA === 0 || expectedB === 0
+          || (this.positionRevisions.get(a) ?? 0) !== expectedA
+          || (this.positionRevisions.get(b) ?? 0) !== expectedB) {
+        return {
+          created: false,
+          stale: true,
+          generation: this.pairGenerations.get(token) ?? 0,
+        };
+      }
     }
 
     // Symmetric, atomic cap check: single synchronous step using SCARD-equivalent sizes.
@@ -220,14 +263,23 @@ export class MemoryEdgeStore extends EdgeStore {
     return { created: true, generation };
   }
 
-  removeEdgeWithRecord(roomId, u1, u2) {
+  removeEdgeWithRecord(roomId, u1, u2, { expectedRevisions } = {}) {
     validateRoomId(roomId);
     const [a, b] = normalizePair(u1, u2);
+    const expected = normalizeExpectedRevisions(expectedRevisions, a, b);
     const token = `${a.length}:${a}:${b.length}:${b}`;
 
     const existing = this.edgesByToken.get(token);
     if (!existing || existing.roomId !== roomId) {
       return { removed: false, edge: null };
+    }
+    if (expected) {
+      const [expectedA, expectedB] = expected;
+      if (expectedA === 0 || expectedB === 0
+          || (this.positionRevisions.get(a) ?? 0) !== expectedA
+          || (this.positionRevisions.get(b) ?? 0) !== expectedB) {
+        return { removed: false, edge: null, stale: true };
+      }
     }
 
     this.edgesByToken.delete(token);
@@ -236,8 +288,8 @@ export class MemoryEdgeStore extends EdgeStore {
     return { removed: true, edge: { ...existing } };
   }
 
-  removeEdge(roomId, u1, u2) {
-    return this.removeEdgeWithRecord(roomId, u1, u2).removed;
+  removeEdge(roomId, u1, u2, options) {
+    return this.removeEdgeWithRecord(roomId, u1, u2, options).removed;
   }
 
   getEdge(u1, u2) {
@@ -257,6 +309,43 @@ export class MemoryEdgeStore extends EdgeStore {
       if (edge) result.push({ ...edge });
     }
     return result.sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  bumpPositionRevision(userId) {
+    validateUserId(userId);
+    const previous = this.positionRevisions.get(userId) ?? 0;
+    if (!Number.isSafeInteger(previous) || previous >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError('position revision exhausted the safe integer range');
+    }
+    const revision = previous + 1;
+    this.positionRevisions.set(userId, revision);
+    return revision;
+  }
+
+  ensurePositionRevision(userId) {
+    validateUserId(userId);
+    const current = this.positionRevisions.get(userId) ?? 0;
+    if (current > 0) return current;
+    this.positionRevisions.set(userId, 1);
+    return 1;
+  }
+
+  getPositionRevision(userId) {
+    validateUserId(userId);
+    return this.positionRevisions.get(userId) ?? 0;
+  }
+
+  getPositionRevisions(userIds) {
+    const revisions = new Map();
+    for (const userId of userIds) {
+      validateUserId(userId);
+      revisions.set(userId, this.positionRevisions.get(userId) ?? 0);
+    }
+    return revisions;
+  }
+
+  trackedPositionUsers() {
+    return [...this.positionRevisions.keys()].sort();
   }
 
   removeUser(userId) {
@@ -288,6 +377,7 @@ export class MemoryEdgeStore extends EdgeStore {
       this.userPairs.delete(userId);
     }
     this.userGenFloor.delete(userId);
+    this.positionRevisions.delete(userId);
 
     return removed.sort((left, right) => left.key.localeCompare(right.key));
   }
@@ -322,6 +412,7 @@ export class MemoryEdgeStore extends EdgeStore {
       + this.userEdges.size
       + this.pairGenerations.size
       + this.userPairs.size
+      + this.positionRevisions.size
     );
   }
 
@@ -331,6 +422,7 @@ export class MemoryEdgeStore extends EdgeStore {
       userEdges: this.userEdges.size,
       pairGenerations: this.pairGenerations.size,
       userPairs: this.userPairs.size,
+      positionRevisions: this.positionRevisions.size,
     };
   }
 }

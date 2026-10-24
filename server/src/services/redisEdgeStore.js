@@ -9,6 +9,7 @@
  *   `<prefix>:gen:<pairToken>`        STRING integer (monotonic via Redis INCR)
  *   `<prefix>:user-edges:<userId>`    SET of `<pairToken>`s currently live
  *   `<prefix>:user-pairs:<userId>`    SET of `<pairToken>`s opened in session
+ *   `<prefix>:position-revision:<id>` STRING integer, INCR + EXPIRE on accepted moves
  *
  * Every key carries a bounded safety TTL (`ttlSeconds`, default 3600s) and an
  * explicit deterministic removal path (`removeEdge`, `removeUser`, and
@@ -19,6 +20,7 @@ import {
   EdgeStore,
   buildEdgeRecord,
   decodePairToken,
+  normalizeExpectedRevisions,
   normalizePair,
   validateKeyPrefix,
   validateRoomId,
@@ -28,12 +30,25 @@ import {
 const CREATE_EDGE_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 1 then
   local existingGen = tonumber(redis.call('HGET', KEYS[1], 'generation'))
-  return { 0, existingGen, 0 }
+  return { 0, existingGen, 0, 0 }
+end
+if ARGV[10] == '1' then
+  local expectedA = tonumber(ARGV[8])
+  local expectedB = tonumber(ARGV[9])
+  -- Active users are initialized at revision >= 1; zero is unknown state.
+  if expectedA < 1 or expectedB < 1 then
+    return { 0, 0, 0, 1 }
+  end
+  local revisionA = tonumber(redis.call('GET', KEYS[7]) or '0')
+  local revisionB = tonumber(redis.call('GET', KEYS[8]) or '0')
+  if revisionA ~= expectedA or revisionB ~= expectedB then
+    return { 0, 0, 0, 1 }
+  end
 end
 local cap = tonumber(ARGV[7]) or 0
 if cap > 0 then
   if redis.call('SCARD', KEYS[3]) >= cap or redis.call('SCARD', KEYS[4]) >= cap then
-    return { 0, 0, 1 }
+    return { 0, 0, 1, 0 }
   end
 end
 local base = tonumber(redis.call('GET', KEYS[2]) or '0')
@@ -54,7 +69,22 @@ redis.call('EXPIRE', KEYS[3], ttl)
 redis.call('EXPIRE', KEYS[4], ttl)
 redis.call('EXPIRE', KEYS[5], ttl)
 redis.call('EXPIRE', KEYS[6], ttl)
-return { 1, gen, 0 }
+return { 1, gen, 0, 0 }
+`;
+
+const BUMP_POSITION_REVISION_LUA = `
+local revision = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+return revision
+`;
+
+const ENSURE_POSITION_REVISION_LUA = `
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+if current < 1 then
+  redis.call('SET', KEYS[1], '1', 'EX', tonumber(ARGV[1]))
+  return 1
+end
+return current
 `;
 
 const REMOVE_EDGE_LUA = `
@@ -68,6 +98,18 @@ end
 local a = redis.call('HGET', KEYS[1], 'a')
 local b = redis.call('HGET', KEYS[1], 'b')
 local gen = tonumber(redis.call('HGET', KEYS[1], 'generation'))
+if ARGV[6] == '1' then
+  local expectedA = tonumber(ARGV[4])
+  local expectedB = tonumber(ARGV[5])
+  if expectedA < 1 or expectedB < 1 then
+    return { 0, 0, 0, 0, 0, 1 }
+  end
+  local revisionA = tonumber(redis.call('GET', KEYS[5]) or '0')
+  local revisionB = tonumber(redis.call('GET', KEYS[6]) or '0')
+  if revisionA ~= expectedA or revisionB ~= expectedB then
+    return { 0, 0, 0, 0, 0, 1 }
+  end
+end
 redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[3], ARGV[2])
 redis.call('SREM', KEYS[4], ARGV[2])
@@ -139,6 +181,7 @@ for i = 1, #pairTokens do
   redis.call('DEL', prefix .. ':gen:' .. token)
 end
 redis.call('DEL', KEYS[2])
+redis.call('DEL', KEYS[3])
 return { out, floors }
 `;
 
@@ -227,9 +270,15 @@ export class RedisEdgeStore extends EdgeStore {
     return `${this.keyPrefix}:user-pairs:${userId}`;
   }
 
-  async createEdge(roomId, u1, u2) {
+  positionRevisionKey(userId) {
+    validateUserId(userId);
+    return `${this.keyPrefix}:position-revision:${userId}`;
+  }
+
+  async createEdge(roomId, u1, u2, { expectedRevisions } = {}) {
     validateRoomId(roomId);
     const [a, b] = normalizePair(u1, u2);
+    const expected = normalizeExpectedRevisions(expectedRevisions, a, b);
     const token = `${a.length}:${a}:${b.length}:${b}`;
 
     const floor = Math.max(
@@ -238,15 +287,17 @@ export class RedisEdgeStore extends EdgeStore {
       this.userGenFloor.get(b) ?? 0,
     );
     const cap = this.getMaxPeers();
-    const [createdFlag, rawGen, cappedFlag] = await this.client.eval(
+    const [createdFlag, rawGen, cappedFlag, staleFlag] = await this.client.eval(
       CREATE_EDGE_LUA,
-      6,
+      8,
       this.edgeHashKey(token),
       this.genKey(token),
       this.userEdgesKey(a),
       this.userEdgesKey(b),
       this.userPairsKey(a),
       this.userPairsKey(b),
+      this.positionRevisionKey(a),
+      this.positionRevisionKey(b),
       roomId,
       a,
       b,
@@ -254,43 +305,54 @@ export class RedisEdgeStore extends EdgeStore {
       String(this.ttlSeconds),
       String(floor),
       String(cap),
+      String(expected?.[0] ?? 0),
+      String(expected?.[1] ?? 0),
+      expected ? '1' : '0',
     );
     const created = Number(createdFlag) === 1;
     const capped = Number(cappedFlag) === 1;
+    const stale = Number(staleFlag) === 1;
     const generation = Number(rawGen);
     if (generation > (this.pairGenFloor.get(token) ?? 0)) {
       this.pairGenFloor.set(token, generation);
     }
     if (created) this.totalGenerations += 1;
+    if (stale) return { created: false, stale: true, generation: generation || 0 };
     if (capped) return { created: false, capped: true, generation: generation || 0 };
     return { created, generation };
   }
 
-  async removeEdgeWithRecord(roomId, u1, u2) {
+  async removeEdgeWithRecord(roomId, u1, u2, { expectedRevisions } = {}) {
     validateRoomId(roomId);
     const [a, b] = normalizePair(u1, u2);
+    const expected = normalizeExpectedRevisions(expectedRevisions, a, b);
     const token = `${a.length}:${a}:${b.length}:${b}`;
 
     const reply = await this.client.eval(
       REMOVE_EDGE_LUA,
-      4,
+      6,
       this.edgeHashKey(token),
       this.genKey(token),
       this.userEdgesKey(a),
       this.userEdgesKey(b),
+      this.positionRevisionKey(a),
+      this.positionRevisionKey(b),
       roomId,
       token,
       String(this.ttlSeconds),
+      String(expected?.[0] ?? 0),
+      String(expected?.[1] ?? 0),
+      expected ? '1' : '0',
     );
     if (Number(reply[0]) !== 1) {
-      return { removed: false, edge: null };
+      return { removed: false, edge: null, ...(Number(reply[5]) === 1 ? { stale: true } : {}) };
     }
     const edge = buildEdgeRecord(reply[1], reply[2], reply[3], Number(reply[4]));
     return { removed: true, edge: { ...edge } };
   }
 
-  async removeEdge(roomId, u1, u2) {
-    const { removed } = await this.removeEdgeWithRecord(roomId, u1, u2);
+  async removeEdge(roomId, u1, u2, options) {
+    const { removed } = await this.removeEdgeWithRecord(roomId, u1, u2, options);
     return removed;
   }
 
@@ -308,14 +370,87 @@ export class RedisEdgeStore extends EdgeStore {
     return unpackEdgeTuples(flat);
   }
 
+  async bumpPositionRevision(userId) {
+    const revision = Number(await this.client.eval(
+      BUMP_POSITION_REVISION_LUA,
+      1,
+      this.positionRevisionKey(userId),
+      String(this.ttlSeconds),
+    ));
+    if (!Number.isSafeInteger(revision) || revision < 1) {
+      throw new Error('Redis returned an invalid position revision');
+    }
+    return revision;
+  }
+
+  async ensurePositionRevision(userId) {
+    const revision = Number(await this.client.eval(
+      ENSURE_POSITION_REVISION_LUA,
+      1,
+      this.positionRevisionKey(userId),
+      String(this.ttlSeconds),
+    ));
+    if (!Number.isSafeInteger(revision) || revision < 1) {
+      throw new Error('Redis returned an invalid position revision');
+    }
+    return revision;
+  }
+
+  async getPositionRevision(userId) {
+    const value = await this.client.get(this.positionRevisionKey(userId));
+    if (value === null) return 0;
+    const revision = Number(value);
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new Error('Redis contains an invalid position revision');
+    }
+    return revision;
+  }
+
+  async getPositionRevisions(userIds) {
+    const ids = [...userIds];
+    for (const userId of ids) validateUserId(userId);
+    if (ids.length === 0) return new Map();
+    const values = await this.client.mget(...ids.map((userId) => this.positionRevisionKey(userId)));
+    const revisions = new Map();
+    for (let index = 0; index < ids.length; index += 1) {
+      if (values[index] === null) {
+        revisions.set(ids[index], 0);
+        continue;
+      }
+      const revision = Number(values[index]);
+      if (!Number.isSafeInteger(revision) || revision < 0) {
+        throw new Error('Redis contains an invalid position revision');
+      }
+      revisions.set(ids[index], revision);
+    }
+    return revisions;
+  }
+
+  async trackedPositionUsers() {
+    const prefixHead = `${this.keyPrefix}:position-revision:`;
+    const keys = await this.scanKeys(`${prefixHead}*`);
+    const userIds = [];
+    for (const key of keys) {
+      const userId = key.slice(prefixHead.length);
+      try {
+        validateUserId(userId);
+        userIds.push(userId);
+      } catch {
+        /* ignore malformed foreign keys */
+      }
+    }
+    return userIds;
+  }
+
   async removeUser(userId) {
     const liveKey = this.userEdgesKey(userId);
     const pairsKey = this.userPairsKey(userId);
     const [flat, floors = []] = await this.client.eval(
       REMOVE_USER_LUA,
-      2,
+      3,
       liveKey,
       pairsKey,
+      this.positionRevisionKey(userId),
       this.keyPrefix,
       userId,
     );

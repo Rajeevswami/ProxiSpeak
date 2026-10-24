@@ -1,10 +1,10 @@
-# Requirements Trace — Through Week 3, Day 14
+# Requirements Trace — Through Week 3, Day 14b
 
 Status date: **2026-10-24**. This trace describes the current checkout and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
 
 - **DONE** means the requested implementation is present and its available current checks passed.
 - **LIVE NOT VERIFIED** means the relevant external-service or browser path was not exercised here; it is not a failure claim.
-- Exact Day 14 evidence, including all fix hashes and test counts, is in `docs/WEEK3.md`.
+- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions and current measurements are recorded below and in `CHANGELOG.md`.
 
 | # | Requirement | Implementation | Tests / demonstration | Status |
 | --- | --- | --- | --- | --- |
@@ -32,6 +32,8 @@ Status date: **2026-10-24**. This trace describes the current checkout and disti
 | 22 | Day 14 one-line paused-audio hint + recovery | `audio/audioPausedHint.js`, `audio/audioMixer.js`, `components/AudioStatus.jsx` | `audio.audioPausedHint.test.js`, `audio.audioMixer.test.js` | DONE in Node; browser autoplay/Safari NOT VERIFIED |
 | 23 | Day 14 bug hunt + regressions | PeerGraph, EdgeStores, sweeps, Redis, mixer, stats, PeerManager, scale/mesh checkers | Fix-by-fix table in `docs/WEEK3.md`; all current suites | DONE; each reproduced defect has a named fix commit |
 | 24 | Day 14 cleanup + coherent docs + demo | `README.md`, `docs/WEEK3.md`, `DEMO_WEEK3.md`, `LIMITATIONS.md`, `CHANGELOG.md`, this trace | Clean install, tests, build, real Redis checks; manual demo remains separate | DONE for docs/code; live demo NOT VERIFIED |
+| 25 | Day 14b stale-edge race: reproduce, fence revisions, one bounded re-sync | Both edge stores, `peerGraph.js`, `sockets/index.js` | `staleEdgeRace.test.js`, revision contract tests; deterministic gates, real sockets, 200 seeded interleavings per store | DONE with Memory + real Redis; live Mongo path NOT VERIFIED |
+| 26 | Day 14b bounded edge validation + dependency remediation | `edgeSweep.js`, `mesh-check.js`, `server/package-lock.json` | `edgeValidation.test.js`; scale/mesh checks; server/client `npm audit` | DONE; zero high/critical audit findings |
 
 ## Day 14 commit evidence
 
@@ -45,11 +47,19 @@ The following short hashes were resolved with `git cat-file -t` and are commits 
 
 Their subjects and file-by-file mapping are recorded in `docs/WEEK3.md` and `CHANGELOG.md`. Earlier Day 1–13 hashes remain in the changelog; no hash or date is inferred from a document alone.
 
+Day 14b adds these separately verified commit hashes: `fe90014` and `69066be`
+(Mongo credential redaction), followed by `ac887e8` (failing race regressions),
+`07df50e` (store revisions), `bf72efd` (graph/socket fencing),
+`9d072ac` (bounded sweep validation), and `434472d` (body-parser lockfile patch).
+Each resolves as a commit with `git cat-file -t`; the documentation commit is
+intentionally not self-listed.
+
 ## Current verification boundary
 
-- Clean lockfile installs and the client production build passed.
-- Without services: server **131 passed / 57 skipped**; client **165/165 passed**.
-- With real Redis: server **156 passed / 32 skipped**; client **165/165 passed**.
+- Clean lockfile installs and the 80-module client production build passed. Server and client audits each reported zero total vulnerabilities.
+- Without services: server **143 passed / 63 skipped** (206 tests); client **165/165 passed**.
+- With real Redis: server **174 passed / 32 skipped** (206 tests); client **165/165 passed**.
+- Real scale-check passed **8/8**, embedded mesh-check **37/37**, and external mesh-check **18/18**. Three separate 180-second 60-user two-instance soaks each recorded 20 settled samples with zero violations and complete tracked-state cleanup; measured RSS values are in `docs/LIMITATIONS.md`.
 - The remaining 32 skips are MongoDB tests. A MongoDB+Redis zero-skip run, real Mongo audit, normal Mongo-backed external CLI run, and live two-browser hearing demo are **NOT VERIFIED** here.
 - External harnesses use real Socket.io and Redis with in-memory presence backing; they are not represented as live Mongo or real-browser media runs.
 

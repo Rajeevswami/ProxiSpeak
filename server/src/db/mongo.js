@@ -10,7 +10,9 @@ mongoose.set('strictQuery', true);
 const log = logger.child('mongo');
 
 /** Strip credentials from a connection string before it reaches any log. */
-const redact = (uri) => uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:***@');
+const redact = (uri) => String(uri)
+  .replace(/\/\/[^/\s]+@/, '//***:***@')
+  .replace(/([?&][^=&\s]*(?:pass|secret|token|auth|user|credential)[^=&\s]*=)[^&#\s]*/gi, '$1***');
 
 /**
  * Connection lifecycle logging, bound once per connection object.

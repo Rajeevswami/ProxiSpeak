@@ -210,6 +210,105 @@ function defineEdgeStoreContractSuite(label, { skipReason = false, makeCluster }
       await cluster.cleanup();
     }
   });
+
+  test(`[${label}] position revisions are monotonic, fenced atomically, expired, and removed`, testOpts, async () => {
+    const cluster = await makeCluster();
+    try {
+      const [s1, s2] = cluster.stores;
+      assert.equal(await s1.getPositionRevision('alice'), 0);
+      assert.equal(await s1.bumpPositionRevision('alice'), 1);
+      assert.equal(await s2.bumpPositionRevision('alice'), 2, 'a second store instance sees the same revision');
+      assert.equal(await s1.bumpPositionRevision('bob'), 1);
+      assert.deepEqual(
+        await s2.getPositionRevisions(['alice', 'bob', 'missing']),
+        new Map([['alice', 2], ['bob', 1], ['missing', 0]]),
+      );
+      assert.deepEqual((await s1.trackedPositionUsers()).sort(), ['alice', 'bob']);
+
+      if (typeof s1.positionRevisionKey === 'function') {
+        const ttl = await s1.client.ttl(s1.positionRevisionKey('alice'));
+        assert.ok(ttl > 0 && ttl <= 120, `revision key carries the store TTL, got ${ttl}`);
+      }
+
+      const stale = await s2.createEdge('lobby', 'alice', 'bob', {
+        expectedRevisions: { alice: 1, bob: 1 },
+      });
+      assert.equal(stale.created, false);
+      assert.equal(stale.stale, true);
+      assert.equal(await s1.getEdge('alice', 'bob'), null, 'stale create writes no edge');
+
+      const created = await s2.createEdge('lobby', 'alice', 'bob', {
+        expectedRevisions: { alice: 2, bob: 1 },
+      });
+      assert.equal(created.created, true);
+      const duplicate = await s1.createEdge('lobby', 'bob', 'alice', {
+        expectedRevisions: { alice: 1, bob: 0 },
+      });
+      assert.equal(duplicate.created, false, 'an existing edge remains idempotent');
+      assert.equal(duplicate.stale, undefined);
+
+      await s1.removeUser('alice');
+      await s2.removeUser('bob');
+      assert.equal(await s1.getPositionRevision('alice'), 0);
+      assert.equal(await cluster.countKeys(), 0, 'removeUser also removes revision keys');
+    } finally {
+      await cluster.cleanup();
+    }
+  });
+
+  test(`[${label}] missing revisions recover atomically and revision zero cannot authorize creation`, testOpts, async () => {
+    const cluster = await makeCluster();
+    try {
+      const [s1, s2] = cluster.stores;
+      const recovered = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+        (index % 2 === 0 ? s1 : s2).ensurePositionRevision('alice')));
+      assert.ok(recovered.every((revision) => revision === 1));
+      assert.equal(await s1.getPositionRevision('alice'), 1);
+      assert.equal(await s1.ensurePositionRevision('bob'), 1);
+
+      const unknown = await s1.createEdge('lobby', 'alice', 'bob', {
+        expectedRevisions: { alice: 0, bob: 1 },
+      });
+      assert.deepEqual(unknown, { created: false, stale: true, generation: 0 });
+      assert.equal(await s1.getEdge('alice', 'bob'), null);
+
+      const created = await s2.createEdge('lobby', 'alice', 'bob', {
+        expectedRevisions: { alice: 1, bob: 1 },
+      });
+      assert.equal(created.created, true, 'the bounded retry can use recovered nonzero revisions');
+    } finally {
+      await cluster.cleanup();
+    }
+  });
+
+  test(`[${label}] create fencing validates both endpoints and rejects either stale revision`, testOpts, async () => {
+    const cluster = await makeCluster();
+    try {
+      const [s1, s2] = cluster.stores;
+      await s1.bumpPositionRevision('left');
+      await s1.bumpPositionRevision('right');
+      for (const expectedRevisions of [
+        { left: 1 },
+        null,
+        { left: -1, right: 1 },
+        { left: 1.5, right: 1 },
+      ]) {
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(async () => s1.createEdge('lobby', 'left', 'right', { expectedRevisions }), /revision/);
+      }
+      const staleLeft = await s2.createEdge('lobby', 'left', 'right', {
+        expectedRevisions: { left: 0, right: 1 },
+      });
+      assert.equal(staleLeft.stale, true);
+      const staleRight = await s2.createEdge('lobby', 'left', 'right', {
+        expectedRevisions: { left: 1, right: 0 },
+      });
+      assert.equal(staleRight.stale, true);
+      assert.equal(await s1.getEdge('left', 'right'), null);
+    } finally {
+      await cluster.cleanup();
+    }
+  });
 }
 
 // 1. Always verify MemoryEdgeStore

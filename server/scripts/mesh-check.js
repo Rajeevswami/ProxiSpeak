@@ -50,8 +50,9 @@ const log = logger;
 // ------------------------------------------------------------------- helpers ---
 
 const sleep = (ms) => new Promise((resolve) => {
-  const timer = setTimeout(resolve, ms);
-  timer.unref();
+  // This CLI may have no open handles between external scenarios. Keeping the
+  // timer referenced prevents a silent, successful exit before the report.
+  setTimeout(resolve, ms);
 });
 
 function redactUrl(raw) {
@@ -444,7 +445,7 @@ function verifyCluster(result) {
 
 // ------------------------------------------------------------------- runners ---
 
-function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoom }) {
+export function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoom }) {
   const nodes = [];
   const urls = [];
   let backing = null;
@@ -476,6 +477,9 @@ function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoo
     ensureRoom(roomId) {
       backing.rooms.addRoom(roomId);
     },
+    async listRooms() {
+      return backing?.rooms ? backing.rooms.listRoomIds() : [];
+    },
     async counters() {
       return nodes.map((node) => ({
         instanceId: node.cfg.server.instanceId,
@@ -491,7 +495,8 @@ function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoo
         // eslint-disable-next-line no-await-in-loop
         await node.close().catch(() => {});
       }
-      for (const roomId of [...(backing?.rooms ? [] : [])]) backing.rooms.removeRoom(roomId);
+      const roomIds = backing?.rooms ? await backing.rooms.listRoomIds().catch(() => []) : [];
+      for (const roomId of roomIds) backing.rooms.removeRoom(roomId);
       if (baseRoom && backing) backing.rooms.removeRoom(baseRoom);
     },
   };
@@ -750,7 +755,8 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
     for (const counter of after.counters.after) {
       lines.push(`  ${counter.instanceId}: edgesCreated=${counter.edgesCreated ?? 0} `
         + `edgesRemoved=${counter.edgesRemoved ?? 0} cappedRejections=${counter.cappedRejections ?? 0} `
-        + `hysteresisHolds=${counter.hysteresisHolds ?? 0}`);
+        + `hysteresisHolds=${counter.hysteresisHolds ?? 0} staleRejections=${counter.staleRejections ?? 0} `
+        + `validationRemovals=${counter.validationRemovals ?? 0}`);
     }
   }
   lines.push('');

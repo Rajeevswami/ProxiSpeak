@@ -56,14 +56,16 @@ existing socket validation. No geospatial library is added.
 
 Presence interval and timeout values must be between 1 and 2,147,483,647 ms;
 overflowing Node timers are rejected rather than silently running every 1 ms.
-| `INSTANCE_ID` | `node-local` | Stable owner id across restarts |
+| `INSTANCE_ID` | `node-local` at Day 7; random per process in the current code | Presence-row owner id |
 
 **Assign a distinct, stable `INSTANCE_ID` to every simultaneous server instance.**
-The old PID-based fallback cannot identify rows from a previous run. `node-local`
-is intentionally stable for the default single-process deployment, not a shared
-identity for multiple processes. Boot cleanup deletes *only* this instance id's
-rows before listening. Never reuse an id while its previous process is running.
-This is ownership groundwork, not cross-instance Socket.IO broadcast support.
+At Day 7, `node-local` replaced the older PID fallback and was intentionally
+stable for a default single process. The current code instead generates a fresh
+random id when `INSTANCE_ID` is unset, so the historical `node-local` value must
+not be presented as today's default. Current single-instance boot cleanup removes
+rows left by earlier process ids; multi-instance cleanup removes only its own
+rows. Never reuse an explicit id while its previous process is running. This is
+ownership groundwork, not cross-instance Socket.IO broadcast support.
 
 ## Presence lifecycle
 

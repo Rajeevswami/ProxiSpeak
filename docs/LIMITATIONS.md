@@ -1,6 +1,6 @@
 # Known Limitations
 
-Scope: end of Week 3, Day 14 (2026-10-24). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
+Scope: end of Week 3, Day 14b (2026-10-24). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
 
 ## Audio and browser behavior
 
@@ -58,9 +58,11 @@ Recovery and tests rebuild safe current edges with appropriate new generations a
 
 Move/signal token buckets are not shared through Redis. Sticky sessions are required behind a load balancer because the joined socket and its session state belong to one instance. Redis Pub/Sub does not make a socket portable between processes.
 
-### Crash cleanup is eventually consistent
+### Crash cleanup and position validation are eventually consistent
 
 Orphan-edge and presence sweeps run on intervals. A hard crash can leave temporary stale state until a sweep or restart cleanup runs. Single-instance boot now clears prior presence even when the process receives a new random instance id; multi-instance boot deliberately removes only its own rows.
+
+Position revisions fence stale creates, but MongoDB presence and Redis revisions are not one transaction. In the documented write/bump window, an old-revision create can complete before the mover's post-bump sync removes it. Independently, the edge sweep validates at most 100 live edges per pass. Tests assert the quiescent no-beyond-drop-edge invariant; they do not claim that every intermediate instant is a consistent cross-store snapshot.
 
 ## HTTP, security, and deployment
 
@@ -68,9 +70,9 @@ Orphan-edge and presence sweeps run on intervals. A hard crash can leave tempora
 
 The join protocol has no user authentication or authorization system. Origin checks limit browser cross-origin use; they do not establish identity or prevent a direct Socket.io client from attempting to join. Do not treat the prototype as a public production service.
 
-### Dependency advisory remains
+### Dependency audits are point-in-time checks
 
-The final clean server install reported one high-severity dependency advisory; the client install reported zero vulnerabilities. No dependency update was made because dependency changes are outside Day 14 scope. Run a separate, reviewed dependency-security task before deployment.
+Day 14b updated only the transitive `body-parser` lockfile entry from 1.20.8 to 1.20.9 within the existing Express range. Server and client `npm audit` then reported zero high/critical issues (and zero total vulnerabilities). This does not rule out future advisories or make the prototype deployment-ready.
 
 ### No deployment configuration or production hosting
 
@@ -78,10 +80,29 @@ There is no deployment manifest, Express static hosting of the client, SFU, or p
 
 ## Verification limits in this sandbox
 
-- Without services: server **131 passed / 57 skipped**; client **165/165 passed**.
-- With real Redis: server **156 passed / 32 skipped**; client **165/165 passed**.
+- Without services: server **143 passed / 63 skipped** (206 tests); client **165/165 passed**.
+- With real Redis: server **174 passed / 32 skipped** (206 tests); client **165/165 passed**.
 - All 32 remaining skips require MongoDB. A local MongoDB+Redis zero-skip run was **not achieved** because MongoDB could not be provisioned.
 - Real embedded Redis mesh-check passed **37/37**; the external real-Socket.io/Redis harness passed **18/18**; scale-check integration passed **8/8**. The external harnesses use in-memory presence backing.
+- Fresh `npm ci` installs and the 80-module client build passed. Server and client audits each reported zero total vulnerabilities after the body-parser lockfile patch.
 - The real MongoDB spatial audit, Mongo-backed server/seed commands, and live two-browser audio demo are **NOT VERIFIED** here.
 
-See `docs/WEEK3.md` for exact commands and evidence. Week 4 remains room persistence/obstacles, stereo panning, and 60 FPS work; none is claimed complete.
+### Measured three-run soak boundary
+
+Three separate processes each ran 60 Socket.io users across two instances for
+180 seconds with real Redis and in-memory presence. Every one of the 20 settled
+samples per run had zero cap, beyond-drop, duplicate, self-edge, missing-endpoint,
+socket-error, or logged-error violations. After disconnect, Redis keys, edges,
+presence rows, sockets, rooms, cached names, and pending syncs were all zero.
+
+| Run | Baseline RSS MB | First joined RSS MB | Last RSS MB | Post-cleanup RSS MB | Peak Redis keys during churn |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 108.19 | 125.84 | 161.78 | 161.49 | 1,761 |
+| 2 | 100.13 | 118.46 | 164.55 | 162.53 | 1,783 |
+| 3 | 109.39 | 126.71 | 165.29 | 163.32 | 1,799 |
+
+These are measurements from these fixtures, not proof of bounded memory or a
+“no leak” claim. In particular, post-cleanup RSS remained above baseline even
+though the tracked application state and Redis keys returned to zero.
+
+See `docs/WEEK3.md` for earlier commands and `CHANGELOG.md` for the Day 14b evidence. Week 4 remains room persistence/obstacles, stereo panning, and 60 FPS work; none is claimed complete.

@@ -635,3 +635,87 @@ reproduce a defect.
 static hosting, stereo panning, obstacle occlusion, room persistence or new UI
 feature beyond the paused-audio hint. Week 4 room persistence/obstacles, stereo
 panning and 60 FPS work remain not started.
+
+
+## Day 14b — 2026-10-24 — stale-edge fencing, sweep validation, verification
+
+**Base and implementation commits:** QA fixes `fe90014` and `69066be`; then
+`ac887e8` (failing regression evidence), `07df50e` (store revisions), `bf72efd`
+(graph/socket fencing), `9d072ac` (bounded sweep validation), and `434472d`
+(body-parser patch). The subsequent documentation commit is visible in `git log`.
+Every listed short hash was checked with `git cat-file -t` and resolves to a commit.
+
+**Test-first race evidence and fix:**
+
+* Before the fix, all five new regression tests failed with real Redis: the
+  deterministic gated read left a 460 px edge on Memory and Redis, all 200/200
+  seeded interleavings on each store left an out-of-range edge, and two real
+  Socket.io instances emitted a 460 px `peer:connect`. After the fix, the expanded
+  file passes 8/8 with zero quiescent violations.
+* Accepted moves write MongoDB presence, then bump a monotonic per-user position
+  revision, then sync. Neighbor reads carry revisions; Memory checks both expected
+  revisions synchronously and Redis checks them in the existing create Lua script.
+  A stale result triggers exactly one complete bounded re-sync, never a loop.
+* The Mongo-write/revision-bump window is documented and tested: an old-revision
+  create before the bump is handled by the mover's post-bump sync; a create after
+  the bump is rejected. This is a quiescent invariant, not a cross-store
+  transaction claim.
+* The existing SCAN-based sweep validates at most 100 live edges per rotating
+  batch against stored positions. Atomic winners remove beyond-drop edges and
+  emit normal `peer:disconnect`; exactly-at-drop edges remain. `mesh-check` now
+  prints `staleRejections` and `validationRemovals`; `/health` gained no I/O.
+* Redis revision keys use validated per-user names, `INCR` + `EXPIRE`, and
+  `removeUser` cleanup. A controlled unchanged-edge move measured 8 application
+  Redis commands before and 12 after; top-level round trips rose from 2 to 4
+  (one revision `EVAL` and one batched `MGET`). Measurement-only `CONFIG
+  RESETSTAT` is excluded.
+
+**Dependency and documentation corrections:**
+
+* Only `server/package-lock.json` changed for the advisory: transitive
+  `body-parser` 1.20.8 → 1.20.9 within the existing Express 4.22.3 range. No new
+  package or major upgrade was added. Server and client audits report zero total
+  vulnerabilities after fresh installs.
+* Corrected radius/reconcile overclaims, historical instance-ID defaults, the
+  Room obstacle comment (no occlusion calculation exists), current verification
+  counts, and the former dependency-advisory limitation.
+
+**Measured verification in this environment:**
+
+* Fresh server/client `npm ci`: passed (130 and 74 packages). Client build:
+  passed with Vite 6.4.4 and 80 modules. Server/client `npm audit`: 0 high, 0
+  critical, 0 total each.
+* Without services: server **206 tests, 143 passed, 63 skipped**; client **165/165**.
+  With real Redis 7.2.5: server **206 tests, 174 passed, 32 skipped**; client
+  **165/165**. Every remaining skip is MongoDB-dependent and is not a pass.
+* Real scale-check **8/8**; embedded capped/unlimited mesh-check **37/37** with
+  1,759/1,759 signals; external mesh-check **18/18** with 299/299 signals.
+  Embedded counters were `staleRejections=5` and `4`, `validationRemovals=0`.
+* Independent random-layout probe: 24 random 50-user layouts plus one identical
+  layout on each store, zero mismatches and zero backward-mode mismatches.
+  Existing 200-concurrent-create cap tests passed on both stores; signal-burst
+  tests passed 2/2 (160 signals fit, flood guard still drops excess).
+* Three separate 180-second, 60-user, two-instance real-Redis soaks passed. Each
+  had 20 settled samples with zero violations/errors at every sample and zero
+  Redis keys, edges, presence rows, sockets, rooms, names, and pending syncs after
+  cleanup. Measured resources:
+
+| Soak | Baseline RSS MB | First joined RSS MB | Last RSS MB | Post-cleanup RSS MB | Peak Redis keys |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 108.19 | 125.84 | 161.78 | 161.49 | 1,761 |
+| 2 | 100.13 | 118.46 | 164.55 | 162.53 | 1,783 |
+| 3 | 109.39 | 126.71 | 165.29 | 163.32 | 1,799 |
+
+Post-cleanup RSS remained above baseline; these observations are not a “no leak”
+claim. Exact failing/passing logs and command measurements were kept outside Git.
+
+**NOT VERIFIED here:** MongoDB could not be provisioned, so the 32 MongoDB test
+skips, zero-skip MongoDB+Redis run, real spatial audit, seed/index/explain and
+normal Mongo-backed server/CLI runs remain unverified. No live browser microphone,
+hearing, attenuation, Safari-interruption or speaker-output test ran. External
+harnesses and soaks used real Socket.io/Redis with in-memory presence backing.
+
+**Scope boundary:** no new feature/library/dependency, TypeScript, deployment,
+SFU/TURN, Express static hosting, Week 4 panning/occlusion/room persistence, or
+new UI work. Unlimited mode and drop-radius-equals-connect-radius behavior remain
+covered and unchanged.

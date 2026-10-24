@@ -203,8 +203,9 @@ test('200 simultaneous cross-instance boundary crossings emit ONE peer:connect p
       (left.emit('join', { roomId: 'lobby', name: `L${i}` }), waitEvent(left, 'joined')),
       (right.emit('join', { roomId: 'lobby', name: `R${i}` }), waitEvent(right, 'joined')),
     ]);
-    // Isolate each pair along its own horizontal lane 250 px apart vertically
-    const laneY = 100 + i * 180;
+    // Ten real, unclamped lanes in the 1080px world. 120px separation is
+    // beyond the 115px drop radius, so pairs cannot interfere via hysteresis.
+    const laneY = i * 120;
     left.emit('move', { x: 100, y: laneY });
     right.emit('move', { x: 500, y: laneY });
     pairs.push({ i, laneY, left, right, idL: jl.selfId, idR: jr.selfId, leftEvents, rightEvents, leftDiscs, rightDiscs });
@@ -431,7 +432,11 @@ test('hard crash (kill -9) orphan edges are swept via SCAN (never KEYS), notifyi
       1,
       'surviving peer notified ONCE of crashed peer removal',
     );
-    assert.equal(await nodeSurvive1.io.edgeStore.countStoreKeys(), 0, 'zero orphan Redis keys remain');
+    // The live survivor legitimately owns a position-revision key. Leave before
+    // asserting that the whole namespace is empty, not merely orphan-free.
+    survivor.close();
+    await delay(100);
+    assert.equal(await nodeSurvive1.io.edgeStore.countStoreKeys(), 0, 'zero Redis keys remain after both users leave');
   } finally {
     doomed.close();
     survivor.close();

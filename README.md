@@ -2,7 +2,7 @@
 
 ProxiSpeak is a browser-based spatial voice chat prototype: each person moves an avatar on a 2D map, WebRTC connects nearby participants, and a Web Audio `GainNode` makes remote voice fade with distance. **Proximity is the volume knob.**
 
-The current scope is the end of Week 3 (Day 14): proximity audio, optional Redis-backed multi-instance signaling, a bounded peer mesh, and hardening. It is not a deployed or production-hardened service.
+The current scope is the end of Week 3 (Day 14b): proximity audio, optional Redis-backed multi-instance signaling, a bounded peer mesh, and hardening. It is not a deployed or production-hardened service.
 
 ## How it works
 
@@ -21,6 +21,7 @@ Node.js + Express + Socket.io
 
 - The server creates an edge only at or inside `PROXIMITY_RADIUS_PX` (default `100` px).
 - An existing edge remains until `PEER_DISCONNECT_RADIUS_PX` (default `115` px), preventing boundary flapping.
+- Accepted moves persist position, then bump a shared per-user revision; edge creation checks both endpoint revisions and retries a stale read once. A bounded sweep validates stored edge distances as a safety net.
 - `MAX_PEERS_PER_USER` (default `8`) is enforced symmetrically; `0` means unlimited.
 - Remote audio is full volume through `30` px, follows a smoothstep curve to silence at the connect radius, and remains silent until the edge drops.
 - The audio overlay is sampled separately from the render loop; avatar positions do not create per-frame React state.
@@ -132,13 +133,14 @@ The Mongo suites create and drop isolated databases derived from the test base U
 
 On 2026-10-24, after clean lockfile installs:
 
-- Without services: server **131 passed / 57 skipped**, client **165 passed / 0 skipped**.
-- With real Redis: server **156 passed / 32 skipped**, client **165 passed / 0 skipped**. All remaining skips require MongoDB.
-- `npm run build`: passed.
-- Embedded real-Redis `mesh-check`: **37/37**; external two-instance harness: **18/18**.
-- Two-instance `scale-check` integration with real Redis: **8/8**.
+- Without services: server **143 passed / 63 skipped** (206 tests), client **165 passed / 0 skipped**.
+- With real Redis: server **174 passed / 32 skipped** (206 tests), client **165 passed / 0 skipped**. All remaining skips require MongoDB.
+- `npm run build`: passed (Vite, 80 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
+- Embedded real-Redis `mesh-check`: **37/37**; external two-instance harness: **18/18**. Two-instance `scale-check`: **8/8**.
+- Random-layout probe: 24 random 50-user layouts plus one identical-position layout on Memory and Redis, zero mismatches. Signal-burst tests: **2/2**.
+- Three separate **180-second, 60-user, two-instance** soaks: **20 settled samples each, zero violations at every sample**, with all tracked runtime state and Redis keys at zero after disconnect. See `docs/LIMITATIONS.md` for measured RSS figures; no “no leak” claim is made.
 
-MongoDB was unavailable in the verification sandbox, so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server commands are **NOT VERIFIED** here. No live two-browser microphone/hearing test was performed. See `docs/WEEK3.md` for exact scope and evidence.
+MongoDB was unavailable in the verification sandbox, so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server commands are **NOT VERIFIED** here. No live two-browser microphone/hearing test was performed. See `docs/WEEK3.md` for earlier evidence and `CHANGELOG.md` for the Day 14b record.
 
 ## Documentation
 

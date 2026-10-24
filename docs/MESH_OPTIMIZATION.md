@@ -173,15 +173,19 @@ existing edges, and creates nothing.
   instances enforcing it see the same degrees (the Redis Lua `SCARD` reads the
   shared sets).
 * `reconcileLocalUsers()` (after a Redis outage / `FLUSHALL`) and
-  `sweepOrphanEdges()` use the same create/remove paths, so they cannot create
-  an edge above the cap or beyond 100 px, and cannot remove one inside the drop
-  radius unless the user is really gone.
+  `sweepOrphanEdges()` use the same capped create/remove paths. Day 14b also
+  fences creates with both endpoints' position revisions; a stale result is
+  rejected and causes exactly one bounded re-sync. The sweep validates at most
+  100 live edges per pass against stored positions and removes only edges beyond
+  the drop radius. These are quiescent-state guarantees, not a transactional
+  MongoDB/Redis snapshot at every instant.
 * Orphan sweep removes edges whose presence row vanished (`kill -9`); after the
   sweep the surviving peers reconcile normally and fill free slots within the
   policy.
 * Counters are **per instance** (in memory): `edgesCreated`, `edgesRemoved`,
-  `cappedRejections`, `hysteresisHolds`. They are logged at `debug` level and
-  printed by `mesh-check`; `/health` does not gain any network or DB call.
+  `cappedRejections`, `hysteresisHolds`, `staleRejections`, and
+  `validationRemovals`. They are printed by `mesh-check`; `/health` does not
+  gain any network or DB call.
 
 Failure modes:
 
@@ -192,6 +196,30 @@ Failure modes:
 | `FLUSHALL` | Edges disappear; next `move`/reconcile re-creates them through the same capped create (strictly higher generations). |
 | Two instances race the same hub | Lua serialises the `SCARD` checks; the loser receives `capped` and stays silent. |
 | A peer sits exactly at 100 px | `<=` is inclusive: the edge is created (and held anywhere ≤ 115 px). |
+
+### 3.1 Day 14b stale-read fencing and validation
+
+An accepted move writes MongoDB presence first, bumps the user's monotonic
+position revision second, and runs the graph sync third. A proximity read carries
+each neighbor's revision with its distance. `createEdge` receives the expected
+revisions for both endpoints: Memory checks them synchronously and Redis checks
+them inside the existing create Lua script. A mismatch returns `stale` and the
+caller performs one complete re-sync, never an unbounded retry loop.
+
+A reader can observe the new MongoDB position with the old revision in the
+write/bump window. An old-revision create that completes before the bump is then
+visible to the mover's post-bump sync, which removes it if it is beyond drop; a
+create attempted after the bump fails the revision check. This ordering is why
+the quiescent invariant holds without pretending MongoDB and Redis are one
+transaction. The independent sweep is a bounded safety net, not the primary fix.
+
+Redis revisions live at `<prefix>:position-revision:<userId>`, use `INCR` plus
+`EXPIRE`, and are deleted by `removeUser`. On a controlled in-range move with an
+unchanged existing edge, Redis `INFO commandstats` measured 8 application
+commands before and 12 after (excluding the measurement-only `CONFIG RESETSTAT`).
+Top-level round trips increased from 2 to 4: one revision `EVAL` and one batched
+neighbor `MGET` were added. These figures are for that fixture, not a guarantee
+for moves that create/remove edges or emit extra broadcasts.
 
 ---
 
@@ -307,7 +335,7 @@ comparisons (cap bounds the mesh, hysteresis removes churn, no signal dropped).
 
 ---
 
-## 7. Verification status (honest)
+## 7. Day 13 verification status (historical)
 
 * **Run here:** `npm run mesh-check` (embedded, two instances, real Redis
   `6.2.14`) → **PASS 37/37**; full server suite **136 passed / 0 failed / 32
@@ -325,3 +353,40 @@ comparisons (cap bounds the mesh, hysteresis removes churn, no signal dropped).
   above come from the in-memory presence backing, not MongoDB; the geospatial
   query itself is proven separately by the Day 7–12 MongoDB suites on a machine
   with `mongod`.
+
+---
+
+## 8. Day 14b current verification (2026-10-24)
+
+The five new race regressions were first run against the unfixed implementation
+with real Redis: all five failed (deterministic Memory and Redis cases, 200/200
+seeded violations on each store, and a real two-instance 460 px `peer:connect`).
+After fencing, the expanded regression file passed **8/8**, including 200 seeded
+interleavings per store with zero quiescent violations and exactly one bounded
+retry on the stale path.
+
+Current embedded real-Redis `npm run mesh-check` output (Redis 7.2.5):
+
+```text
+config                             N   max  mean   edges  connect ev  signals  drops  settle  status
+after (cap 8, drop 115)           10     8   7.2      36          76    36/36      0    1758  PASS
+after (cap 8, drop 115)           20     8   7.3      73         168    73/73      0    2742  PASS
+after (cap 8, drop 115)           50     8   7.6     190         672  190/190      0    5291  PASS
+before (unlimited, drop = radius)  10     9     9      45          94    45/45      0    1697  PASS
+before (unlimited, drop = radius)  20    19    19     190         402  190/190      0    2703  PASS
+before (unlimited, drop = radius)  50    49    49    1225        3174  1225/1225    0    5226  PASS
+RESULT: PASS (37/37 checks passed)
+```
+
+The two instances reported `staleRejections=5` and `4`, with
+`validationRemovals=0` in this checker run. External mesh-check passed **18/18**
+(299/299 signals), scale-check **8/8**, and the independent 50-user random-layout
+probe reported zero mismatches on both stores. Root tests passed 143/63 skipped
+without services and 174/32 skipped with real Redis; client tests passed 165/165.
+The 32 remaining skips require unavailable MongoDB and are not passes.
+
+Three separate 180-second 60-user two-instance soaks each produced 20 settled
+samples with zero violations and complete tracked-state cleanup. Their exact RSS
+and Redis-key measurements are tabulated in `docs/LIMITATIONS.md`; those figures
+are observations, not a no-leak proof. Live MongoDB and browser/audio behavior
+remain **NOT VERIFIED** here.
