@@ -31,7 +31,7 @@ export function createAudioMixer({
   let warned = false;
   let outerPx = 100;
   let lastUpdateMs = -Infinity;
-  let visibilityListening = false;
+  let lifecycleListening = false;
   const peers = new Map();
 
   const warnUnavailableOnce = () => {
@@ -62,10 +62,11 @@ export function createAudioMixer({
     }
   };
 
-  const ensureVisibilityListener = () => {
-    if (visibilityListening || !doc?.addEventListener) return;
+  const ensureLifecycleListeners = () => {
+    if (lifecycleListening || !doc?.addEventListener) return;
     doc.addEventListener('visibilitychange', onVisibilityChange);
-    visibilityListening = true;
+    doc.addEventListener('pointerdown', onPageGesture);
+    lifecycleListening = true;
   };
 
   function onVisibilityChange() {
@@ -75,9 +76,13 @@ export function createAudioMixer({
     }
   }
 
+  function onPageGesture() {
+    if (context?.state === 'suspended' || context?.state === 'interrupted') void resume();
+  }
+
   /** Create or resume the shared context; call directly from the Join gesture. */
   const resume = async () => {
-    ensureVisibilityListener();
+    ensureLifecycleListeners();
     const audioContext = ensureContext();
     if (!audioContext) return false;
     if ((audioContext.state === 'suspended' || audioContext.state === 'interrupted')
@@ -107,7 +112,7 @@ export function createAudioMixer({
 
   const attach = (peerId, stream, element) => {
     remove(peerId);
-    ensureVisibilityListener();
+    ensureLifecycleListeners();
     if (!stream || !element) return null;
     element.muted = true;
     const audioContext = ensureContext();
@@ -192,9 +197,10 @@ export function createAudioMixer({
 
   const closeAll = async () => {
     for (const peerId of [...peers.keys()]) remove(peerId);
-    if (visibilityListening) {
+    if (lifecycleListening) {
       doc?.removeEventListener?.('visibilitychange', onVisibilityChange);
-      visibilityListening = false;
+      doc?.removeEventListener?.('pointerdown', onPageGesture);
+      lifecycleListening = false;
     }
     const oldContext = context;
     context = null;

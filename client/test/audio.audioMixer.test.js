@@ -188,6 +188,28 @@ test('suspended context resumes on the Join gesture and on a visible-tab event',
   await mixer.closeAll();
 });
 
+test('a page pointer gesture resumes blocked audio and its listener is removed on teardown', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+
+  await mixer.resume();
+  contexts[0].state = 'suspended';
+  document.dispatch('pointerdown');
+  await Promise.resolve();
+  assert.equal(contexts[0].resumeCalls, 2, 'the click advertised by the hint really resumes audio');
+
+  await mixer.closeAll();
+  assert.equal(document.listenerCount, 0);
+  document.dispatch('pointerdown');
+  assert.equal(contexts[0].resumeCalls, 2, 'no gesture listener survives closeAll');
+});
+
 test('Safari interrupted contexts resume from the existing gesture and visibility paths', async () => {
   const document = fakeDocument();
   const contexts = [];
