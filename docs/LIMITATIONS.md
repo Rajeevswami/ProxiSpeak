@@ -1,132 +1,87 @@
 # Known Limitations
 
-This document lists the known limitations of ProxiSpeak as of the end of Week 3 (Day 14). Each item is honest and verified against the code.
+Scope: end of Week 3, Day 14 (2026-10-24). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
 
-## Mesh and peer management
+## Audio and browser behavior
 
-### No peer eviction when capped
+### Live audible audio is not verified here
 
-When `MAX_PEERS_PER_USER` is reached, new edges are rejected with `capped: true`. Existing edges are **never** dropped to make room for a closer newcomer. The candidate list is processed nearest-first, so a user's 8 closest neighbors get edges, but if a 9th user walks closer than one of the existing 8, no swap occurs.
+Node tests use fake `RTCPeerConnection`, media, `AudioContext`, and stats objects. They verify protocol and cleanup logic, not microphone capture, codecs, network media, speakers, echo, or what a person hears. No live two-browser hearing test was performed for this wrap-up.
 
-**Impact:** In dense clusters, a user may be connected to 8 peers who are 90 px away while a 9th peer at 10 px is not connected.
+The scale and mesh checks use Socket.io clients and signaling payloads; they do not create 50 real browser peer connections. Their N=50 results are mesh-policy evidence, not browser performance or audio-quality measurements.
 
-**Mitigation:** The hysteresis band (100–115 px) reduces churn at the boundary, and the nearest-first ordering ensures the cap is filled with the closest available peers at the time of sync.
+### STUN-only default; no provisioned TURN
 
-**Future work:** Consider an eviction policy that drops the farthest edge when a closer peer arrives, with a cooldown to prevent flapping.
+The example ICE configuration contains public STUN only. Restrictive or symmetric NATs can prevent direct peer connections. No TURN service is provisioned or tested, and no TURN/SFU work is part of this wrap-up.
 
-### No TURN server (STUN only)
+### No custom ICE restart policy
 
-The default `ICE_SERVERS` configuration includes only a public STUN server. WebRTC connections between peers behind symmetric NATs may fail because STUN cannot establish a direct path.
+`PeerManager` deliberately does not auto-retry a failed peer connection. Later server graph lifecycle events may create a new generation, but there is no dedicated ICE-restart or media-recovery controller. Network mobility and long-lived browser sessions need separate validation.
 
-**Impact:** Users on restrictive networks (corporate firewalls, mobile carriers with symmetric NAT) may not be able to connect audio.
+### Autoplay and Safari interruption recovery need browser validation
 
-**Mitigation:** The `ICE_SERVERS` environment variable can be set to include TURN servers with credentials. However, TURN requires a server with bandwidth capacity, which is out of scope for this project.
+The hint covers `suspended` and `interrupted`; Join, page pointer, and visible-tab paths call `resume()`, and these paths have unit tests. Real autoplay policies, phone calls, Bluetooth route changes, and Safari versions were not exercised. A user may still need another gesture or browser intervention.
 
-**Future work:** Document how to configure a TURN server (e.g., coturn) and provide example `ICE_SERVERS` values.
+### Audio quality and performance are unmeasured
 
-## Scaling and infrastructure
+Inbound byte counts are proof-of-life, not a latency, jitter, packet-loss, or bitrate guarantee. Mono gain attenuation is implemented; stereo panning and obstacle occlusion are not. Sixty-FPS rendering and a dense real-audio mesh are not verified.
 
-### Per-instance rate limiters
+## Mesh behavior
 
-The `TokenBucket` rate limiters for `move` and `signal` events are per-socket, per-instance. They are **not** shared across instances via Redis. A user who connects to instance A and instance B simultaneously (e.g., via a load balancer without sticky sessions) gets double the rate limit.
+### A closer newcomer does not evict an existing peer
 
-**Impact:** Minimal in practice because a user typically has one socket. But a malicious client could spread connections across instances to multiply their rate limit.
+At the default cap of 8, sync fills available slots nearest-first, but it does not replace an existing edge merely because a closer user appears later. A nearby user can remain unconnected until a slot opens or another sync changes the edge set. The overlay can report nearby-but-unconnected users.
 
-**Mitigation:** Use sticky sessions (session affinity) in the load balancer so each user's sockets always hit the same instance.
+### Unlimited mode does not scale like an SFU
 
-### Sticky sessions required behind a load balancer
+`MAX_PEERS_PER_USER=0` preserves unlimited behavior for compatibility and tests. A full WebRTC mesh still grows quadratically in edges and places upload/CPU work in every browser. The cap bounds degree; it does not turn the system into an SFU.
 
-The Socket.io gateway stores session state (room, user data, peer graph registration) in-memory on each instance. If a user's requests are load-balanced across multiple instances, the session state is lost.
+### Presence and room state are not a persistent world
 
-**Impact:** Without sticky sessions, users may see "not_joined" errors or lose their presence on reconnect.
+Presence is ephemeral and expires. Seeded room definitions are stored in MongoDB, but custom room-layout persistence is not implemented. Obstacles do not affect audio, and Week 4 room/obstacle work has not started.
 
-**Mitigation:** Configure the load balancer for session affinity (e.g., Nginx `ip_hash`, AWS ALB sticky sessions, HAProxy `balance source`). The Redis adapter handles room fan-out across instances, but the socket session itself is instance-local.
+## Redis and multi-instance operation
 
-**Future work:** Document load balancer configuration for common providers (Nginx, HAProxy, AWS ALB, Cloudflare).
+### Redis is optional, but normal operation still needs MongoDB
 
-### Edges not preserved across full Redis wipe
+An empty `REDIS_URL` selects in-memory single-instance edge state. It does not replace MongoDB presence/geospatial storage. If MongoDB is unavailable, the normal server does not accept traffic.
 
-If Redis is completely wiped (e.g., `FLUSHALL` or a Redis restart without persistence), all edge state is lost. The `reconcileLocalUsers` function runs on Redis recovery and recreates edges based on current proximity, but edges that existed before the wipe are not restored from memory.
+### Degraded mode is not full multi-instance service
 
-**Impact:** After a Redis wipe, users may briefly lose their audio connections until the next sync (triggered by movement or the orphan edge sweep).
+During Redis failure, already-established browser media is independent of Redis in principle, but cross-instance broadcasts and shared edge operations can be delayed or refused. Recovery reconciles current local users rather than restoring a historical Redis snapshot. Actual audible continuity during an outage was not browser-tested.
 
-**Mitigation:** Enable Redis persistence (RDB or AOF) to survive restarts. The orphan edge sweep also runs on boot and cleans up any stale edges.
+### Full Redis wipes do not preserve generations or edges
 
-**Future work:** Consider maintaining an in-memory edge cache that can be replayed into Redis on recovery.
+Recovery and tests rebuild safe current edges with appropriate new generations after a flush; they do not preserve the old Redis records. Redis persistence is an operations concern outside this repository.
 
-## Audio quality and performance
+### Rate limits and sockets are instance-local
 
-### Audio quality not measured
+Move/signal token buckets are not shared through Redis. Sticky sessions are required behind a load balancer because the joined socket and its session state belong to one instance. Redis Pub/Sub does not make a socket portable between processes.
 
-The project does not measure or guarantee audio quality (bitrate, latency, jitter) in browser-to-browser WebRTC connections. Audio quality depends on the browser's WebRTC implementation, network conditions, and the ICE path (direct vs. relayed).
+### Crash cleanup is eventually consistent
 
-**Impact:** Users may experience varying audio quality depending on their network and browser.
+Orphan-edge and presence sweeps run on intervals. A hard crash can leave temporary stale state until a sweep or restart cleanup runs. Single-instance boot now clears prior presence even when the process receives a new random instance id; multi-instance boot deliberately removes only its own rows.
 
-**Mitigation:** The WebRTC `rtcStats` module collects inbound/outbound bytes and connection state, which can be used to estimate quality. However, no automated quality monitoring or alerts are implemented.
+## HTTP, security, and deployment
 
-**Future work:** Integrate WebRTC stats collection (via `getStats()`) to measure audio bitrate, latency, and packet loss. Add quality metrics to the audio overlay.
+### CORS is not authentication
 
-### 60 FPS rendering not optimized
+The join protocol has no user authentication or authorization system. Origin checks limit browser cross-origin use; they do not establish identity or prevent a direct Socket.io client from attempting to join. Do not treat the prototype as a public production service.
 
-The canvas renderer runs at the browser's `requestAnimationFrame` rate (typically 60 FPS), but the rendering logic is not optimized for high user counts. Drawing 100+ avatars with obstacles and grid lines may cause frame drops on low-end devices.
+### Dependency advisory remains
 
-**Impact:** Smooth movement may degrade in rooms with many users.
+The final clean server install reported one high-severity dependency advisory; the client install reported zero vulnerabilities. No dependency update was made because dependency changes are outside Day 14 scope. Run a separate, reviewed dependency-security task before deployment.
 
-**Mitigation:** The renderer uses spatial partitioning (only draws avatars within the viewport) and avoids unnecessary redraws. However, no WebGL acceleration or offscreen canvas is used.
+### No deployment configuration or production hosting
 
-**Future work:** Optimize the renderer for 100+ users (e.g., batch draw calls, use OffscreenCanvas, implement level-of-detail for distant avatars).
+There is no deployment manifest, Express static hosting of the client, SFU, or provisioned TURN. Reverse-proxy TLS, sticky sessions, monitoring, backup, and secret management are operational work not supplied here.
 
-## Browser compatibility
+## Verification limits in this sandbox
 
-### Safari AudioContext "interrupted" state
+- Without services: server **131 passed / 57 skipped**; client **165/165 passed**.
+- With real Redis: server **156 passed / 32 skipped**; client **165/165 passed**.
+- All 32 remaining skips require MongoDB. A local MongoDB+Redis zero-skip run was **not achieved** because MongoDB could not be provisioned.
+- Real embedded Redis mesh-check passed **37/37**; the external real-Socket.io/Redis harness passed **18/18**; scale-check integration passed **8/8**. The external harnesses use in-memory presence backing.
+- The real MongoDB spatial audit, Mongo-backed server/seed commands, and live two-browser audio demo are **NOT VERIFIED** here.
 
-Safari's `AudioContext` can enter an `interrupted` state (e.g., when a phone call arrives) in addition to the standard `suspended` state. The audio paused hint treats both states the same, but the resume logic may not work reliably in all Safari versions.
-
-**Impact:** Safari users may need to click the page multiple times to resume audio after an interruption.
-
-**Mitigation:** The `audioPausedHint` module detects both `suspended` and `interrupted` states and shows the hint. The existing visibility change handler attempts to resume the context when the tab becomes visible.
-
-**Future work:** Test on Safari 16+ and add Safari-specific resume logic if needed.
-
-### Chrome requires muted `<audio>` element for Web Audio
-
-Chrome does not deliver remote WebRTC audio through the Web Audio API unless the same `MediaStream` is also attached to an `HTMLMediaElement`. The `audioMixer` creates a hidden `<audio autoplay playsinline muted>` element for each peer to satisfy this requirement.
-
-**Impact:** Minor DOM overhead (one hidden audio element per peer). The element is muted, so only the Web Audio chain is audible (no double playback).
-
-**Mitigation:** The hidden element is created once per peer and removed when the peer disconnects. No user-visible impact.
-
-## Testing and verification
-
-### Live browser audio not verified by automated tests
-
-The WebRTC audio path (getUserMedia → RTCPeerConnection → Web Audio API → speakers) cannot be tested in Node.js. Automated tests cover the pure logic (attenuation curve, mixer state machine, peer manager protocol) but not the actual audio flow.
-
-**Impact:** Audio bugs that only manifest in real browsers (e.g., codec issues, autoplay policy violations) may not be caught by tests.
-
-**Mitigation:** The demo script (docs/DEMO_WEEK3.md) includes a manual two-browser audio check. The audio overlay shows connection state, distance, volume, and bytes, which can be verified visually.
-
-**Future work:** Add Playwright or Puppeteer end-to-end tests that open two browser instances and verify audio flow.
-
-### MongoDB and Redis tests skipped without services
-
-Server tests that require MongoDB or Redis are skipped with a "NOT VERIFIED" message when the services are not available. This means some integration paths (e.g., geospatial queries, Redis edge store, multi-instance signaling) are not tested in CI environments without these services.
-
-**Impact:** Regressions in MongoDB/Redis-dependent code may not be caught.
-
-**Mitigation:** The test suite logs which tests are skipped and why. CI pipelines should provision MongoDB and Redis (or use in-memory mocks) to run the full suite.
-
-**Future work:** Add Docker Compose or GitHub Actions workflows that spin up MongoDB and Redis for CI testing.
-
----
-
-## Summary
-
-ProxiSpeak is a functional prototype that demonstrates geospatial proximity audio with WebRTC, but it has several limitations typical of a 3-week student project:
-
-* **Mesh:** No peer eviction, STUN only (no TURN)
-* **Scaling:** Per-instance rate limiters, sticky sessions required, edges not preserved across Redis wipe
-* **Audio:** Quality not measured, Safari quirks, Chrome hidden element workaround
-* **Testing:** Live audio not automated, MongoDB/Redis tests skipped without services
-
-These limitations are documented honestly and can be addressed in future iterations. The core functionality (proximity-based audio with bounded mesh and optional Redis scaling) is implemented, tested, and demo-ready.
+See `docs/WEEK3.md` for exact commands and evidence. Week 4 remains room persistence/obstacles, stereo panning, and 60 FPS work; none is claimed complete.
