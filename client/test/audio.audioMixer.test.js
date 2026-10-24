@@ -188,6 +188,33 @@ test('suspended context resumes on the Join gesture and on a visible-tab event',
   await mixer.closeAll();
 });
 
+test('a failed Web Audio setup disconnects partial nodes before element fallback', async () => {
+  const contexts = [];
+  class BrokenConnectContext extends FakeAudioContext {
+    constructor() { super(); contexts.push(this); }
+    createMediaStreamSource(stream) {
+      const source = super.createMediaStreamSource(stream);
+      source.connect = () => { throw new Error('connect failed'); };
+      return source;
+    }
+  }
+  const mixer = createAudioMixer({
+    AudioContextFactory: BrokenConnectContext,
+    document: fakeDocument(),
+    logger: { warn() {} },
+  });
+  const element = fakeElement();
+
+  const chain = mixer.attach('peer', { id: 1 }, element);
+
+  assert.equal(chain, null);
+  assert.equal(element.muted, false, 'element playback remains the fallback');
+  assert.equal(contexts[0].sources[0].disconnectCalls, 1);
+  assert.equal(contexts[0].gains[0].disconnectCalls, 1);
+  assert.equal(mixer.size(), 1);
+  await mixer.closeAll();
+});
+
 test('unavailable Web Audio falls back to full-volume elements and warns only once', async () => {
   const warnings = [];
   const mixer = createAudioMixer({

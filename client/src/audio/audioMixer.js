@@ -115,9 +115,11 @@ export function createAudioMixer({
       return null;
     }
 
+    let source = null;
+    let gain = null;
     try {
-      const source = audioContext.createMediaStreamSource(stream);
-      const gain = audioContext.createGain();
+      source = audioContext.createMediaStreamSource(stream);
+      gain = audioContext.createGain();
       gain.gain.value = 0;
       source.connect(gain);
       // Deliberately do not connect gain -> destination until updateGains has
@@ -132,6 +134,10 @@ export function createAudioMixer({
       });
       return { source, gain };
     } catch {
+      // A partially built chain is not in `peers` yet, so remove() cannot
+      // reach it. Disconnect it here before falling back to element playback.
+      try { source?.disconnect(); } catch { /* best-effort setup rollback */ }
+      try { gain?.disconnect(); } catch { /* best-effort setup rollback */ }
       fallbackElement(element);
       peers.set(peerId, { source: null, gain: null, element, destinationConnected: true, gainValue: 1, distancePx: null });
       return null;
