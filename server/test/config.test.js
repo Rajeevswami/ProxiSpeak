@@ -65,3 +65,75 @@ test('scaleCheck config exposes non-empty default URLs for bare npm run scale-ch
   assert.equal(parsed.url1, 'http://127.0.0.1:4000');
   assert.equal(parsed.url2, 'http://127.0.0.1:4001');
 });
+
+test('MAX_PEERS_PER_USER rejects non-integer and out-of-range values', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  for (const value of ['1.5', 'abc', '-1', '200000']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      encoding: 'utf8', env: { ...process.env, MAX_PEERS_PER_USER: value },
+    });
+    assert.notEqual(result.status, 0, `MAX_PEERS_PER_USER=${value} must fail`);
+    assert.match(result.stderr, /MAX_PEERS_PER_USER/);
+  }
+});
+
+test('PEER_DISCONNECT_RADIUS_PX rejects values outside the valid hysteresis band', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  // Default PROXIMITY_RADIUS_PX=100, so valid range is [100, 300].
+  for (const value of ['50', '301', 'NaN', 'abc']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      encoding: 'utf8', env: { ...process.env, PEER_DISCONNECT_RADIUS_PX: value },
+    });
+    assert.notEqual(result.status, 0, `PEER_DISCONNECT_RADIUS_PX=${value} must fail`);
+    assert.match(result.stderr, /PEER_DISCONNECT_RADIUS_PX/);
+  }
+});
+
+test('socket rate limit settings reject non-numeric and out-of-range values', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  const socketKeys = ['SOCKET_MOVE_EPS', 'SOCKET_MAX_STEP_PX', 'SOCKET_SIGNAL_EPS', 'SOCKET_SIGNAL_BURST'];
+  for (const key of socketKeys) {
+    for (const value of ['abc', '0', '-5']) {
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+        encoding: 'utf8', env: { ...process.env, [key]: value },
+      });
+      assert.notEqual(result.status, 0, `${key}=${value} must fail`);
+      assert.match(result.stderr, new RegExp(key));
+    }
+  }
+});
+
+test('AUDIT_TARGET_MS rejects non-numeric and out-of-range values', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  for (const value of ['abc', '0', '-1', '100000']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      encoding: 'utf8', env: { ...process.env, AUDIT_TARGET_MS: value },
+    });
+    assert.notEqual(result.status, 0, `AUDIT_TARGET_MS=${value} must fail`);
+    assert.match(result.stderr, /AUDIT_TARGET_MS/);
+  }
+});
+
+test('Redis config rejects invalid timeouts and TTLs', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  for (const key of ['REDIS_CONNECT_TIMEOUT_MS', 'REDIS_EDGE_TTL_SECONDS']) {
+    for (const value of ['abc', '0', '-1']) {
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+        encoding: 'utf8', env: { ...process.env, [key]: value },
+      });
+      assert.notEqual(result.status, 0, `${key}=${value} must fail`);
+      assert.match(result.stderr, new RegExp(key));
+    }
+  }
+});
+
+test('MONGO_TIMEOUT_MS rejects non-numeric and too-small values', () => {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  for (const value of ['abc', '100', '-1']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      encoding: 'utf8', env: { ...process.env, MONGO_TIMEOUT_MS: value },
+    });
+    assert.notEqual(result.status, 0, `MONGO_TIMEOUT_MS=${value} must fail`);
+    assert.match(result.stderr, /MONGO_TIMEOUT_MS/);
+  }
+});
