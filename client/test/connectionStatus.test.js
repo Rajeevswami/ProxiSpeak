@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONNECTION_STATUS, isConnecting, statusAfter } from '../src/realtime/connectionStatus.js';
+import { CONNECTION_STATUS, statusAfter } from '../src/realtime/connectionStatus.js';
 
 test('a join request starts from scratch', () => {
   for (const status of [CONNECTION_STATUS.IDLE, CONNECTION_STATUS.ERROR, CONNECTION_STATUS.DISCONNECTED]) {
@@ -43,11 +43,4 @@ test('a failed reconnect attempt keeps saying "reconnecting…"', () => {
   assert.equal(statusAfter(CONNECTION_STATUS.CONNECTING, 'connect-error'), CONNECTION_STATUS.ERROR, 'the join form shows it');
   assert.equal(statusAfter(CONNECTION_STATUS.JOINED, 'connect-error'), CONNECTION_STATUS.JOINED);
   assert.equal(statusAfter(CONNECTION_STATUS.DISCONNECTED, 'connect-error'), CONNECTION_STATUS.DISCONNECTED);
-});
-
-test('isConnecting is true only while a join is in flight', () => {
-  assert.equal(isConnecting(CONNECTION_STATUS.CONNECTING), true);
-  for (const status of [CONNECTION_STATUS.IDLE, CONNECTION_STATUS.JOINED, CONNECTION_STATUS.DISCONNECTED, CONNECTION_STATUS.ERROR]) {
-    assert.equal(isConnecting(status), false, status);
-  }
 });

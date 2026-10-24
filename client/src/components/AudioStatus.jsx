@@ -24,7 +24,7 @@ const MIC_LABEL = {
 };
 
 /** 1.2 KB, 84 KB, 1.1 MB — enough resolution to watch bytes climb. */
-export function formatBytes(bytes) {
+function formatBytes(bytes) {
   const value = Number.isFinite(bytes) ? bytes : 0;
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;

@@ -248,20 +248,38 @@ export async function startClusterNode({
     tcpSocket.on('close', () => sockets.delete(tcpSocket));
   });
 
-  const app = createApp({ config: cfg, logger, scaleState });
-  httpServer.on('request', app);
+  let io = null;
+  try {
+    const app = createApp({ config: cfg, logger, scaleState });
+    httpServer.on('request', app);
 
-  const io = createSocketServer({
-    httpServer,
-    config: cfg,
-    logger,
-    presence: backing.presence,
-    rooms: backing.rooms,
-    findNearby: backing.findNearby,
-    redis,
-  });
+    io = createSocketServer({
+      httpServer,
+      config: cfg,
+      logger,
+      presence: backing.presence,
+      rooms: backing.rooms,
+      findNearby: backing.findNearby,
+      redis,
+    });
 
-  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve, reject) => {
+      const onError = (err) => reject(err);
+      httpServer.once('error', onError);
+      httpServer.listen(0, '127.0.0.1', () => {
+        httpServer.off('error', onError);
+        resolve();
+      });
+    });
+  } catch (err) {
+    for (const tcp of sockets) tcp.destroy();
+    if (io) await new Promise((resolve) => io.close(resolve)).catch(() => {});
+    if (httpServer.listening) {
+      await new Promise((resolve) => httpServer.close(() => resolve())).catch(() => {});
+    }
+    await redis.close().catch(() => {});
+    throw err;
+  }
   const { port } = httpServer.address();
   const baseUrl = `http://127.0.0.1:${port}`;
 

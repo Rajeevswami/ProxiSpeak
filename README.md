@@ -1,225 +1,157 @@
-# ProxiSpeak — Geospatial Proximity Audio Ecosystem
+# ProxiSpeak
 
-A virtual space where **proximity is the volume knob**. You see a live 2D map, move your avatar, and the moment you walk inside somebody's earshot circle a WebRTC audio connection opens and crossfades in; walk away and it closes.
+ProxiSpeak is a browser-based spatial voice chat prototype: each person moves an avatar on a 2D map, WebRTC connects nearby participants, and a Web Audio `GainNode` makes remote voice fade with distance. **Proximity is the volume knob.**
 
-## Problem statement
+The current scope is the end of Week 3 (Day 14b): proximity audio, optional Redis-backed multi-instance signaling, a bounded peer mesh, and hardening. It is not a deployed or production-hardened service.
 
-Voice chat today is flat: everyone in a call is equally loud no matter where they "are", so large calls turn into either chaos or muted silence, and there is no sense of place, distance or serendipity. ProxiSpeak treats conversation as something you *walk into* — participants live on a geolocated 2D map, rooms are anchored to coordinates, and the server continuously computes who is within earshot of whom. Moving closer makes a voice louder and clearer; moving away fades it out and eventually tears the audio connection down.
-
-The result is a persistent audio world for events, campuses, offices and communities: no hand-raising, no lobby moderation — you simply walk up to people and talk.
-
-## Tech stack
-
-* **Backend** — Node.js, Express, Socket.io, MongoDB (`$near` / `$geoWithin`, `2dsphere`), optional Redis Pub/Sub + Lua edge state (`@socket.io/redis-adapter`, `ioredis`).
-* **Frontend** — React, HTML5 Canvas API, WebRTC (`getUserMedia`), Web Audio API (distance attenuation via GainNode).
-
-No other libraries. No TURN. No UI kit, no state-management library, no extra database.
-
-## Key modules
-
-| Module | What it does |
-| --- | --- |
-| `server/src/config/index.js` | Every tunable from `.env`; validation with clear one-line errors |
-| `server/src/app.js` | Express surface: `/health`, spatial audit, CORS aligned with Socket.io |
-| `server/src/sockets/index.js` | Socket.io gateway: `join`/`move`/`signal`, presence, peer graph orchestration |
-| `server/src/services/peerGraph.js` | Bounded mesh: symmetric cap, hysteresis, nearest-first, slot reclaim |
-| `server/src/services/edgeStore.js` | `MemoryEdgeStore` (single-instance) + `RedisEdgeStore` (multi-instance via Lua) |
-| `server/src/services/edgeSweep.js` | Orphan edge cleanup after `kill -9` via cursor `SCAN` |
-| `server/src/db/redis.js` | Optional Redis: boot fallback, mid-run degradation, recovery reconcile |
-| `client/src/audio/audioMixer.js` | Web Audio distance attenuation (GainNode per peer, smoothstep curve) |
-| `client/src/webrtc/peerManager.js` | WebRTC mesh: offer/answer, ICE trickling, stats |
-| `client/src/canvas/renderer.js` | Letterboxed room, grid, obstacles, avatars on HTML5 Canvas |
-
-## Architecture
+## How it works
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│  Browser (React + Canvas)                                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ WorldCanvas  │  │ AudioStatus  │  │ WebRTC PeerManager   │  │
-│  │ (rAF render) │  │ (overlay)    │  │ (offer/answer/ICE)   │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
-│         │                 │                      │              │
-│         │          ┌──────┴───────┐              │              │
-│         │          │ AudioMixer   │◄─────────────┘              │
-│         │          │ (GainNode)   │  remote MediaStream         │
-│         │          └──────────────┘                             │
-│         │                                                       │
-│  ┌──────┴───────────────────────────────────────────────────┐   │
-│  │ Socket.io Client                                         │   │
-│  │ join / move / signal                                     │   │
-│  └──────────────────────┬───────────────────────────────────┘   │
-└─────────────────────────┼───────────────────────────────────────┘
-                          │ WebSocket
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Node.js Server (1..N instances)                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Express      │  │ Socket.io    │  │ PeerGraph            │  │
-│  │ /health      │  │ gateway      │  │ (bounded mesh)       │  │
-│  │ /api/audit   │  │ join/move/   │  │ sync/reclaim/leave   │  │
-│  └──────────────┘  │ signal       │  └──────────┬───────────┘  │
-│                    └──────┬───────┘              │              │
-│                           │                      │              │
-│                    ┌──────┴──────────────────────┴───────────┐  │
-│                    │ EdgeStore (Memory or Redis via Lua)     │  │
-│                    │ atomic create/remove, generation, cap   │  │
-│                    └─────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ MongoDB      │  │ Redis        │  │ @socket.io/          │  │
-│  │ UserPresence │  │ edge state   │  │ redis-adapter        │  │
-│  │ Room         │  │ pub/sub      │  │ (room fan-out)       │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+Browser A / Browser B
+  React + Canvas + WebRTC + Web Audio
+              │ Socket.io (join, move, signal)
+              ▼
+Node.js + Express + Socket.io
+  ├─ MongoDB: room definitions, presence, geospatial queries
+  ├─ PeerGraph: radius, hysteresis, cap, nearest-first refill
+  └─ EdgeStore: in-memory, or Redis Lua for multiple instances
+                         │
+                         └─ Redis Pub/Sub fans out Socket.io events
 ```
 
-## Folder structure
+- The server creates an edge only at or inside `PROXIMITY_RADIUS_PX` (default `100` px).
+- An existing edge remains until `PEER_DISCONNECT_RADIUS_PX` (default `115` px), preventing boundary flapping.
+- Accepted moves persist position, then bump a shared per-user revision; edge creation checks both endpoint revisions and retries a stale read once. A bounded sweep validates stored edge distances as a safety net.
+- `MAX_PEERS_PER_USER` (default `8`) is enforced symmetrically; `0` means unlimited.
+- Remote audio is full volume through `30` px, follows a smoothstep curve to silence at the connect radius, and remains silent until the edge drops.
+- The audio overlay is sampled separately from the render loop; avatar positions do not create per-frame React state.
 
-```text
-ProxiSpeak/
-├── package.json              # root scripts (install, dev, test, seed, build)
-├── scripts/run-tests.mjs     # runs server suite, then client suite
-├── .env.example              # every env var with placeholder + comment
-├── docs/                     # WEEK1, WEEK2, demo scripts, trace, limitations
-├── server/
-│   ├── package.json
-│   ├── scripts/
-│   │   ├── seed.js           # idempotent: 2dsphere index + default rooms
-│   │   ├── audit.js          # spatial audit (p95 ≤ 20 ms target)
-│   │   ├── scale-check.js    # two-instance presence + signaling check
-│   │   └── mesh-check.js     # bounded mesh policy check
-│   ├── src/
-│   │   ├── index.js          # boot: MongoDB → Redis → HTTP → Socket.io → sweeps
-│   │   ├── app.js            # Express surface + CORS
-│   │   ├── config/index.js   # every tunable, validated
-│   │   ├── db/               # mongo.js, redis.js
-│   │   ├── models/           # UserPresence (2dsphere), Room
-│   │   ├── services/         # peerGraph, edgeStore, edgeSweep, presence*, proximity*, spatialAudit
-│   │   ├── sockets/          # gateway, validation, redisAdapter
-│   │   └── utils/            # geo, logger, errors, rateLimiter, origin, validate
-│   └── test/                 # node:test (unit + integration, 178 tests)
-└── client/
-    ├── package.json
-    ├── vite.config.js        # dev proxy to :4000
-    ├── src/
-    │   ├── audio/            # attenuation, audioMixer, audioPausedHint
-    │   ├── canvas/           # coords, renderer
-    │   ├── components/       # JoinScreen, WorldCanvas, AudioStatus
-    │   ├── hooks/            # useSocket, useMovement
-    │   ├── join/             # joinForm validation
-    │   ├── movement/         # controller, input, throttle
-    │   ├── realtime/         # worldState, connectionStatus, meshIndicator, sessionRecovery
-    │   └── webrtc/           # localMedia, peerManager, remoteAudio, rtcStats
-    └── test/                 # node:test (159 tests, no browser needed)
-```
+## Requirements
 
-## Quick start
+- Node.js **18.17 or newer**
+- MongoDB for the normal server, seed script, and spatial audit
+- Redis only for multi-instance mode and Redis integration checks
+- A microphone-capable browser for audible peer-to-peer checks; browser audio requires the usual secure-context/autoplay rules
 
-### Prerequisites
-
-* **Node.js ≥ 18.17**
-* **MongoDB** (local or Atlas)
-* **Redis** (optional, only for multi-instance scaling)
-
-### Single instance (default)
+## Quick start: one server
 
 ```bash
-# 1. Install dependencies
 npm run install:all
-
-# 2. Configure (edit .env if needed; defaults work for local MongoDB)
 cp .env.example .env
-
-# 3. Seed the database (idempotent: creates index + lobby/studio/lounge rooms)
 npm run seed
-
-# 4. Start the server
 npm start
-# → HTTP + WebSocket on http://localhost:4000
+```
 
-# 5. In another terminal, start the Vite dev server
+In another terminal:
+
+```bash
 npm run dev:client
-# → Client on http://localhost:5173
 ```
 
-Open two browser windows, join the same room with different names, allow mic access (or choose Listen only), and walk within 100 px to hear each other.
+Open `http://localhost:5173` in two browser windows, join the same seeded room (`lobby`, `studio`, or `lounge`), and allow microphone access. The HTTP server and Socket.io listen on port `4000` by default; Vite listens on `5173`.
 
-### Two instances with Redis
+Use headphones for a two-window microphone test. “Listen only” is available when microphone capture is unwanted or unavailable.
+
+## Quick start: two servers with Redis
+
+Start MongoDB and Redis, seed once, then run two servers with distinct ids:
 
 ```bash
-# 1. Start Redis (local or cloud)
-# 2. Start two server instances on different ports
-PORT=4000 REDIS_URL="redis://127.0.0.1:6379" npm start
+PORT=4000 REDIS_URL="redis://127.0.0.1:6379" INSTANCE_ID=node-1 npm start
 PORT=4001 REDIS_URL="redis://127.0.0.1:6379" INSTANCE_ID=node-2 npm start
-
-# 3. Verify cross-instance scaling
-npm run scale-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001
-
-# 4. Verify bounded mesh policy
-npm run mesh-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001
 ```
 
-Leave `REDIS_URL` empty to run single-instance in memory with zero Redis dependencies.
-
-## Root scripts
-
-| Script | What it does | Requires |
-| --- | --- | --- |
-| `npm run install:all` | Install server + client dependencies | — |
-| `npm start` | Start server (HTTP + WebSocket) | MongoDB |
-| `npm run dev:server` | Start server with `--watch` (auto-reload) | MongoDB |
-| `npm run dev:client` | Start Vite dev server for client | — |
-| `npm run seed` | Create 2dsphere index + default rooms (idempotent) | MongoDB |
-| `npm test` | Run both server and client test suites | — (MongoDB/Redis optional) |
-| `npm run test:server` | Run server test suite only | — |
-| `npm run test:client` | Run client test suite only | — |
-| `npm run build` | Production build into `client/dist/` | — |
-| `npm run audit` | Spatial audit: p95 ≤ 20 ms target | MongoDB |
-| `npm run scale-check` | Verify two-instance presence + signaling | MongoDB + Redis + 2 servers |
-| `npm run mesh-check` | Verify bounded mesh policy (cap, hysteresis, reclaim) | MongoDB + Redis + 2 servers |
-
-## Tests
+Verify the running instances with real Socket.io clients:
 
 ```bash
-npm test                    # both suites: server first, then client
-npm run test:server         # server only
-npm run test:client         # client only
-
-# With Redis (enables Redis-specific test suites):
-REDIS_URL_TEST="redis://127.0.0.1:6379" npm test
+npm run scale-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001 --room=lobby
+npm run mesh-check -- --urlA=http://127.0.0.1:4000 --urlB=http://127.0.0.1:4001 --room=lobby
 ```
 
-Server suite: 178 tests (121 pass, 57 skipped without MongoDB/Redis).
-Client suite: 159 tests (all pass, no browser needed).
+The external `mesh-check` uses the exact existing room and checks only the running servers' current configuration. It does not invent a second configuration or append room-name suffixes. Use an empty seeded room for checks.
 
-Tests cover: config validation, CORS policy, geospatial projection, rate limiting, edge store contract (Memory + Redis), peer graph (unit + integration + mesh), presence cleanup, socket integration/validation/race, signal rate limiting, spatial audit, audio attenuation, audio mixer, audio paused hint, connection status, coords, join form, mesh indicator, movement, renderer, session recovery, WebRTC (localMedia, peerManager, remoteAudio, rtcStats), world state.
+For a self-contained mesh run with two embedded Socket.io instances and real Redis (no MongoDB required):
+
+```bash
+REDIS_URL="redis://127.0.0.1:6379" npm run mesh-check
+```
+
+Embedded mode runs current and baseline configurations and reports the before/after comparison. See `docs/DEMO_WEEK3.md` for the two-browser, two-instance walkthrough.
+
+## Configuration and CORS
+
+Copy `.env.example` to `.env`; `server/.env` takes precedence if both exist. Client overrides belong in `client/.env` (see `client/.env.example`). Examples contain placeholders and local defaults only—never commit credentials.
+
+`CLIENT_URL` is a comma-separated list of allowed browser origins, `*`, or empty:
+
+| Setting | HTTP CORS | Socket.io |
+| --- | --- | --- |
+| Explicit origin list | Allow only those origins | Allow only those origins |
+| `*` | Reflect any origin | Reflect any origin (explicit opt-in) |
+| Empty, production | Same-origin only; no cross-origin reflection | Same-origin only |
+| Empty, non-production | Reflect any origin for development (unchanged default) | Same-origin only |
+
+Requests without an `Origin` header, such as health probes and curl, are not browser-CORS requests. CORS is not authentication.
+
+Invalid validated numeric, boolean, and base-URL settings fail at startup with one concise error naming the variable; values and credentials are not echoed. The bidirectional drift tests require every server environment key and every client `VITE_*` key to have a commented example entry.
+
+## Commands
+
+| Command | Purpose | External requirements |
+| --- | --- | --- |
+| `npm run install:all` | Install locked server and client packages | npm registry |
+| `npm start` | Start the Node server | MongoDB |
+| `npm run dev:server` | Start Node with `--watch` | MongoDB |
+| `npm run dev:client` | Start Vite | None |
+| `npm run seed` | Idempotently seed rooms and indexes | MongoDB |
+| `npm test` | Run server tests, then client tests | None; service tests skip loudly |
+| `npm run test:server` / `npm run test:client` | Run one suite | Same rule |
+| `npm run build` | Build the client into `client/dist/` | None |
+| `npm run audit -- --users=50 --samples=25 --seed=1` | Compare spatial queries with brute force and measure latency | MongoDB |
+| `npm run scale-check -- --urlA=… --urlB=… --room=lobby` | Check two running instances, including offer/answer/ICE relay | Two servers, MongoDB, Redis |
+| `npm run mesh-check` | Run embedded two-instance mesh checks | Redis |
+| `npm run mesh-check -- --urlA=… --urlB=… --room=lobby` | Check the current configuration of two running servers | Two servers, MongoDB, Redis |
+
+To enable MongoDB and Redis integration tests when both services are local:
+
+```bash
+MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak" \
+REDIS_URL_TEST="redis://127.0.0.1:6379" \
+npm test
+```
+
+The Mongo suites create and drop isolated databases derived from the test base URI. Redis failure/recovery tests also require `redis-server` on `PATH`. A complete service-backed run should have zero skips; do not interpret a skipped test as a pass.
 
 ## Controls
 
-* **WASD / Arrow keys** — walk around the map
-* **Click on the floor** — walk to that position
-* **Join screen** — enter your name and choose a room (lobby / studio / lounge)
-* **Mic choice** — "mic on" (speak + listen) or "listen only" (listen only)
-* **Audio overlay** — shows connected peers, distance, volume %, inbound bytes, mesh cap
+- **WASD / arrow keys:** move.
+- **Click the floor:** walk toward that position.
+- **Audio overlay:** connected peers, mesh cap, distance, volume, connection state, and inbound audio bytes.
+- **Browser-paused audio:** when peers exist and the context is `suspended` or `interrupted`, one line says `Audio is paused by the browser. Click anywhere on the page.` A page pointer gesture and visible-tab resume path attempt recovery.
 
-## Known limitations
+## Current verification
 
-See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key items:
+On 2026-10-24, after clean lockfile installs:
 
-* **No peer eviction when capped** — existing edges are never dropped for a closer newcomer
-* **STUN only (no TURN)** — symmetric NATs may block peer connections
-* **Per-instance rate limiters** — not shared across instances
-* **Sticky sessions needed** — behind a load balancer, configure session affinity
-* **Edges not preserved across full Redis wipe** — except through reconcile on recovery
-* **Audio quality not measured** — browser-to-browser latency and bitrate vary
+- Without services: server **143 passed / 63 skipped** (206 tests), client **165 passed / 0 skipped**.
+- With real Redis: server **174 passed / 32 skipped** (206 tests), client **165 passed / 0 skipped**. All remaining skips require MongoDB.
+- `npm run build`: passed (Vite, 80 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
+- Embedded real-Redis `mesh-check`: **37/37**; external two-instance harness: **18/18**. Two-instance `scale-check`: **8/8**.
+- Random-layout probe: 24 random 50-user layouts plus one identical-position layout on Memory and Redis, zero mismatches. Signal-burst tests: **2/2**.
+- Three separate **180-second, 60-user, two-instance** soaks: **20 settled samples each, zero violations at every sample**, with all tracked runtime state and Redis keys at zero after disconnect. See `docs/LIMITATIONS.md` for measured RSS figures; no “no leak” claim is made.
 
-## History
+MongoDB was unavailable in the verification sandbox, so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server commands are **NOT VERIFIED** here. No live two-browser microphone/hearing test was performed. See `docs/WEEK3.md` for earlier evidence and `CHANGELOG.md` for the Day 14b record.
 
-Days 1–13 are documented in [CHANGELOG.md](CHANGELOG.md) with real commit hashes and dates. Day 14 (this week) is the Week 2 wrap-up: hardening, polish, documentation, and demo readiness.
+## Documentation
 
-Week 1 (Days 1–6): server, MongoDB, Socket.io, React client, movement.
-Week 2 (Days 7–10): proximity queries, WebRTC signaling, audio, spatial audit.
-Week 3 (Days 11–13): distance attenuation, Redis scaling, mesh optimization.
+- `docs/WEEK1.md`, `docs/WEEK2.md`, `docs/WEEK3.md` — weekly implementation notes
+- `docs/DEMO_WEEK3.md` — approximately eight-minute, two-instance demo
+- `docs/LIMITATIONS.md` — known technical and verification limits
+- `docs/REQUIREMENTS_TRACE.md` — requirement-to-code/test mapping
+- `CHANGELOG.md` — dated history and commit hashes
 
-See [docs/WEEK1.md](docs/WEEK1.md) and [docs/WEEK2.md](docs/WEEK2.md) for detailed deliverables.
+## Known limits and next scope
+
+The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible quality is unmeasured. Obstacles do not occlude audio, stereo panning is absent, custom room-layout persistence is absent, and 60 FPS at high occupancy is unverified. Read `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
+
+Week 4 remains **room persistence/obstacles, stereo panning, and 60 FPS work**. It has not been started in this wrap-up.

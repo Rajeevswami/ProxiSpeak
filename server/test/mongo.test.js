@@ -8,9 +8,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { bindConnectionLogging } from '../src/db/mongo.js';
+import { bindConnectionLogging, redactUri } from '../src/db/mongo.js';
 
 const events = ['connected', 'error', 'disconnected'];
+
+test('MongoDB log redaction removes all userinfo and credential query values', () => {
+  const uri = 'mongodb+srv://user:pass@host/proxispeak?password=secret&authSource=admin';
+  const redacted = redactUri(uri);
+  assert.equal(redacted, 'mongodb+srv://***:***@host/proxispeak?password=***&authSource=***');
+  assert.equal(redactUri('mongodb://user@host'), 'mongodb://***:***@host');
+  assert.doesNotMatch(redacted, /user|:pass@|=secret/);
+});
+
+test('MongoDB log redaction masks credential-bearing options and malformed userinfo', () => {
+  const samples = [
+    'mongodb://host/db?tlsCertificateKeyFilePassword=VerySecretValue',
+    'mongodb://host/db?proxyPassword=VerySecretValue',
+    'mongodb://host/db?authMechanismProperties=AWS_SESSION_TOKEN:VerySecretValue',
+    'mongodb://host/db?username=alice&password=VerySecretValue',
+    'mongodb://user:pass@word@host/db',
+  ];
+  for (const sample of samples) {
+    const redacted = redactUri(sample);
+    assert.doesNotMatch(redacted, /VerySecretValue|alice|user:pass|word@host/);
+  }
+  assert.equal(redactUri('mongodb://user:pass@word@host/db'), 'mongodb://***:***@host/db');
+  assert.equal(
+    redactUri('mongodb://host/db?retryWrites=true&tlsCertificateKeyFilePassword=VerySecretValue&appName=qa'),
+    'mongodb://host/db?retryWrites=true&tlsCertificateKeyFilePassword=***&appName=qa',
+  );
+});
 
 test('connection logging is bound once per connection object', () => {
   const connection = new EventEmitter();

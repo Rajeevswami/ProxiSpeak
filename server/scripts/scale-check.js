@@ -223,7 +223,7 @@ export async function runScaleCheck({
       `countA=${connectsForPairA.length}, countB=${connectsForPairB.length}, gen=${edgeOnA.generation}, initA=${edgeOnA.initiator}, initB=${edgeOnB.initiator}`,
     );
 
-    // 4. Cross-instance WebRTC signal relay (offer -> answer -> candidate)
+    // 5. Cross-instance WebRTC signal relay (offer -> answer -> candidate)
     const generation = edgeOnA.generation;
     const initiatorSocket = edgeOnA.initiator ? clientA : clientB;
     const responderSocket = edgeOnA.initiator ? clientB : clientA;
@@ -246,13 +246,34 @@ export async function runScaleCheck({
     });
     const answerDelivered = await answerPromise;
 
+    const candidatePromise = waitForEvent(
+      responderSocket,
+      'signal',
+      (s) => s.from === initiatorId && s.data?.type === 'candidate',
+    );
+    initiatorSocket.emit('signal', {
+      to: responderId,
+      generation,
+      data: {
+        type: 'candidate',
+        candidate: {
+          candidate: 'candidate:1 1 UDP 2122252543 127.0.0.1 50000 typ host',
+          sdpMid: '0',
+          sdpMLineIndex: 0,
+        },
+      },
+    });
+    const candidateDelivered = await candidatePromise;
+
     record(
       '5. Cross-instance WebRTC signal relay',
-      offerDelivered.data?.type === 'offer' && answerDelivered.data?.type === 'answer',
-      `relayed offer & answer for gen=${generation}`,
+      offerDelivered.data?.type === 'offer'
+        && answerDelivered.data?.type === 'answer'
+        && candidateDelivered.data?.type === 'candidate',
+      `relayed offer, answer & candidate for gen=${generation}`,
     );
 
-    // 5. Stale generation signal refusal
+    // 6. Stale generation signal refusal
     const staleErrPromise = waitForEvent(initiatorSocket, 'error');
     initiatorSocket.emit('signal', {
       to: responderId,
@@ -269,7 +290,7 @@ export async function runScaleCheck({
       `error.code=${staleErr.code}, socketAlive=${initiatorSocket.connected}`,
     );
 
-    // 6. Walk out of earshot -> single peer:disconnect per side + signal refused with no_peer_edge
+    // 7. Walk out of earshot -> single peer:disconnect per side + signal refused with no_peer_edge
     const disconnectAPromise = waitForEvent(clientA, 'peer:disconnect', (d) => d.peerId === joinedB.selfId);
     const disconnectBPromise = waitForEvent(clientB, 'peer:disconnect', (d) => d.peerId === joinedA.selfId);
     posA = await walkAvatar(clientA, posA, farTarget);
@@ -293,7 +314,7 @@ export async function runScaleCheck({
       `discA=${discCountA}, discB=${discCountB}, afterDisconnectError=${noEdgeErr.code}`,
     );
 
-    // 7. Disconnect Client B on Instance B -> single user:left delivered to Client A on Instance A
+    // 8. Disconnect Client B on Instance B -> single user:left delivered to Client A on Instance A
     const leftPromise = waitForEvent(clientA, 'user:left', (l) => l.id === joinedB.selfId);
     clientB.disconnect();
     await leftPromise;

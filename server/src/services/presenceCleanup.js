@@ -4,9 +4,15 @@ import logger from '../utils/logger.js';
 
 export function cleanupOnBoot(
   instanceId = config.server.instanceId,
-  { presenceModel = UserPresence } = {},
+  {
+    presenceModel = UserPresence,
+    multiInstance = Boolean(config.redis.url),
+  } = {},
 ) {
-  return presenceModel.deleteMany({ instanceId });
+  // A single-instance restart normally has a new random instance id. Scoping
+  // cleanup to that new id would leave the crashed process's rows forever.
+  // With Redis configured, other live instances must remain untouched.
+  return presenceModel.deleteMany(multiInstance ? { instanceId } : {});
 }
 
 export async function cleanupStale(

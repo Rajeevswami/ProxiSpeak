@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createMeshCheckPlan } from '../scripts/mesh-check.js';
 
 const configHref = new URL('../src/config/index.js', import.meta.url).href;
 
@@ -80,4 +81,20 @@ test('a radius of 0 keeps a valid (equal) default drop radius', () => {
   const proximity = proximityOrThrow({ PROXIMITY_RADIUS_PX: '0', PEER_DISCONNECT_RADIUS_PX: '' });
   assert.equal(proximity.radiusPx, 0);
   assert.equal(proximity.peerDisconnectRadiusPx, 0);
+});
+
+test('external mesh-check uses the exact existing room and never invents a before config', () => {
+  const plan = createMeshCheckPlan({ external: true, roomSeed: 'lobby', maxPeers: 8, dropRadius: 115 });
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].roomId, 'lobby');
+  assert.equal(plan[0].maxPeers, 8);
+  assert.equal(plan[0].dropRadius, 115);
+  assert.match(plan[0].label, /^current /);
+});
+
+test('embedded mesh-check retains separate after and before rooms/configurations', () => {
+  const plan = createMeshCheckPlan({ external: false, roomSeed: 'mesh-test', maxPeers: 8, dropRadius: 115 });
+  assert.equal(plan.length, 2);
+  assert.deepEqual(plan.map((suite) => suite.roomId), ['mesh-test-after', 'mesh-test-before']);
+  assert.deepEqual(plan.map((suite) => [suite.maxPeers, suite.dropRadius]), [[8, 115], [0, 100]]);
 });

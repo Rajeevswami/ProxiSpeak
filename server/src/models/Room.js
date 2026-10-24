@@ -1,9 +1,10 @@
 import mongoose from 'mongoose';
 
 /**
- * A persisted office: its pixel dimensions plus the furniture/wall rectangles
- * that block sound. `blocksAudio` rectangles feed the occlusion calculation on
- * both the server (authoritative soundFactor) and the client (drawing).
+ * A persisted office: pixel dimensions plus furniture/wall rectangles. The
+ * `blocksAudio` and `attenuation` fields are stored blueprint data only; no
+ * authoritative server soundFactor or client occlusion calculation consumes
+ * them in the current implementation.
  */
 const ObstacleSchema = new mongoose.Schema(
   {

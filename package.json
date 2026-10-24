@@ -2,7 +2,7 @@
   "name": "proxispeak",
   "version": "1.0.0",
   "private": true,
-  "description": "ProxiSpeak — geospatial proximity audio ecosystem",
+  "description": "Browser-based spatial voice chat with proximity-attenuated WebRTC audio",
   "engines": {
     "node": ">=18.17"
   },

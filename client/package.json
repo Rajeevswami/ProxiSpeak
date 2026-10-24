@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "ProxiSpeak — React + Canvas client (join, world rendering, movement)",
+  "description": "ProxiSpeak React, Canvas and WebRTC proximity-audio client",
   "engines": {
     "node": ">=18.17"
   },

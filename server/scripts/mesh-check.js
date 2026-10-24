@@ -50,8 +50,9 @@ const log = logger;
 // ------------------------------------------------------------------- helpers ---
 
 const sleep = (ms) => new Promise((resolve) => {
-  const timer = setTimeout(resolve, ms);
-  timer.unref();
+  // This CLI may have no open handles between external scenarios. Keeping the
+  // timer referenced prevents a silent, successful exit before the report.
+  setTimeout(resolve, ms);
 });
 
 function redactUrl(raw) {
@@ -444,7 +445,7 @@ function verifyCluster(result) {
 
 // ------------------------------------------------------------------- runners ---
 
-function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoom }) {
+export function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoom }) {
   const nodes = [];
   const urls = [];
   let backing = null;
@@ -476,6 +477,9 @@ function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoo
     ensureRoom(roomId) {
       backing.rooms.addRoom(roomId);
     },
+    async listRooms() {
+      return backing?.rooms ? backing.rooms.listRoomIds() : [];
+    },
     async counters() {
       return nodes.map((node) => ({
         instanceId: node.cfg.server.instanceId,
@@ -491,7 +495,8 @@ function makeEmbeddedRunner({ redisUrl, keyPrefix, maxPeers, dropRadius, baseRoo
         // eslint-disable-next-line no-await-in-loop
         await node.close().catch(() => {});
       }
-      for (const roomId of [...(backing?.rooms ? [] : [])]) backing.rooms.removeRoom(roomId);
+      const roomIds = backing?.rooms ? await backing.rooms.listRoomIds().catch(() => []) : [];
+      for (const roomId of roomIds) backing.rooms.removeRoom(roomId);
       if (baseRoom && backing) backing.rooms.removeRoom(baseRoom);
     },
   };
@@ -542,6 +547,10 @@ async function runConfigSuite({ label, maxPeers, dropRadius, redisUrl, keyPrefix
         settleMs: result.settleMs,
         ok: (maxPeers === 0 || result.maxDegree <= maxPeers) && result.signalDrops === 0,
       });
+      // External scenarios share the one existing room. Give disconnect
+      // handlers a short interval to remove the previous cluster before the next.
+      // eslint-disable-next-line no-await-in-loop
+      if (targetUrls) await sleep(500);
     }
 
     const boundaryRoom = targetUrls ? roomId : `${roomId}-boundary`;
@@ -594,6 +603,27 @@ function parseArgs(argv) {
   return parsed;
 }
 
+export function createMeshCheckPlan({ external, roomSeed, maxPeers, dropRadius }) {
+  const current = {
+    label: `${external ? 'current' : 'after'} (cap ${maxPeers}, drop ${dropRadius})`,
+    maxPeers,
+    dropRadius,
+    roomId: external ? roomSeed : `${roomSeed}-after`,
+    suffix: 'after',
+  };
+  if (external) return [current];
+  return [
+    current,
+    {
+      label: 'before (unlimited, drop = radius)',
+      maxPeers: 0,
+      dropRadius: CONNECT_RADIUS,
+      roomId: `${roomSeed}-before`,
+      suffix: 'before',
+    },
+  ];
+}
+
 export async function runMeshCheck({ argv = process.argv.slice(2), logger: output = log } = {}) {
   const args = parseArgs(argv);
   const externalUrl = typeof args.url === 'string' ? args.url : null;
@@ -602,13 +632,14 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
   const redisUrl = typeof args.redis === 'string' ? args.redis : config.redis.url;
   const maxPeers = args.maxPeers !== undefined ? Number(args.maxPeers) : config.proximity.maxPeersPerUser;
   const dropRadius = args.dropRadius !== undefined ? Number(args.dropRadius) : config.proximity.peerDisconnectRadiusPx;
-  const roomSeed = typeof args.room === 'string'
-    ? args.room
-    : `meshcheck-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const keyPrefix = `meshcheck_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-
   const external = Boolean(externalUrl || externalA);
   const targetUrls = external ? [externalUrl ?? externalA, externalB].filter(Boolean) : [];
+  const roomSeed = typeof args.room === 'string'
+    ? args.room
+    : external
+      ? 'lobby'
+      : `meshcheck-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const keyPrefix = `meshcheck_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 
   for (const url of targetUrls) {
     // eslint-disable-next-line no-await-in-loop
@@ -619,76 +650,74 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
   }
 
   const table = [];
-  const after = await runConfigSuite({
-    label: external
-      ? `after (cap ${maxPeers}, drop ${dropRadius})`
-      : `after (cap ${maxPeers}, drop ${dropRadius})`,
-    maxPeers,
-    dropRadius,
-    redisUrl,
-    keyPrefix: `${keyPrefix}_after`,
-    targetUrls: external ? targetUrls : null,
-    roomId: `${roomSeed}-after`,
-    table,
-  });
-  const before = await runConfigSuite({
-    label: 'before (unlimited, drop = radius)',
-    maxPeers: 0,
-    dropRadius: CONNECT_RADIUS,
-    redisUrl,
-    keyPrefix: `${keyPrefix}_before`,
-    roomId: `${roomSeed}-before`,
-    table,
-  });
+  const completed = [];
+  const plan = createMeshCheckPlan({ external, roomSeed, maxPeers, dropRadius });
+  for (const suite of plan) {
+    // External servers cannot be reconfigured by this process. Measure only
+    // their real current config; embedded mode starts separate before/after
+    // nodes and therefore retains the full comparison.
+    // eslint-disable-next-line no-await-in-loop
+    completed.push(await runConfigSuite({
+      ...suite,
+      redisUrl,
+      keyPrefix: `${keyPrefix}_${suite.suffix}`,
+      targetUrls: external ? targetUrls : null,
+      table,
+    }));
+  }
+  const [after, before = null] = completed;
 
   const rowsOf = (label) => table.filter((row) => row.config === label);
   const afterRows = rowsOf(after.label);
-  const beforeRows = rowsOf(before.label);
-  const checks = [...after.checks, ...before.checks].map((check, index) => ({
+  const beforeRows = before ? rowsOf(before.label) : [];
+  const checks = completed.flatMap((suite) => suite.checks.map((check) => ({
     ...check,
-    config: index < after.checks.length ? after.label : before.label,
-  }));
+    config: suite.label,
+  })));
 
-  checks.push({
-    config: 'cross-config',
-    scenario: 'jitter',
-    name: 'hysteresis removes boundary churn',
-    ok: after.boundary.jitterDisconnects === 0
-      && before.boundary.jitterDisconnects > after.boundary.jitterDisconnects,
-    detail: `drop ${after.dropRadius} px -> ${after.boundary.jitterDisconnects} disconnect(s); `
-      + `drop ${before.dropRadius} px -> ${before.boundary.jitterDisconnects} disconnect(s)`,
-  });
+  if (before) {
+    checks.push({
+      config: 'cross-config',
+      scenario: 'jitter',
+      name: 'hysteresis removes boundary churn',
+      ok: after.boundary.jitterDisconnects === 0
+        && before.boundary.jitterDisconnects > after.boundary.jitterDisconnects,
+      detail: `drop ${after.dropRadius} px -> ${after.boundary.jitterDisconnects} disconnect(s); `
+        + `drop ${before.dropRadius} px -> ${before.boundary.jitterDisconnects} disconnect(s)`,
+    });
 
-  const cap10 = afterRows.find((row) => row.users === 10);
-  const cap50 = afterRows.find((row) => row.users === 50);
-  const noCap10 = beforeRows.find((row) => row.users === 10);
-  const noCap50 = beforeRows.find((row) => row.users === 50);
+    const cap10 = afterRows.find((row) => row.users === 10);
+    const cap50 = afterRows.find((row) => row.users === 50);
+    const noCap10 = beforeRows.find((row) => row.users === 10);
+    const noCap50 = beforeRows.find((row) => row.users === 50);
+    checks.push({
+      config: 'cross-config',
+      scenario: 'cap',
+      name: 'cap bounds the mesh (after < before)',
+      ok: cap10.maxDegree <= maxPeers
+        && cap50.maxDegree <= maxPeers
+        && cap50.edges < noCap50.edges
+        && noCap50.edges === (50 * 49) / 2
+        && noCap10.edges === (10 * 9) / 2
+        && noCap50.maxDegree === 49,
+      detail: `N=10 edges ${cap10.edges} vs ${noCap10.edges}; N=50 edges ${cap50.edges} vs ${noCap50.edges}; `
+        + `max degree ${cap50.maxDegree} vs ${noCap50.maxDegree}`,
+    });
+  }
+  const signalRows = [...afterRows, ...beforeRows];
   checks.push({
-    config: 'cross-config',
-    scenario: 'cap',
-    name: 'cap bounds the mesh (after < before)',
-    ok: cap10.maxDegree <= maxPeers
-      && cap50.maxDegree <= maxPeers
-      && cap50.edges < noCap50.edges
-      && noCap50.edges === (50 * 49) / 2
-      && noCap10.edges === (10 * 9) / 2
-      && noCap50.maxDegree === 49,
-    detail: `N=10 edges ${cap10.edges} vs ${noCap10.edges}; N=50 edges ${cap50.edges} vs ${noCap50.edges}; `
-      + `max degree ${cap50.maxDegree} vs ${noCap50.maxDegree}`,
-  });
-  checks.push({
-    config: 'cross-config',
+    config: before ? 'cross-config' : after.label,
     scenario: 'signals',
     name: 'no signal dropped at the default burst',
-    ok: [...afterRows, ...beforeRows].every((row) => row.drops === 0),
-    detail: `relayed ${[...afterRows, ...beforeRows].reduce((sum, row) => sum + row.signalsRelayed, 0)}`
-      + `/${[...afterRows, ...beforeRows].reduce((sum, row) => sum + row.signalsAttempted, 0)} candidates`,
+    ok: signalRows.every((row) => row.drops === 0),
+    detail: `relayed ${signalRows.reduce((sum, row) => sum + row.signalsRelayed, 0)}`
+      + `/${signalRows.reduce((sum, row) => sum + row.signalsAttempted, 0)} candidates`,
   });
 
   const ok = checks.every((check) => check.ok);
 
   const lines = [];
-  lines.push('ProxiSpeak Mesh Check (Day 13)');
+  lines.push('ProxiSpeak Mesh Check');
   lines.push(`mode: ${external
     ? 'external servers'
     : redisUrl
@@ -709,10 +738,12 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
   }
   lines.push('');
   lines.push('Boundary: approach + 100 crossings of the 100 px edge');
-  lines.push(`  after  drop=${after.dropRadius}px: first connect at ${after.boundary.firstConnectDistance ?? 'n/a'} px; `
+  lines.push(`  ${external ? 'current' : 'after '} drop=${after.dropRadius}px: first connect at ${after.boundary.firstConnectDistance ?? 'n/a'} px; `
     + `jitter connects=${after.boundary.jitterConnects}, disconnects=${after.boundary.jitterDisconnects}`);
-  lines.push(`  before drop=${before.dropRadius}px: first connect at ${before.boundary.firstConnectDistance ?? 'n/a'} px; `
-    + `jitter connects=${before.boundary.jitterConnects}, disconnects=${before.boundary.jitterDisconnects}`);
+  if (before) {
+    lines.push(`  before drop=${before.dropRadius}px: first connect at ${before.boundary.firstConnectDistance ?? 'n/a'} px; `
+      + `jitter connects=${before.boundary.jitterConnects}, disconnects=${before.boundary.jitterDisconnects}`);
+  }
   lines.push('');
   lines.push('Invariants and checks');
   for (const check of checks) {
@@ -724,15 +755,18 @@ export async function runMeshCheck({ argv = process.argv.slice(2), logger: outpu
     for (const counter of after.counters.after) {
       lines.push(`  ${counter.instanceId}: edgesCreated=${counter.edgesCreated ?? 0} `
         + `edgesRemoved=${counter.edgesRemoved ?? 0} cappedRejections=${counter.cappedRejections ?? 0} `
-        + `hysteresisHolds=${counter.hysteresisHolds ?? 0}`);
+        + `hysteresisHolds=${counter.hysteresisHolds ?? 0} staleRejections=${counter.staleRejections ?? 0} `
+        + `validationRemovals=${counter.validationRemovals ?? 0}`);
     }
   }
   lines.push('');
   lines.push('drops = signals not delivered within 4 s; the gateway drops a rate-limited signal silently.');
   lines.push('settle = join + walk to the target + 700 ms with no edge event (wall clock).');
   lines.push(`RESULT: ${ok ? 'PASS' : 'FAIL'} (${checks.filter((check) => check.ok).length}/${checks.length} checks passed)`);
-  lines.push('Note: embedded mode needs no MongoDB — presence/rooms are the Day 12 in-memory harness; '
-    + 'sockets, gateway, PeerGraph, EdgeStore and Redis are real.');
+  lines.push(external
+    ? 'Note: external mode measures only the running servers\' current configuration; use embedded mode for the before/after baseline.'
+    : 'Note: embedded mode needs no MongoDB — presence/rooms use an in-memory harness; '
+      + 'sockets, gateway, PeerGraph, EdgeStore and Redis are real.');
 
   for (const line of lines) {
     if (ok) output.info(line);

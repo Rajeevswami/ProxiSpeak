@@ -188,6 +188,97 @@ test('suspended context resumes on the Join gesture and on a visible-tab event',
   await mixer.closeAll();
 });
 
+test('a page pointer gesture resumes blocked audio and its listener is removed on teardown', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+
+  await mixer.resume();
+  contexts[0].state = 'suspended';
+  document.dispatch('pointerdown');
+  await Promise.resolve();
+  assert.equal(contexts[0].resumeCalls, 2, 'the click advertised by the hint really resumes audio');
+
+  await mixer.closeAll();
+  assert.equal(document.listenerCount, 0);
+  document.dispatch('pointerdown');
+  assert.equal(contexts[0].resumeCalls, 2, 'no gesture listener survives closeAll');
+});
+
+test('concurrent closeAll calls close one AudioContext and remove every lifecycle listener', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+  await mixer.resume();
+
+  await Promise.all([mixer.closeAll(), mixer.closeAll()]);
+
+  assert.equal(contexts.length, 1);
+  assert.equal(contexts[0].closeCalls, 1);
+  assert.equal(document.listenerCount, 0);
+  assert.equal(mixer.getContext(), null);
+});
+
+test('Safari interrupted contexts resume from the existing gesture and visibility paths', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+
+  await mixer.resume();
+  assert.equal(contexts[0].resumeCalls, 1);
+  contexts[0].state = 'interrupted';
+  await mixer.resume();
+  assert.equal(contexts[0].resumeCalls, 2, 'a user gesture also resumes interrupted audio');
+
+  contexts[0].state = 'interrupted';
+  document.dispatch('visibilitychange');
+  await Promise.resolve();
+  assert.equal(contexts[0].resumeCalls, 3, 'returning to a visible tab resumes interrupted audio');
+  await mixer.closeAll();
+});
+
+test('a failed Web Audio setup disconnects partial nodes before element fallback', async () => {
+  const contexts = [];
+  class BrokenConnectContext extends FakeAudioContext {
+    constructor() { super(); contexts.push(this); }
+    createMediaStreamSource(stream) {
+      const source = super.createMediaStreamSource(stream);
+      source.connect = () => { throw new Error('connect failed'); };
+      return source;
+    }
+  }
+  const mixer = createAudioMixer({
+    AudioContextFactory: BrokenConnectContext,
+    document: fakeDocument(),
+    logger: { warn() {} },
+  });
+  const element = fakeElement();
+
+  const chain = mixer.attach('peer', { id: 1 }, element);
+
+  assert.equal(chain, null);
+  assert.equal(element.muted, false, 'element playback remains the fallback');
+  assert.equal(contexts[0].sources[0].disconnectCalls, 1);
+  assert.equal(contexts[0].gains[0].disconnectCalls, 1);
+  assert.equal(mixer.size(), 1);
+  await mixer.closeAll();
+});
+
 test('unavailable Web Audio falls back to full-volume elements and warns only once', async () => {
   const warnings = [];
   const mixer = createAudioMixer({

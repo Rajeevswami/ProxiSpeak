@@ -91,6 +91,44 @@ export function createSocketServer({
           maxPeersPerUser: cfg.proximity.maxPeersPerUser,
         })
       : new MemoryEdgeStore({ maxPeersPerUser: cfg.proximity.maxPeersPerUser }));
+
+  // Mongo supplies positions/distances; the shared EdgeStore supplies the
+  // revisions observed just after that read. One MGET covers the whole result.
+  const readNeighbors = async (roomId, userId, radiusPx) => {
+    const nearby = await neighborQuery(roomId, userId, radiusPx) ?? [];
+    if (nearby.length === 0 || typeof store.getPositionRevisions !== 'function') return nearby;
+    const revisions = await store.getPositionRevisions(nearby.map((entry) =>
+      typeof entry === 'string' ? entry : entry.id));
+    if (typeof store.ensurePositionRevision === 'function'
+        && typeof presence.listPresenceByRoom === 'function') {
+      const missing = nearby.filter((entry) =>
+        revisions.get(typeof entry === 'string' ? entry : entry.id) === 0);
+      // Repair active-peer key loss atomically, but return the observed zero
+      // for this attempt so the store rejects it and the graph performs its
+      // single bounded retry with known nonzero revisions.
+      await Promise.all(missing.map((entry) =>
+        store.ensurePositionRevision(typeof entry === 'string' ? entry : entry.id)));
+      if (missing.length > 0) {
+        // Disconnect removes presence before its final removeUser. Re-check
+        // after recovery so an ensure that raced that cleanup cannot recreate
+        // an orphaned revision key; removeUser is idempotent for the departed id.
+        const activeRows = await presence.listPresenceByRoom(roomId);
+        const activeIds = new Set(activeRows.map((row) => row.sessionId));
+        await Promise.all(missing
+          .map((entry) => (typeof entry === 'string' ? entry : entry.id))
+          .filter((id) => !activeIds.has(id))
+          .map((id) => store.removeUser(id)));
+      }
+    }
+    return nearby.map((entry) => {
+      const id = typeof entry === 'string' ? entry : entry.id;
+      const positionRevision = revisions.get(id) ?? 0;
+      return typeof entry === 'string'
+        ? { id, positionRevision }
+        : { ...entry, positionRevision };
+    });
+  };
+
   const resolvePeerName = async (roomId, userId) => {
     const localName = io.sockets.sockets.get(userId)?.data.name;
     if (localName) return localName;
@@ -103,7 +141,7 @@ export function createSocketServer({
   };
 
   const peers = new PeerGraph({
-    findNearby: neighborQuery,
+    findNearby: readNeighbors,
     radiusPx: cfg.proximity.radiusPx,
     dropRadiusPx: cfg.proximity.peerDisconnectRadiusPx,
     maxPeersPerUser: cfg.proximity.maxPeersPerUser,
@@ -305,6 +343,10 @@ export function createSocketServer({
 
   io.drainSessions = async () => {
     while (pendingCleanups.size) await Promise.allSettled([...pendingCleanups]);
+    // Reclaim and Redis-recovery syncs are intentionally fire-and-forget during
+    // normal operation, but they still use MongoDB/Redis and must finish before
+    // shutdown closes those clients.
+    await peers.drainSyncs();
   };
 
   io.on('connection', (socket) =>
@@ -515,6 +557,10 @@ function registerHandlers(socket, ctx) {
           throw new AppError('presence expired; reconnect and join again', { code: 'session_expired', status: 409 });
         }
         if (socket.disconnected || session !== current) return;
+        // Ordering is part of the race fix: a create using the old revision
+        // must finish before this bump; the post-bump sync then observes and
+        // removes it. Creates after the bump are rejected as stale instead.
+        await peers.positionChanged(clientId);
         try {
           await peers.sync(current.roomId, clientId);
         } catch (err) {
@@ -583,6 +629,16 @@ function registerHandlers(socket, ctx) {
     const { roomId } = session;
     session = null;
 
+    // Presence disappears before final revision cleanup. A concurrent
+    // readNeighbors recovery can then re-check presence and roll back any
+    // ensure that raced this leave instead of resurrecting an orphaned key.
+    await presenceWrites;
+    try {
+      await presence.removeUser(clientId);
+    } catch (err) {
+      socketLog.error('presence cleanup failed:', err?.message ?? err);
+    }
+
     let removedEdges = [];
     try {
       removedEdges = (await peers.leave(roomId, clientId)) ?? [];
@@ -597,13 +653,6 @@ function registerHandlers(socket, ctx) {
       await Promise.resolve(socket.leave(roomId));
     } catch {
       /* the adapter already dropped the membership */
-    }
-
-    await presenceWrites;
-    try {
-      await presence.removeUser(clientId);
-    } catch (err) {
-      socketLog.error('presence cleanup failed:', err?.message ?? err);
     }
 
     socketLog.debug(`left "${roomId}" (${reason})`);

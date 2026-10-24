@@ -137,3 +137,72 @@ test('MONGO_TIMEOUT_MS rejects non-numeric and too-small values', () => {
     assert.match(result.stderr, /MONGO_TIMEOUT_MS/);
   }
 });
+
+function assertOneLineConfigError(key, value, { secret = null } = {}) {
+  const source = `import {config} from ${JSON.stringify(configHref)};`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+    encoding: 'utf8', env: { ...process.env, [key]: value },
+  });
+  assert.notEqual(result.status, 0, `${key}=${value} must fail`);
+  const lines = result.stderr.trim().split('\n');
+  assert.equal(lines.length, 1, `${key} must print one error line, got:\n${result.stderr}`);
+  assert.match(lines[0], new RegExp(key));
+  assert.doesNotMatch(result.stderr, /node:internal|Node\.js v|\bat (?:num|integer|checkedUrl|file:)/);
+  assert.equal(result.stdout, '');
+  if (secret) assert.equal(result.stderr.includes(secret), false, 'credentials must not be echoed');
+}
+
+test('AUDIT_ENABLED accepts explicit booleans and rejects every other value in one line', () => {
+  const printAudit = `import {config} from ${JSON.stringify(configHref)}; console.log(config.audit.enabled);`;
+  for (const [raw, expected] of [['1', true], ['true', true], ['YES', true], ['0', false], ['false', false], ['no', false]]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', printAudit], {
+      encoding: 'utf8', env: { ...process.env, AUDIT_ENABLED: raw },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), String(expected));
+  }
+  for (const value of ['maybe', '2', 'off', 'truthy']) assertOneLineConfigError('AUDIT_ENABLED', value);
+});
+
+test('URL settings reject malformed values and wrong protocols without echoing credentials', () => {
+  const secret = 'NeverPrintThisCredential_42';
+  assertOneLineConfigError('MONGO_URI', `https://alice:${secret}@mongo.example.com/db`, { secret });
+  assertOneLineConfigError('MONGO_URI', 'not a mongo url');
+  assertOneLineConfigError('REDIS_URL', `https://alice:${secret}@redis.example.com/0`, { secret });
+  assertOneLineConfigError('REDIS_URL', 'redis://');
+  for (const key of ['SCALE_CHECK_URL_1', 'SCALE_CHECK_URL_2', 'SCALE_CHECK_URL_A', 'SCALE_CHECK_URL_B']) {
+    assertOneLineConfigError(key, `ftp://alice:${secret}@node.example.com`, { secret });
+  }
+  assertOneLineConfigError('CLIENT_URL', `http://alice:${secret}@client.example.com`, { secret });
+  assertOneLineConfigError('CLIENT_URL', 'http://client.example.com/a-path');
+});
+
+test('CLIENT_URL accepts wildcards and normalizes URL origins', () => {
+  const printOrigins = `import {config} from ${JSON.stringify(configHref)}; console.log(JSON.stringify(config.server.clientOrigins));`;
+  for (const [raw, expected] of [
+    ['*', ['*']],
+    ['HTTP://LOCALHOST:5173/', ['http://localhost:5173']],
+    ['http://localhost:5173, https://voice.example.com', ['http://localhost:5173', 'https://voice.example.com']],
+  ]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', printOrigins], {
+      encoding: 'utf8', env: { ...process.env, CLIENT_URL: raw },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), expected);
+  }
+});
+
+test('integer-valued settings reject fractions and extreme timeouts with one clear line', () => {
+  for (const [key, value] of [
+    ['PORT', '4000.5'],
+    ['MONGO_TIMEOUT_MS', '8000.5'],
+    ['MONGO_TIMEOUT_MS', '1e100'],
+    ['PRESENCE_CLEANUP_INTERVAL_MS', '1.5'],
+    ['PRESENCE_TIMEOUT_MS', '1.5'],
+    ['EDGE_SWEEP_INTERVAL_MS', '1.5'],
+    ['REDIS_CONNECT_TIMEOUT_MS', '3000.5'],
+    ['REDIS_EDGE_TTL_SECONDS', '60.5'],
+    ['SOCKET_SIGNAL_BURST', '2.5'],
+    ['REDIS_KEY_PREFIX', 'bad prefix'],
+  ]) assertOneLineConfigError(key, value);
+});

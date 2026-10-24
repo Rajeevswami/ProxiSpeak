@@ -1,46 +1,66 @@
-# Requirements Trace — up to Day 14
+# Requirements Trace — Through Week 3, Day 14b
 
-Company requirements through the Mid-Project Review plus Week 3 Days 11–13 and
-the Day 14 wrap-up, traced to files, tests and exact commands. Status is honest.
-Days 1–12 were verified with MongoDB Community Server `8.0.0` and `redis-server`
-`7.4.2` (`287 / 287` tests, `0` skipped). **Day 13 (2026-10-22) was verified live
-against `redis-server` `6.2.14` with `REDIS_URL_TEST` — server `136` passed / `32`
-skipped of `168` (all MongoDB-backed), client `151` passed, plus `npm run mesh-check`
-`PASS 37/37` — but this sandbox has no `mongod` and cannot download one, so the
-MongoDB path and live two-browser WebRTC hearing checks remain `NOT VERIFIED` here;
-see `docs/MESH_OPTIMIZATION.md`, `docs/REDIS_SCALING.md` and `docs/DAY11.md`.
+Status date: **2026-10-24**. This trace describes the current checkout and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
 
-| # | Requirement | Implementing files | Test files | Command that demonstrates it | Status |
-|---|---|---|---|---|---|
-| 1 | W1 Backend: WebSocket server broadcasting avatar X/Y coordinates | `server/src/index.js`, `server/src/sockets/index.js`, `server/src/utils/httpServer.js` | `server/test/socket.integration.test.js`, `server/test/socket.validation.test.js` | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" npm run test:server` | DONE (verified live against MongoDB 8.0.0) |
-| 2 | W1 Backend: basic MongoDB geospatial schemas | `server/src/models/UserPresence.js` (2dsphere), `server/src/models/Room.js`, `server/src/db/mongo.js`, `server/src/utils/geo.js` | `server/test/mongo.test.js`, `server/test/geo.test.js`, `server/test/proximity.test.js` | `npm run seed && MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" npm run test:server` | DONE (idempotent `seed` + `2dsphere` index verified live) |
-| 3 | W1 Frontend: React Canvas layer | `client/src/components/WorldCanvas.jsx`, `client/src/canvas/renderer.js`, `client/src/canvas/coords.js` | `client/test/renderer.test.js`, `client/test/coords.test.js` | `npm run test:client` | DONE |
-| 4 | W1 Frontend: smooth keyboard/mouse avatar movement + coordinate broadcasting | `client/src/movement/`, `client/src/hooks/useMovement.js`, `client/src/hooks/useSocket.js` | `client/test/movement.test.js`, `client/test/worldState.test.js` | `npm run test:client`; manual: `docs/DEMO_WEEK1.md` | DONE |
-| 5 | W2 Backend: MongoDB `$near` queries to group users | `server/src/services/proximityService.js` (`findNearby`, `nearQuery`, `computeClustersViaNear`) | `server/test/proximity.test.js` | `npm run audit -- --users=500 --samples=25 --seed=1` | DONE (`0` mismatches vs brute force; `2dsphere=true, COLLSCAN=false` verified live) |
-| 6 | W2 Backend: only send WebRTC offers/answers to users within 100px radius | `server/src/services/peerGraph.js`, `server/src/services/proximityService.js`, `server/src/sockets/index.js` | `server/test/peerGraph.unit.test.js`, `server/test/peerGraph.integration.test.js`, `server/test/signal.validation.test.js` | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" npm run test:server` | DONE (verified live in single & two-instance modes) |
-| 7 | W2 Frontend: standard WebRTC P2P audio via `getUserMedia` | `client/src/webrtc/localMedia.js`, `peerManager.js`, `remoteAudio.js`, `rtcStats.js`, `client/src/components/AudioStatus.jsx` | `client/test/webrtc.*.test.js` | Two-browser check: `docs/DEMO_MIDREVIEW.md` | DONE in code/Node tests (live browser run NOT VERIFIED — no browser in sandbox) |
-| 8 | Mid-Review Backend "Spatial Audit": backend accurately filters/clusters by geospatial coordinates under 20 ms | `server/src/services/spatialAudit.js`, `server/scripts/audit.js`, `GET /api/spatial-audit` in `server/src/app.js`, config `AUDIT_*` in `server/src/config/index.js` | `server/test/spatialAudit.test.js`, `server/test/proximity.test.js` | `npm run audit -- --users=500 --samples=25 --seed=1`; `curl "http://localhost:4000/api/spatial-audit?users=50&samples=25&seed=1"` | DONE (`PASS` at `50, 100, 250, 500` users: 500-user p95 `findNearby=2.880ms`, `countWithin=1.494ms`, `computeClusters=10.379ms`, all `<= 20ms`, `0` mismatches) |
-| 9 | Mid-Review Frontend "Audio Check": two browsers establish WebRTC audio via signaling server | Same as #7 plus Day 8 signaling (`peerGraph.js`, `sockets/index.js`) | `client/test/webrtc.*.test.js`, `server/test/peerGraph.integration.test.js` | `docs/DEMO_MIDREVIEW.md` two-window script | DONE in code/signaling (live browser hearing NOT VERIFIED — no browser in sandbox) |
-| 10 | Key module: Geospatial Engine (`$near` and `$geoWithin`) | `server/src/services/proximityService.js` (`findNearby`, `countWithin`, `geoWithinQuery`) | `server/test/proximity.test.js`, `server/test/spatialAudit.test.js` | `npm run audit` | DONE (verified live against MongoDB 8.0.0) |
-| 11 | Key module: Signaling Server (Node.js + Socket.io) | `server/src/sockets/index.js`, `server/src/services/peerGraph.js` | `server/test/socket.integration.test.js`, `server/test/signal.validation.test.js` | `npm run test:server` | DONE (verified live in single & two-instance modes) |
-| 12 | Key module: 2D Virtual World (React + HTML5 Canvas) | `client/src/` (`WorldCanvas`, canvas, movement, realtime) | `client/test/*.test.js` | `npm run dev:client` + `npm run test:client` | DONE |
-| 13 | Key module: WebRTC audio connection | Same as #7 | Same as #7 | `docs/DEMO_MIDREVIEW.md` | DONE in code/Node tests (live browser run NOT VERIFIED — no browser in sandbox) |
-| 14 | Day 10: fast whole-room clustering (one roster query + in-memory grid + union-find), old `$near` algorithm kept as cross-check | `server/src/services/proximityService.js` (`computeClusters`, `computeClustersViaNear`) | `server/test/proximity.roster.test.js`, `server/test/spatialAudit.test.js` (20-layout equivalence) | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" node --test server/test/proximity.roster.test.js server/test/spatialAudit.test.js` | DONE (20 MongoDB layouts verified live, `0` mismatches) |
-| 15 | Day 10: signal burst covers ~20-user clusters | `server/src/config/index.js` (`SOCKET_SIGNAL_BURST=200`), `.env.example` | `server/test/signal.ratelimit.headroom.test.js` | `node --test server/test/signal.ratelimit.headroom.test.js` | DONE |
-| 16 | Week 3 — Dynamic Attenuation: distance-based GainNode for remote WebRTC tracks | `client/src/audio/attenuation.js`, `client/src/audio/audioMixer.js`, `client/src/webrtc/peerManager.js`, `client/src/webrtc/remoteAudio.js`, `client/src/hooks/useSocket.js`, `client/src/App.jsx`, `client/src/components/AudioStatus.jsx`; server sends `proximityRadiusPx` in `server/src/sockets/index.js` | `client/test/audio.attenuation.test.js`, `client/test/audio.audioMixer.test.js`, `server/test/socket.integration.test.js` | `npm test`; `npm run build --prefix client`; manual two-window hearing steps: `docs/DAY11.md` | DONE in code, Node unit tests & live `joined.proximityRadiusPx` socket test (audible browser check NOT VERIFIED — no browser) |
-| 17 | Week 3 — Mesh Scaling (cap + hysteresis + nearest-first + reclaim + mesh-check) | `server/src/config/index.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/peerGraph.js`, `server/src/sockets/index.js`, `server/scripts/mesh-check.js`, `client/src/realtime/meshIndicator.js`, `client/src/components/AudioStatus.jsx` | `server/test/mesh.config.test.js`, `server/test/edgeStore.contract.test.js`, `server/test/peerGraph.mesh.test.js`, `server/test/mesh.twoInstance.test.js`, `client/test/meshIndicator.test.js` | `REDIS_URL="redis://127.0.0.1:6379" npm run mesh-check`; `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` | DONE (`mesh-check` PASS `37/37`; cap `49 → 8` connections on N=50, edges `1225 → 190`, `0` boundary churn vs `100`; MongoDB path NOT VERIFIED here — no `mongod`) |
-| 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io & shared edge state (Day 12) | `server/src/db/redis.js`, `server/src/sockets/redisAdapter.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/edgeSweep.js`, `server/src/services/peerGraph.js`, `server/src/services/presenceCleanup.js`, `server/src/sockets/index.js`, `server/src/app.js`, `server/src/config/index.js`, `server/scripts/scale-check.js` | `server/test/edgeStore.contract.test.js`, `server/test/redis.failure.test.js`, `server/test/redis.scale.integration.test.js`, `server/test/app.test.js`, `server/test/config.test.js` | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`; `npm run scale-check`; `docs/REDIS_SCALING.md` | DONE (`8/8` live `scale-check` checks passed on `:4000` & `:4001`; `287/287` tests passed with `0` skipped; live browser check NOT VERIFIED — no browser) |
+- **DONE** means the requested implementation is present and its available current checks passed.
+- **LIVE NOT VERIFIED** means the relevant external-service or browser path was not exercised here; it is not a failure claim.
+- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions and current measurements are recorded below and in `CHANGELOG.md`.
 
-| 19 | Day 14: HTTP CORS aligned with Socket.io same-origin policy in production | `server/src/app.js` (`httpCorsOrigin`), `.env.example` | `server/test/app.test.js` | `node --test server/test/app.test.js` | DONE |
-| 20 | Day 14: Config drift guard (env vars vs .env.example) | `server/test/configDrift.test.js`, `.env.example`, `client/.env.example` | `server/test/configDrift.test.js` | `node --test server/test/configDrift.test.js` | DONE |
-| 21 | Day 14: Config validation (clear one-line errors per variable) | `server/src/config/index.js` | `server/test/config.test.js` | `node --test server/test/config.test.js` | DONE |
-| 22 | Day 14: Audio paused hint (browser autoplay policy) | `client/src/audio/audioPausedHint.js`, `client/src/components/AudioStatus.jsx`, `client/src/hooks/useSocket.js`, `client/src/App.jsx` | `client/test/audio.audioPausedHint.test.js` | `npm run test:client` | DONE |
-| 23 | Day 14: Fix — peer name cache not evicted on edge removal | `server/src/sockets/index.js` | `server/test/peerGraph.nameCache.test.js` | `node --test server/test/peerGraph.nameCache.test.js` | DONE |
-| 24 | Day 14: Documentation (README rewrite, WEEK2, DEMO_WEEK3, LIMITATIONS) | `README.md`, `docs/WEEK2.md`, `docs/DEMO_WEEK3.md`, `docs/LIMITATIONS.md`, `CHANGELOG.md`, `docs/REQUIREMENTS_TRACE.md` | — | — | DONE |
+| # | Requirement | Implementation | Tests / demonstration | Status |
+| --- | --- | --- | --- | --- |
+| 1 | W1 backend: WebSocket avatar-coordinate broadcast | `server/src/sockets/index.js`, `server/src/index.js` | `socket.integration.test.js`, `socket.validation.test.js`, `socket.race.test.js`; `npm run test:server` | DONE; live Mongo server NOT VERIFIED here |
+| 2 | W1 backend: MongoDB geospatial schemas | `models/UserPresence.js`, `models/Room.js`, `db/mongo.js`, `utils/geo.js` | `mongo.test.js`, `geo.test.js`, `proximity.test.js`; `npm run seed` with MongoDB | DONE in code; live Mongo NOT VERIFIED here |
+| 3 | W1 frontend: React + Canvas layer | `components/WorldCanvas.jsx`, `canvas/renderer.js`, `canvas/coords.js` | `renderer.test.js`, `coords.test.js`; `npm run test:client` | DONE |
+| 4 | W1 frontend: smooth keyboard/mouse movement | `movement/`, `hooks/useMovement.js`, `hooks/useSocket.js` | `movement.test.js`, `worldState.test.js`; `docs/DEMO_WEEK1.md` | DONE in Node; live browser NOT VERIFIED here |
+| 5 | W2 backend: `$near` proximity grouping | `services/proximityService.js` | `proximity.test.js`, `proximity.roster.test.js`; `npm run audit` with MongoDB | DONE in code; real audit NOT VERIFIED here |
+| 6 | W2 backend: signal only nearby users | `services/peerGraph.js`, `services/proximityService.js`, `sockets/index.js` | `peerGraph.unit.test.js`, `peerGraph.integration.test.js`, `signal.validation.test.js` | DONE; Mongo integration cases skip here |
+| 7 | W2 frontend: `getUserMedia` + P2P audio | `webrtc/localMedia.js`, `peerManager.js`, `remoteAudio.js`, `rtcStats.js`, `audio/audioMixer.js` | `client/test/webrtc.*.test.js`, `audio.audioMixer.test.js` | DONE in code/Node; audible browser path NOT VERIFIED |
+| 8 | Mid-review spatial audit with latency target | `services/spatialAudit.js`, `scripts/audit.js`, `app.js`, `AUDIT_*` config | `spatialAudit.test.js`; `npm run audit -- --users=50 --samples=25 --seed=1` | DONE in code/pure tests; real Mongo audit NOT VERIFIED |
+| 9 | Mid-review two-browser audio check | Day 8 signaling plus Day 9 browser media modules | Socket/WebRTC Node tests; manual `docs/DEMO_MIDREVIEW.md` | Signaling DONE; live hearing NOT VERIFIED |
+| 10 | Geospatial engine (`$near`, `$geoWithin`) | `services/proximityService.js`, `utils/geo.js`, `models/UserPresence.js` | `geo.test.js`, `proximity.test.js`, `spatialAudit.test.js` | DONE in code; live Mongo NOT VERIFIED here |
+| 11 | Socket.io signaling server | `sockets/index.js`, `services/peerGraph.js` | `socket.*.test.js`, `signal.validation.test.js` | DONE |
+| 12 | 2D virtual world | `client/src/components/`, `canvas/`, `movement/`, `realtime/` | `npm run test:client`; `npm run build` | DONE; build passed |
+| 13 | WebRTC audio connection | `client/src/webrtc/`, `client/src/audio/` | WebRTC/mixer/stats tests; `docs/DEMO_WEEK3.md` | DONE in code/Node; live media NOT VERIFIED |
+| 14 | Day 10 fast whole-room clustering + cross-check | `computeClusters`, `computeClustersViaNear` in `services/proximityService.js` | `proximity.roster.test.js`, `spatialAudit.test.js` | DONE in available tests; live Mongo NOT VERIFIED here |
+| 15 | Day 10 signal-burst headroom | `SOCKET_SIGNAL_BURST=200`, socket token bucket | `signal.ratelimit.headroom.test.js`, mesh signal-burst checks | DONE |
+| 16 | Day 11 distance-based GainNode attenuation | `audio/attenuation.js`, `audio/audioMixer.js`, `hooks/useSocket.js`, `components/AudioStatus.jsx` | `audio.attenuation.test.js`, `audio.audioMixer.test.js`; `npm run build` | DONE in code/Node; audible fade NOT VERIFIED |
+| 17 | Day 13 cap + hysteresis + nearest-first + reclaim + checker | `peerGraph.js`, both edge stores, `scripts/mesh-check.js`, `realtime/meshIndicator.js` | `mesh.config.test.js`, `peerGraph.mesh.test.js`, `mesh.twoInstance.test.js`; real Redis mesh-check | DONE: embedded **37/37**, external harness **18/18** |
+| 18 | Day 12 Redis Pub/Sub + shared edge state + recovery | `db/redis.js`, `sockets/redisAdapter.js`, `redisEdgeStore.js`, `edgeSweep.js`, `scripts/scale-check.js` | `edgeStore.contract.test.js`, `redis.failure.test.js`, `redis.scale.integration.test.js` | DONE with real Redis: scale-check **8/8**; Mongo-backed CLI NOT VERIFIED |
+| 19 | Day 14 production empty-`CLIENT_URL` HTTP CORS alignment | `server/src/app.js`, `utils/origin.js`, `.env.example` | `app.test.js`, `origin.test.js`, `socket.validation.test.js` | DONE; non-production defaults covered |
+| 20 | Day 14 bidirectional config/example drift guards | `server/test/configDrift.test.js`, `.env.example`, `client/.env.example` | `node --test server/test/configDrift.test.js` | DONE; exact server and `VITE_*` key checks |
+| 21 | Day 14 concise invalid-config errors | `server/src/config/index.js`, `utils/logger.js`, `utils/loggerCore.js` | `config.test.js`, `mesh.config.test.js` | DONE; invalid values/credentials are not echoed |
+| 22 | Day 14 one-line paused-audio hint + recovery | `audio/audioPausedHint.js`, `audio/audioMixer.js`, `components/AudioStatus.jsx` | `audio.audioPausedHint.test.js`, `audio.audioMixer.test.js` | DONE in Node; browser autoplay/Safari NOT VERIFIED |
+| 23 | Day 14 bug hunt + regressions | PeerGraph, EdgeStores, sweeps, Redis, mixer, stats, PeerManager, scale/mesh checkers | Fix-by-fix table in `docs/WEEK3.md`; all current suites | DONE; each reproduced defect has a named fix commit |
+| 24 | Day 14 cleanup + coherent docs + demo | `README.md`, `docs/WEEK3.md`, `DEMO_WEEK3.md`, `LIMITATIONS.md`, `CHANGELOG.md`, this trace | Clean install, tests, build, real Redis checks; manual demo remains separate | DONE for docs/code; live demo NOT VERIFIED |
+| 25 | Day 14b stale-edge race: reproduce, fence revisions, one bounded re-sync | Both edge stores, `peerGraph.js`, `sockets/index.js` | `staleEdgeRace.test.js`, revision contract tests; deterministic gates, real sockets, 200 seeded interleavings per store | DONE with Memory + real Redis; live Mongo path NOT VERIFIED |
+| 26 | Day 14b bounded edge validation + dependency remediation | `edgeSweep.js`, `mesh-check.js`, `server/package-lock.json` | `edgeValidation.test.js`; scale/mesh checks; server/client `npm audit` | DONE; zero high/critical audit findings |
 
-Nothing else was found PARTIAL or MISSING within Week 1, Week 2 or the
-Mid-Review scope. All three Week 3 slices are now DONE: Day 11 attenuation,
-Day 12 Redis multi-instance scaling and Day 13 mesh optimization. Day 14
-hardening, polish and documentation are DONE.
-**Week 4 rows (stereo panning, obstacle occlusion, room persistence, deploy)
-remain MISSING / not started.**
+## Day 14 commit evidence
+
+The following short hashes were resolved with `git cat-file -t` and are commits in the current history:
+
+```text
+4d5dd96 02b7c0a a6c381e ad845d7 b182735 635db42 9b85dd1
+951dad2 b0b0e6f 8cc0b21 d8fdb79 0f92b2b 5a19ab8 3be48c1
+8118523 e5399f6 c5a0091 9ef2bc8 4b4f6a8 7dbdf8e
+```
+
+Their subjects and file-by-file mapping are recorded in `docs/WEEK3.md` and `CHANGELOG.md`. Earlier Day 1–13 hashes remain in the changelog; no hash or date is inferred from a document alone.
+
+Day 14b adds these separately verified commit hashes: `fe90014` and `69066be`
+(Mongo credential redaction), followed by `ac887e8` (failing race regressions),
+`07df50e` (store revisions), `bf72efd` (graph/socket fencing),
+`9d072ac` (bounded sweep validation), and `434472d` (body-parser lockfile patch).
+Each resolves as a commit with `git cat-file -t`; the documentation commit is
+intentionally not self-listed.
+
+## Current verification boundary
+
+- Clean lockfile installs and the 80-module client production build passed. Server and client audits each reported zero total vulnerabilities.
+- Without services: server **143 passed / 63 skipped** (206 tests); client **165/165 passed**.
+- With real Redis: server **174 passed / 32 skipped** (206 tests); client **165/165 passed**.
+- Real scale-check passed **8/8**, embedded mesh-check **37/37**, and external mesh-check **18/18**. Three separate 180-second 60-user two-instance soaks each recorded 20 settled samples with zero violations and complete tracked-state cleanup; measured RSS values are in `docs/LIMITATIONS.md`.
+- The remaining 32 skips are MongoDB tests. A MongoDB+Redis zero-skip run, real Mongo audit, normal Mongo-backed external CLI run, and live two-browser hearing demo are **NOT VERIFIED** here.
+- External harnesses use real Socket.io and Redis with in-memory presence backing; they are not represented as live Mongo or real-browser media runs.
+
+Week 4 room persistence/obstacles, stereo panning, and 60 FPS work remain **not started**.

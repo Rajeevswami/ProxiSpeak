@@ -105,7 +105,7 @@ over the wire): `connection_failed` (handshake failed) and `connection_lost`
 | Field | Type | Notes |
 | --- | --- | --- |
 | `sessionId` | String, required | The Socket.io connection id; unique per connection |
-| `instanceId` | String, required | Writer of the row (`node-<pid>` by default) |
+| `instanceId` | String, required | Writer of the row (`node-<pid>` was the Week 1 default; current unset default is random per process) |
 | `roomId` | String, required | Room this avatar is in |
 | `name` | String, required | 1–24 chars after validation, trimmed |
 | `color`, `avatar` | String | Wire-friendly presentation fields (`avatar` defaults to `circle`) |
@@ -209,7 +209,7 @@ gateway and schema.
 | `SOCKET_MOVE_EPS` | `30` | Accepted `move` events per socket per second |
 | `SOCKET_MAX_STEP_PX` | `120` | Largest distance one accepted `move` may travel |
 | `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` |
-| `INSTANCE_ID` | `node-<pid>` | Written into presence rows |
+| `INSTANCE_ID` | `node-<pid>` in Week 1; random per process today | Written into presence rows; set distinct explicit ids for simultaneous instances |
 
 ---
 

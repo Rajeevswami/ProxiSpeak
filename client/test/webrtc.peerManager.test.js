@@ -450,6 +450,36 @@ test('closeAll leaves zero connections, audio elements, stats timers and active 
   assert.equal(localMedia.released, true);
 });
 
+test('late callbacks from a closed edge cannot recreate audio or close its replacement', async () => {
+  const { socket, createPeerConnection, remoteAudio, manager } = setup();
+  await socket.dispatch('peer:connect', connectEvent({ generation: 1 }));
+  const first = createPeerConnection.created[0];
+  const lateTrack = first.ontrack;
+  const lateStateChange = first.onconnectionstatechange;
+  const lateIceCandidate = first.onicecandidate;
+
+  await socket.dispatch('peer:connect', connectEvent({ generation: 2 }));
+  const second = createPeerConnection.created[1];
+  const signalsBefore = socket.sent.length;
+
+  first.connectionState = 'failed';
+  lateStateChange();
+  lateIceCandidate({ candidate: { candidate: 'candidate:stale' } });
+  lateTrack({ streams: [{ id: 'stale-stream' }] });
+
+  assert.equal(manager.size(), 1, 'the old state callback must not close the current generation');
+  assert.equal(second.closed, false);
+  assert.equal(manager.snapshot()[0].generation, 2);
+  assert.equal(remoteAudio.elements.size, 0, 'a stale track cannot create an orphaned audio element');
+  assert.equal(socket.sent.length, signalsBefore, 'a stale ICE callback cannot emit signaling');
+
+  const currentTrack = second.ontrack;
+  manager.closeAll();
+  currentTrack({ streams: [{ id: 'after-close-all' }] });
+  assert.equal(manager.size(), 0);
+  assert.equal(remoteAudio.elements.size, 0, 'a saved track callback is inert after closeAll');
+});
+
 test('listen-only adds a recvonly audio transceiver and no track', async () => {
   const { socket, createPeerConnection } = setup({ withMic: false });
   await socket.dispatch('peer:connect', connectEvent({ initiator: true, generation: 1 }));
@@ -511,6 +541,35 @@ test('an exception inside a handler is caught and logged, never thrown', async (
   manager2.closeAll();
   assert.equal(manager.size(), 0);
   assert.equal(manager2.size(), 0);
+});
+
+test('a track setup failure closes the partial pc instead of registering a broken edge', async () => {
+  const socket = createFakeSocket();
+  const logger = createFakeLogger();
+  const factory = createFakePcFactory();
+  const remoteAudio = createFakeRemoteAudio();
+  const stats = createFakeStats();
+  const manager = createPeerManager({
+    socket,
+    createPeerConnection: (configuration) => {
+      const pc = factory(configuration);
+      pc.addTransceiver = () => { throw new Error('transceiver exploded'); };
+      return pc;
+    },
+    logger,
+    localMedia: createFakeLocalMedia({ withMic: false }),
+    remoteAudio,
+    stats,
+  });
+
+  await socket.dispatch('peer:connect', connectEvent({ generation: 1 }));
+
+  assert.equal(manager.size(), 0, 'a half-configured edge must not remain registered');
+  assert.equal(factory.created[0].closed, true, 'the partially created browser resource is closed');
+  assert.equal(stats.watched.size, 0);
+  assert.equal(remoteAudio.elements.size, 0);
+  assert.equal(logger.errors.length, 1);
+  assert.match(String(logger.errors[0].join(' ')), /transceiver exploded/);
 });
 
 test('a disconnected socket never sends stale signaling', async () => {

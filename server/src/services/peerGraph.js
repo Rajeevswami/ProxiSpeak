@@ -85,12 +85,16 @@ export class PeerGraph {
       edgesRemoved: 0,
       cappedRejections: 0,
       hysteresisHolds: 0,
+      staleRejections: 0,
+      validationRemovals: 0,
     };
 
     /** roomId -> { roomId, users: Map<userId, { id, name }> } */
     this.rooms = new Map();
     /** Serialises syncs of the same user: a move can never overtake its join. */
     this.pendingSyncs = new Map();
+    /** Latest self revisions reported by the store; max-merge avoids stale async replies. */
+    this.localPositionRevisions = new Map();
     /** Cached display names of remote peers, bounded to active rooms/peers. */
     this.remoteNames = new Map();
 
@@ -179,8 +183,30 @@ export class PeerGraph {
    * that resolves at the same moment can create the edge from its side too; the
    * EdgeStore guarantees only one edge is created across all instances.
    */
+  /**
+   * Record an accepted position change. The socket gateway calls this only
+   * after the Mongo presence write; join/recovery reaches it after insertion.
+   */
+  positionChanged(userId) {
+    validateUserId(userId);
+    if (typeof this.edgeStore.bumpPositionRevision !== 'function') return 0;
+    const remember = (revision) => {
+      const previous = this.localPositionRevisions.get(userId) ?? 0;
+      if (revision > previous) this.localPositionRevisions.set(userId, revision);
+      return revision;
+    };
+    try {
+      return chain(this.edgeStore.bumpPositionRevision(userId), remember);
+    } catch (err) {
+      this.syncFailures += 1;
+      this.log?.warn('position revision bump failed:', err?.message ?? err);
+      throw err;
+    }
+  }
+
   async join(roomId, userId, { name = '' } = {}) {
     this.register(roomId, userId, { name });
+    await this.positionChanged(userId);
     return this.sync(roomId, userId);
   }
 
@@ -233,14 +259,64 @@ export class PeerGraph {
     }
   }
 
+  #selfPositionRevision(userId, refresh = false) {
+    if (!refresh && this.localPositionRevisions.has(userId)) {
+      return this.localPositionRevisions.get(userId);
+    }
+    if (typeof this.edgeStore.getPositionRevision !== 'function') {
+      return this.localPositionRevisions.get(userId) ?? 0;
+    }
+    return chain(this.edgeStore.getPositionRevision(userId), (revision) => {
+      const recovered = refresh && revision === 0
+        && typeof this.edgeStore.ensurePositionRevision === 'function'
+        ? this.edgeStore.ensurePositionRevision(userId)
+        : revision;
+      return chain(recovered, (current) => {
+        const local = this.localPositionRevisions.get(userId) ?? 0;
+        // A refresh recovers a lower value after Redis data loss and ensures a
+        // missing self key before the bounded retry. Ordinary bump replies are
+        // max-merged in positionChanged().
+        this.localPositionRevisions.set(userId, refresh ? current : Math.max(local, current));
+        return this.localPositionRevisions.get(userId);
+      });
+    });
+  }
+
+  /** One stale rejection causes exactly one complete retry, never a loop. */
   async #sync(roomId, userId, { isReclaim = false } = {}) {
+    const diff = { added: [], removed: [] };
+    const staleState = { stale: false };
+    await this.#syncAttempt(roomId, userId, { isReclaim, diff, staleState });
+    if (!staleState.stale) return diff;
+
+    // The retry refreshes the self key: it may have been lost with Redis while
+    // this socket stayed live, and a cached pre-flush value would never match.
+    staleState.stale = false;
+    await this.#syncAttempt(roomId, userId, {
+      isReclaim,
+      diff,
+      staleState,
+      refreshSelfRevision: true,
+    });
+    return diff;
+  }
+
+  async #syncAttempt(roomId, userId, {
+    isReclaim = false,
+    diff = { added: [], removed: [] },
+    staleState = { stale: false },
+    refreshSelfRevision = false,
+  } = {}) {
     const room = this.#findRoom(roomId);
     const state = room?.users.get(userId);
     if (!state) return emptyDiff();
 
     const started = performance.now();
+    let selfRevision;
     let nearbyDrop;
     try {
+      const revisionRead = this.#selfPositionRevision(userId, refreshSelfRevision);
+      selfRevision = isPromise(revisionRead) ? await revisionRead : revisionRead;
       nearbyDrop = await this.findNearby(roomId, userId, this.dropRadiusPx);
     } catch (err) {
       this.syncFailures += 1;
@@ -272,7 +348,8 @@ export class PeerGraph {
       const id = typeof neighbor === 'string' ? neighbor : neighbor?.id;
       if (typeof id !== 'string' || id === userId) continue;
       const dist = typeof neighbor === 'object' && Number.isFinite(neighbor.distancePx) ? neighbor.distancePx : Infinity;
-      dropEntries.push({ id, distancePx: dist });
+      const positionRevision = typeof neighbor === 'object' ? neighbor.positionRevision : undefined;
+      dropEntries.push({ id, distancePx: dist, positionRevision });
     }
     const dropMap = new Map(dropEntries.map((e) => [e.id, e.distancePx]));
     const dropSet = new Set(dropEntries.map((e) => e.id));
@@ -297,8 +374,7 @@ export class PeerGraph {
       currentByPeer.set(peerId, edge);
     }
 
-    const added = [];
-    const removed = [];
+    const { added, removed } = diff;
 
     // First, remove edges that have drifted beyond drop radius (or peer gone).
     // Existing edges with distance between radius and drop are kept (hysteresis).
@@ -326,7 +402,7 @@ export class PeerGraph {
     // the removal pass), so the degree this sync can actually offer is the old
     // degree minus the removals plus whatever it has already created.
     const liveDegree = currentByPeer.size - removed.length;
-    for (const { id: peerId } of candidates) {
+    for (const { id: peerId, positionRevision } of candidates) {
       if (currentByPeer.has(peerId)) continue;
       // Our own degree is known locally: once full, no further create can win,
       // so stop instead of making the store reject every farther candidate.
@@ -345,13 +421,30 @@ export class PeerGraph {
 
       let outcome;
       try {
-        outcome = await this.edgeStore.createEdge(roomId, userId, peerId);
+        const hasPeerRevision = Number.isSafeInteger(positionRevision) && positionRevision >= 0;
+        const expectedRevisions = hasPeerRevision ? Object.create(null) : undefined;
+        if (expectedRevisions) {
+          expectedRevisions[userId] = selfRevision;
+          expectedRevisions[peerId] = positionRevision;
+        }
+        outcome = await this.edgeStore.createEdge(
+          roomId,
+          userId,
+          peerId,
+          expectedRevisions ? { expectedRevisions } : undefined,
+        );
       } catch (err) {
         this.syncFailures += 1;
         this.log?.warn('edge store create failed (failing safe):', err?.message ?? err);
         continue;
       }
       if (!outcome?.created) {
+        if (outcome?.stale) {
+          this.meshCounters.staleRejections += 1;
+          staleState.stale = true;
+          this.log?.debug?.(`stale revision rejected edge ${userId}<->${peerId}`);
+          return { added, removed };
+        }
         if (outcome?.capped) {
           this.meshCounters.cappedRejections += 1;
           this.log?.debug?.(`cap rejected edge ${userId}<->${peerId} (capped)`);
@@ -361,6 +454,52 @@ export class PeerGraph {
 
       const [a, b] = normalizePair(userId, peerId);
       const edge = buildEdgeRecord(roomId, a, b, outcome.generation);
+
+      // leave() does not wait for an in-flight Redis create. If it won the
+      // race, removeUser already ran and this create would otherwise resurrect
+      // an orphan edge and emit peer:connect for a departed local session.
+      if (this.#findRoom(roomId)?.users.get(userId) !== state) {
+        await this.#removeSingleEdge(roomId, userId, peerId, edge);
+        return { added, removed };
+      }
+
+      // A proximity result and its separately-read revisions are not one
+      // cross-store snapshot. Confirm the current position after winning the
+      // atomic create but before exposing the edge to either socket. If the
+      // position changed, roll back silently and take the existing single
+      // bounded retry instead of emitting an offer for a stale position.
+      let confirmation;
+      try {
+        confirmation = await this.findNearby(roomId, userId, this.radiusPx);
+      } catch (err) {
+        await this.#removeSingleEdge(roomId, userId, peerId, edge);
+        this.syncFailures += 1;
+        this.log?.warn('edge create confirmation failed (rolled back):', err?.message ?? err);
+        return { added, removed };
+      }
+      const confirmedPeer = (confirmation ?? []).find((neighbor) =>
+        (typeof neighbor === 'string' ? neighbor : neighbor?.id) === peerId);
+      // Confirmation adds a second await after the leave race check above.
+      // Re-check local session identity before exposing the edge as well.
+      if (this.#findRoom(roomId)?.users.get(userId) !== state) {
+        await this.#removeSingleEdge(roomId, userId, peerId, edge);
+        return { added, removed };
+      }
+      const confirmedDistance = typeof confirmedPeer === 'object'
+        ? confirmedPeer?.distancePx
+        : undefined;
+      const stillWithinConnectRadius = confirmedPeer !== undefined
+        && (Number.isFinite(confirmedDistance)
+          ? confirmedDistance <= this.radiusPx
+          : this.dropRadiusPx === this.radiusPx);
+      if (!stillWithinConnectRadius) {
+        await this.#removeSingleEdge(roomId, userId, peerId, edge);
+        this.meshCounters.staleRejections += 1;
+        staleState.stale = true;
+        this.log?.debug(`stale position rolled back edge ${userId}<->${peerId}`);
+        return { added, removed };
+      }
+
       added.push(edge);
       this.meshCounters.edgesCreated += 1;
       this.log?.debug?.(`edge created ${a}<->${b} gen=${outcome.generation}`);
@@ -415,6 +554,7 @@ export class PeerGraph {
       this.#dropRoomIfEmpty(room);
     }
 
+    this.localPositionRevisions.delete(userId);
     let raw;
     try {
       raw = this.edgeStore.removeUser(userId);

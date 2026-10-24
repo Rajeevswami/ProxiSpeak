@@ -87,6 +87,7 @@ test('two-instance live runScaleCheck passes all 8 checks and exits cleanly', sk
   assert.equal(report.ok, true, report.lines.join('\n'));
   assert.equal(report.checks.length, 8);
   assert.ok(report.checks.every((c) => c.ok));
+  assert.match(report.checks[4].detail, /candidate/, 'scale-check must await a valid cross-instance ICE candidate');
 });
 
 test('cross-instance signal validation refuses unjoined, unknown/far peer, stale generation, spoofed sender, oversized SDP, and rate flood without dropping socket', skipOpts, async (t) => {
@@ -202,8 +203,9 @@ test('200 simultaneous cross-instance boundary crossings emit ONE peer:connect p
       (left.emit('join', { roomId: 'lobby', name: `L${i}` }), waitEvent(left, 'joined')),
       (right.emit('join', { roomId: 'lobby', name: `R${i}` }), waitEvent(right, 'joined')),
     ]);
-    // Isolate each pair along its own horizontal lane 250 px apart vertically
-    const laneY = 100 + i * 180;
+    // Ten real, unclamped lanes in the 1080px world. 120px separation is
+    // beyond the 115px drop radius, so pairs cannot interfere via hysteresis.
+    const laneY = i * 120;
     left.emit('move', { x: 100, y: laneY });
     right.emit('move', { x: 500, y: laneY });
     pairs.push({ i, laneY, left, right, idL: jl.selfId, idR: jr.selfId, leftEvents, rightEvents, leftDiscs, rightDiscs });
@@ -287,7 +289,10 @@ test('cross-instance presence sweep expires remote socket via raw transport clos
     (clientV.emit('join', { roomId: 'lobby', name: 'SurvivorV' }), waitEvent(clientV, 'joined')),
   ]);
 
-  await cleanupOnBoot('other-crashed-node', { presenceModel: cluster.backing.presenceModel });
+  await cleanupOnBoot('other-crashed-node', {
+    presenceModel: cluster.backing.presenceModel,
+    multiInstance: true,
+  });
   assert.equal(cluster.backing.rows.size, 2, 'boot cleanup never deletes another live instance rows');
 
   // Connect U & V within 40 px across instances
@@ -409,7 +414,7 @@ test('hard crash (kill -9) orphan edges are swept via SCAN (never KEYS), notifyi
     // Simulate OS `kill -9` on `nodeCrash` + boot cleanup of `crash-node` presence
     await nodeCrash.killAbruptly();
     doomed.close();
-    await cleanupOnBoot('crash-node', { presenceModel: backing.presenceModel });
+    await cleanupOnBoot('crash-node', { presenceModel: backing.presenceModel, multiInstance: true });
 
     assert.equal((await nodeSurvive1.io.edgeStore.allEdges()).length, 1, 'orphan edge remains in Redis right after SIGKILL');
 
@@ -427,7 +432,11 @@ test('hard crash (kill -9) orphan edges are swept via SCAN (never KEYS), notifyi
       1,
       'surviving peer notified ONCE of crashed peer removal',
     );
-    assert.equal(await nodeSurvive1.io.edgeStore.countStoreKeys(), 0, 'zero orphan Redis keys remain');
+    // The live survivor legitimately owns a position-revision key. Leave before
+    // asserting that the whole namespace is empty, not merely orphan-free.
+    survivor.close();
+    await delay(100);
+    assert.equal(await nodeSurvive1.io.edgeStore.countStoreKeys(), 0, 'zero Redis keys remain after both users leave');
   } finally {
     doomed.close();
     survivor.close();

@@ -31,7 +31,7 @@ export function createAudioMixer({
   let warned = false;
   let outerPx = 100;
   let lastUpdateMs = -Infinity;
-  let visibilityListening = false;
+  let lifecycleListening = false;
   const peers = new Map();
 
   const warnUnavailableOnce = () => {
@@ -62,24 +62,31 @@ export function createAudioMixer({
     }
   };
 
-  const ensureVisibilityListener = () => {
-    if (visibilityListening || !doc?.addEventListener) return;
+  const ensureLifecycleListeners = () => {
+    if (lifecycleListening || !doc?.addEventListener) return;
     doc.addEventListener('visibilitychange', onVisibilityChange);
-    visibilityListening = true;
+    doc.addEventListener('pointerdown', onPageGesture);
+    lifecycleListening = true;
   };
 
   function onVisibilityChange() {
-    if (doc?.visibilityState === 'visible' && context?.state === 'suspended') {
+    if (doc?.visibilityState === 'visible'
+      && (context?.state === 'suspended' || context?.state === 'interrupted')) {
       void resume();
     }
   }
 
+  function onPageGesture() {
+    if (context?.state === 'suspended' || context?.state === 'interrupted') void resume();
+  }
+
   /** Create or resume the shared context; call directly from the Join gesture. */
   const resume = async () => {
-    ensureVisibilityListener();
+    ensureLifecycleListeners();
     const audioContext = ensureContext();
     if (!audioContext) return false;
-    if (audioContext.state === 'suspended' && typeof audioContext.resume === 'function') {
+    if ((audioContext.state === 'suspended' || audioContext.state === 'interrupted')
+      && typeof audioContext.resume === 'function') {
       try {
         await audioContext.resume();
       } catch {
@@ -105,7 +112,7 @@ export function createAudioMixer({
 
   const attach = (peerId, stream, element) => {
     remove(peerId);
-    ensureVisibilityListener();
+    ensureLifecycleListeners();
     if (!stream || !element) return null;
     element.muted = true;
     const audioContext = ensureContext();
@@ -115,9 +122,11 @@ export function createAudioMixer({
       return null;
     }
 
+    let source = null;
+    let gain = null;
     try {
-      const source = audioContext.createMediaStreamSource(stream);
-      const gain = audioContext.createGain();
+      source = audioContext.createMediaStreamSource(stream);
+      gain = audioContext.createGain();
       gain.gain.value = 0;
       source.connect(gain);
       // Deliberately do not connect gain -> destination until updateGains has
@@ -132,6 +141,10 @@ export function createAudioMixer({
       });
       return { source, gain };
     } catch {
+      // A partially built chain is not in `peers` yet, so remove() cannot
+      // reach it. Disconnect it here before falling back to element playback.
+      try { source?.disconnect(); } catch { /* best-effort setup rollback */ }
+      try { gain?.disconnect(); } catch { /* best-effort setup rollback */ }
       fallbackElement(element);
       peers.set(peerId, { source: null, gain: null, element, destinationConnected: true, gainValue: 1, distancePx: null });
       return null;
@@ -184,9 +197,10 @@ export function createAudioMixer({
 
   const closeAll = async () => {
     for (const peerId of [...peers.keys()]) remove(peerId);
-    if (visibilityListening) {
+    if (lifecycleListening) {
       doc?.removeEventListener?.('visibilitychange', onVisibilityChange);
-      visibilityListening = false;
+      doc?.removeEventListener?.('pointerdown', onPageGesture);
+      lifecycleListening = false;
     }
     const oldContext = context;
     context = null;

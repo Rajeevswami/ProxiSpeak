@@ -557,78 +557,165 @@ Result: **PASS 37/37 checks**, 0 dropped signals at the default burst.
 - Stereo panning and obstacle occlusion remain Week 4 scope, not started.
 
 
-## Day 14 — 2026-10-24 — Week 2 wrap-up: hardening, polish, documentation
+## Day 14 — 2026-10-24 — Week 3 wrap-up: hardening, regressions, documentation
 
-*Commits: `4d5dd96`, `02b7c0a`, `a6c381e`, `ad845d7`, `b182735`, `a3d5f39`, `4754632`*
+**Hardening commits:** `4d5dd96`, `02b7c0a`, `a6c381e`, `ad845d7`,
+`635db42`, `9b85dd1`.
 
-**Hardening (A)**
+* Production HTTP CORS with empty `CLIENT_URL` is same-origin only, matching
+  Socket.io. Non-production defaults remain unchanged and the rule is documented.
+* Server and client `VITE_*` environment keys have exact bidirectional example
+  drift checks, with comments/defaults and placeholders only.
+* Validated numeric, boolean and URL settings report one concise startup error
+  naming the variable, without echoing values/credentials or printing a stack.
+* A pure-tested, single-line paused-audio hint covers `suspended` and
+  `interrupted`; there is no per-frame React audio state.
 
-* **HTTP CORS alignment** — When `NODE_ENV=production` and `CLIENT_URL` is empty,
-  the HTTP layer is now same-origin only (no origin reflection), matching the
-  Socket.io layer exactly. Non-production defaults unchanged. Added
-  `httpCorsOrigin()` in `server/src/app.js`, documented the rule in
-  `.env.example`, regression test in `server/test/app.test.js`.
-* **Config drift guard** — `server/test/configDrift.test.js` verifies every
-  environment variable read in `server/src/config/index.js` appears in
-  `.env.example` (and vice versa), and the same for client `VITE_*` variables.
-  Added all missing entries to `.env.example`.
-* **Config validation** — Added tests for `MAX_PEERS_PER_USER`,
-  `PEER_DISCONNECT_RADIUS_PX`, socket rate limits, `AUDIT_TARGET_MS`,
-  `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_EDGE_TTL_SECONDS`, `MONGO_TIMEOUT_MS`.
-  All reject invalid values with one clear error line naming the variable.
-* **Audio-blocked hint** — Pure function `shouldShowAudioPausedHint()` in
-  `client/src/audio/audioPausedHint.js` detects `suspended` and `interrupted`
-  AudioContext states while peers exist. The `AudioStatus` overlay shows one
-  hint line. Unit tested with 8 tests.
+**Bug-hunt fixes (each with regression coverage):**
 
-**Bug fix (B)**
+* `b182735` — do not evict a peer name while that peer still has edges.
+* `951dad2` — roll back an edge created after its local user finished leaving.
+* `b0b0e6f` — ignore saved ICE/track/state callbacks from torn-down WebRTC edges.
+* `8cc0b21` — discard stats reads that finish after unwatch/replacement.
+* `d8fdb79` — disconnect partial Web Audio chains after setup failure.
+* `0f92b2b` — resume Safari-style `interrupted` contexts on existing recovery paths.
+* `5a19ab8` — external mesh-check uses the exact room and current server config;
+  embedded before/after behavior remains intact.
+* `3be48c1` — socket shutdown drains peer syncs before backing stores close.
+* `8118523` — close/unregister a partially initialized RTCPeerConnection.
+* `e5399f6` — a real page pointer listener implements the advertised click-to-resume.
+* `c5a0091` — scale-check awaits a valid cross-instance ICE candidate, not only SDP.
+* `7dbdf8e` — single-instance restart cleanup removes presence left under a previous
+  random instance id; multi-instance cleanup remains instance-scoped.
 
-* **Peer name cache eviction** — `onEdgeRemoved` in `server/src/sockets/index.js`
-  previously called `forgetPeerName` for BOTH endpoints of every removed edge,
-  even when one endpoint still had other edges. Fixed to not evict names on
-  edge removal (only on leave/departure). Regression test in
-  `server/test/peerGraph.nameCache.test.js`.
+The initial test-gap list, failure evidence and file mapping are in
+`docs/WEEK3.md`. `9ef2bc8` adds orphan-sweep overlap/drain and concurrent mixer
+close coverage. `4b4f6a8` removes verified-unused exports and corrects package
+metadata. No production change was made for audit candidates that did not
+reproduce a defect.
 
-**Bug hunt checklist (checked, no other genuine bugs found):**
+**Documentation**
 
-* AudioMixer `closeAll` — safe (sets `context = null` before close; double-close is a no-op)
-* `attach()` after `closeAll()` — works correctly (creates new context)
-* Redis recovery reconcile — `onRecovered` fires `reconcileLocalUsers()`, errors caught
-* `pendingSyncs` cleanup — proper `then/catch` cleanup with identity check
-* `pendingCleanups` in socket server — tracked promises removed on resolve/reject
-* `edgeSweep` timer — `unref()`'d, cleared on shutdown, `running` flag prevents overlap
-* `presenceCleanup` timer — same pattern as edgeSweep
-* `remoteNames` cache — bounded by active rooms/users, cleaned on leave/dropRoom/clearRoom
-* `trackedPairUsers` — Redis-only, edgeSweep guards with `typeof === 'function'`
-* Redis adapter `guardPubSubMethods` — catches unhandled rejections on pub/sub methods
+* README rewritten around current architecture, commands, CORS and verification.
+* Added `docs/WEEK3.md`; rewrote `docs/DEMO_WEEK3.md` as an approximately
+  eight-minute two-instance script with no fabricated transcript.
+* Rewrote `docs/LIMITATIONS.md` and this requirements trace so live MongoDB and
+  browser claims are not inferred from Node tests.
+* Earlier documentation commits `a3d5f39`, `4754632`, `8bf25dc` remain in history;
+  stale Week 2 wrap-up text and unverified claims are superseded.
 
-**Documentation (D)**
+**Verified in this environment (2026-10-24):**
 
-* README rewritten as one coherent document with architecture diagram, folder
-  structure, quick start (single + two instances), script table, test commands.
-* `docs/WEEK2.md` — Week 2 deliverables, full Socket.io event table with
-  payloads, data model, complete configuration table.
-* `docs/DEMO_WEEK3.md` — 8-minute demo script with exact commands, expected
-  results, and troubleshooting for each step.
-* `docs/LIMITATIONS.md` — honest list: no peer eviction, STUN only, per-instance
-  rate limiters, sticky sessions, edges not preserved across Redis wipe, audio
-  quality not measured, 60 FPS not optimized, live audio not automated.
-* `docs/REQUIREMENTS_TRACE.md` — updated with Day 14 rows (#19–#24).
+* `npm run install:all` passed earlier; final `npm ci --prefix server` and
+  `npm ci --prefix client` clean lockfile installs also passed (130 and 74
+  packages). No dependency or lockfile changed. npm reported one high-severity
+  server advisory and zero client vulnerabilities; no dependency fix was applied.
+* `npm test` without services: server **188 tests, 131 passed, 57 skipped**;
+  client **165/165 passed**.
+* Real Redis 7.2.5 with `REDIS_URL_TEST` and its binary on `PATH`: server
+  **188 tests, 156 passed, 32 skipped**; client **165/165 passed**.
+* `npm run build` passed (Vite, 80 modules).
+* Embedded real-Redis `npm run mesh-check`: **PASS 37/37**. External two-instance
+  Socket.io/Redis harness: **PASS 18/18** in exact room `lobby`.
+* Two-instance real-Redis `runScaleCheck` integration: **PASS 8/8**, including
+  offer, answer and valid ICE candidate relay.
 
-**Verified in this environment (2026-10-24)**
+**NOT VERIFIED here:**
 
-* Server: `178` tests total, `121` passed, `0` failed, `57` skipped (MongoDB)
-* Client: `159` tests, `159` passed, `0` failed, `0` skipped
-* `npm run build` — succeeds
-* `npm test` — all suites passed
-* MongoDB and Redis unavailable in this sandbox (no `apt` access, no internet
-  for package repos). MongoDB-backed and Redis-backed tests skip honestly.
-* `npm run audit`, `npm run scale-check`, `npm run mesh-check` — NOT VERIFIED
-  (require running MongoDB + Redis + two server instances)
+* MongoDB could not be provisioned. The remaining 32 skips are MongoDB suites;
+  a MongoDB+Redis zero-skip run was not achieved. Real `npm run audit` was
+  attempted and exited 1 with `ECONNREFUSED 127.0.0.1:27017`, producing no audit
+  result. Mongo geospatial performance, seed and normal Mongo-backed server/CLI
+  runs remain unverified. External harnesses use in-memory presence backing.
+* No live two-browser microphone/hearing, audible attenuation, Safari interruption
+  or speaker-output check ran. The demo is a presenter script, not a completed
+  live-demo claim.
 
-**Scope boundary**
+**Scope boundary:** no dependency, TypeScript, deployment, SFU/TURN, Express
+static hosting, stereo panning, obstacle occlusion, room persistence or new UI
+feature beyond the paused-audio hint. Week 4 room persistence/obstacles, stereo
+panning and 60 FPS work remain not started.
 
-* No new dependency, no TypeScript, no SFU/MCU, no TURN, no deploy config, no
-  Express-served client build, no new feature beyond the audio paused hint.
-* Week 4 (stereo panning, obstacle occlusion, room persistence, 60 FPS) remains
-  not started.
+
+## Day 14b — 2026-10-24 — stale-edge fencing, sweep validation, verification
+
+**Base and implementation commits:** QA fixes `fe90014` and `69066be`; then
+`ac887e8` (failing regression evidence), `07df50e` (store revisions), `bf72efd`
+(graph/socket fencing), `9d072ac` (bounded sweep validation), and `434472d`
+(body-parser patch). The subsequent documentation commit is visible in `git log`.
+Every listed short hash was checked with `git cat-file -t` and resolves to a commit.
+
+**Test-first race evidence and fix:**
+
+* Before the fix, all five new regression tests failed with real Redis: the
+  deterministic gated read left a 460 px edge on Memory and Redis, all 200/200
+  seeded interleavings on each store left an out-of-range edge, and two real
+  Socket.io instances emitted a 460 px `peer:connect`. After the fix, the expanded
+  file passes 8/8 with zero quiescent violations.
+* Accepted moves write MongoDB presence, then bump a monotonic per-user position
+  revision, then sync. Neighbor reads carry revisions; Memory checks both expected
+  revisions synchronously and Redis checks them in the existing create Lua script.
+  A stale result triggers exactly one complete bounded re-sync, never a loop.
+* The Mongo-write/revision-bump window is documented and tested: an old-revision
+  create before the bump is handled by the mover's post-bump sync; a create after
+  the bump is rejected. This is a quiescent invariant, not a cross-store
+  transaction claim.
+* The existing SCAN-based sweep validates at most 100 live edges per rotating
+  batch against stored positions. Atomic winners remove beyond-drop edges and
+  emit normal `peer:disconnect`; exactly-at-drop edges remain. `mesh-check` now
+  prints `staleRejections` and `validationRemovals`; `/health` gained no I/O.
+* Redis revision keys use validated per-user names, `INCR` + `EXPIRE`, and
+  `removeUser` cleanup. A controlled unchanged-edge move measured 8 application
+  Redis commands before and 12 after; top-level round trips rose from 2 to 4
+  (one revision `EVAL` and one batched `MGET`). Measurement-only `CONFIG
+  RESETSTAT` is excluded.
+
+**Dependency and documentation corrections:**
+
+* Only `server/package-lock.json` changed for the advisory: transitive
+  `body-parser` 1.20.8 → 1.20.9 within the existing Express 4.22.3 range. No new
+  package or major upgrade was added. Server and client audits report zero total
+  vulnerabilities after fresh installs.
+* Corrected radius/reconcile overclaims, historical instance-ID defaults, the
+  Room obstacle comment (no occlusion calculation exists), current verification
+  counts, and the former dependency-advisory limitation.
+
+**Measured verification in this environment:**
+
+* Fresh server/client `npm ci`: passed (130 and 74 packages). Client build:
+  passed with Vite 6.4.4 and 80 modules. Server/client `npm audit`: 0 high, 0
+  critical, 0 total each.
+* Without services: server **206 tests, 143 passed, 63 skipped**; client **165/165**.
+  With real Redis 7.2.5: server **206 tests, 174 passed, 32 skipped**; client
+  **165/165**. Every remaining skip is MongoDB-dependent and is not a pass.
+* Real scale-check **8/8**; embedded capped/unlimited mesh-check **37/37** with
+  1,759/1,759 signals; external mesh-check **18/18** with 299/299 signals.
+  Embedded counters were `staleRejections=5` and `4`, `validationRemovals=0`.
+* Independent random-layout probe: 24 random 50-user layouts plus one identical
+  layout on each store, zero mismatches and zero backward-mode mismatches.
+  Existing 200-concurrent-create cap tests passed on both stores; signal-burst
+  tests passed 2/2 (160 signals fit, flood guard still drops excess).
+* Three separate 180-second, 60-user, two-instance real-Redis soaks passed. Each
+  had 20 settled samples with zero violations/errors at every sample and zero
+  Redis keys, edges, presence rows, sockets, rooms, names, and pending syncs after
+  cleanup. Measured resources:
+
+| Soak | Baseline RSS MB | First joined RSS MB | Last RSS MB | Post-cleanup RSS MB | Peak Redis keys |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 108.19 | 125.84 | 161.78 | 161.49 | 1,761 |
+| 2 | 100.13 | 118.46 | 164.55 | 162.53 | 1,783 |
+| 3 | 109.39 | 126.71 | 165.29 | 163.32 | 1,799 |
+
+Post-cleanup RSS remained above baseline; these observations are not a “no leak”
+claim. Exact failing/passing logs and command measurements were kept outside Git.
+
+**NOT VERIFIED here:** MongoDB could not be provisioned, so the 32 MongoDB test
+skips, zero-skip MongoDB+Redis run, real spatial audit, seed/index/explain and
+normal Mongo-backed server/CLI runs remain unverified. No live browser microphone,
+hearing, attenuation, Safari-interruption or speaker-output test ran. External
+harnesses and soaks used real Socket.io/Redis with in-memory presence backing.
+
+**Scope boundary:** no new feature/library/dependency, TypeScript, deployment,
+SFU/TURN, Express static hosting, Week 4 panning/occlusion/room persistence, or
+new UI work. Unlimited mode and drop-radius-equals-connect-radius behavior remain
+covered and unchanged.
