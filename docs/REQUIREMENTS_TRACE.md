@@ -1,14 +1,14 @@
-# Requirements Trace — up to Day 13
+# Requirements Trace — up to Day 14
 
-Company requirements through the Mid-Project Review plus Week 3 Days 11–13, traced
-to files, tests and exact commands. Status is honest. Days 1–12 were verified with
-MongoDB Community Server `8.0.0` and `redis-server` `7.4.2` (`287 / 287` tests,
-`0` skipped). **Day 13 (2026-10-22) was verified live against `redis-server` `6.2.14`
-with `REDIS_URL_TEST` — server `136` passed / `32` skipped of `168` (all MongoDB-backed),
-client `151` passed, plus `npm run mesh-check` `PASS 37/37` — but this sandbox has
-no `mongod` and cannot download one, so the MongoDB path and live two-browser
-WebRTC hearing checks remain `NOT VERIFIED` here; see
-`docs/MESH_OPTIMIZATION.md`, `docs/REDIS_SCALING.md` and `docs/DAY11.md`.
+Company requirements through the Mid-Project Review plus Week 3 Days 11–13 and
+the Day 14 wrap-up, traced to files, tests and exact commands. Status is honest.
+Days 1–12 were verified with MongoDB Community Server `8.0.0` and `redis-server`
+`7.4.2` (`287 / 287` tests, `0` skipped). **Day 13 (2026-10-22) was verified live
+against `redis-server` `6.2.14` with `REDIS_URL_TEST` — server `136` passed / `32`
+skipped of `168` (all MongoDB-backed), client `151` passed, plus `npm run mesh-check`
+`PASS 37/37` — but this sandbox has no `mongod` and cannot download one, so the
+MongoDB path and live two-browser WebRTC hearing checks remain `NOT VERIFIED` here;
+see `docs/MESH_OPTIMIZATION.md`, `docs/REDIS_SCALING.md` and `docs/DAY11.md`.
 
 | # | Requirement | Implementing files | Test files | Command that demonstrates it | Status |
 |---|---|---|---|---|---|
@@ -31,8 +31,16 @@ WebRTC hearing checks remain `NOT VERIFIED` here; see
 | 17 | Week 3 — Mesh Scaling (cap + hysteresis + nearest-first + reclaim + mesh-check) | `server/src/config/index.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/peerGraph.js`, `server/src/sockets/index.js`, `server/scripts/mesh-check.js`, `client/src/realtime/meshIndicator.js`, `client/src/components/AudioStatus.jsx` | `server/test/mesh.config.test.js`, `server/test/edgeStore.contract.test.js`, `server/test/peerGraph.mesh.test.js`, `server/test/mesh.twoInstance.test.js`, `client/test/meshIndicator.test.js` | `REDIS_URL="redis://127.0.0.1:6379" npm run mesh-check`; `REDIS_URL_TEST="redis://127.0.0.1:6379" npm test` | DONE (`mesh-check` PASS `37/37`; cap `49 → 8` connections on N=50, edges `1225 → 190`, `0` boundary churn vs `100`; MongoDB path NOT VERIFIED here — no `mongod`) |
 | 18 | Week 3 — Redis Pub/Sub multi-instance Socket.io & shared edge state (Day 12) | `server/src/db/redis.js`, `server/src/sockets/redisAdapter.js`, `server/src/services/edgeStore.js`, `server/src/services/redisEdgeStore.js`, `server/src/services/edgeSweep.js`, `server/src/services/peerGraph.js`, `server/src/services/presenceCleanup.js`, `server/src/sockets/index.js`, `server/src/app.js`, `server/src/config/index.js`, `server/scripts/scale-check.js` | `server/test/edgeStore.contract.test.js`, `server/test/redis.failure.test.js`, `server/test/redis.scale.integration.test.js`, `server/test/app.test.js`, `server/test/config.test.js` | `MONGO_URI_TEST="mongodb://127.0.0.1:27017/proxispeak_qa" REDIS_URL_TEST="redis://127.0.0.1:6379" npm test`; `npm run scale-check`; `docs/REDIS_SCALING.md` | DONE (`8/8` live `scale-check` checks passed on `:4000` & `:4001`; `287/287` tests passed with `0` skipped; live browser check NOT VERIFIED — no browser) |
 
+| 19 | Day 14: HTTP CORS aligned with Socket.io same-origin policy in production | `server/src/app.js` (`httpCorsOrigin`), `.env.example` | `server/test/app.test.js` | `node --test server/test/app.test.js` | DONE |
+| 20 | Day 14: Config drift guard (env vars vs .env.example) | `server/test/configDrift.test.js`, `.env.example`, `client/.env.example` | `server/test/configDrift.test.js` | `node --test server/test/configDrift.test.js` | DONE |
+| 21 | Day 14: Config validation (clear one-line errors per variable) | `server/src/config/index.js` | `server/test/config.test.js` | `node --test server/test/config.test.js` | DONE |
+| 22 | Day 14: Audio paused hint (browser autoplay policy) | `client/src/audio/audioPausedHint.js`, `client/src/components/AudioStatus.jsx`, `client/src/hooks/useSocket.js`, `client/src/App.jsx` | `client/test/audio.audioPausedHint.test.js` | `npm run test:client` | DONE |
+| 23 | Day 14: Fix — peer name cache not evicted on edge removal | `server/src/sockets/index.js` | `server/test/peerGraph.nameCache.test.js` | `node --test server/test/peerGraph.nameCache.test.js` | DONE |
+| 24 | Day 14: Documentation (README rewrite, WEEK2, DEMO_WEEK3, LIMITATIONS) | `README.md`, `docs/WEEK2.md`, `docs/DEMO_WEEK3.md`, `docs/LIMITATIONS.md`, `CHANGELOG.md`, `docs/REQUIREMENTS_TRACE.md` | — | — | DONE |
+
 Nothing else was found PARTIAL or MISSING within Week 1, Week 2 or the
 Mid-Review scope. All three Week 3 slices are now DONE: Day 11 attenuation,
-Day 12 Redis multi-instance scaling and Day 13 mesh optimization.
+Day 12 Redis multi-instance scaling and Day 13 mesh optimization. Day 14
+hardening, polish and documentation are DONE.
 **Week 4 rows (stereo panning, obstacle occlusion, room persistence, deploy)
 remain MISSING / not started.**

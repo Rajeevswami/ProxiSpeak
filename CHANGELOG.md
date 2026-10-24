@@ -556,3 +556,79 @@ Result: **PASS 37/37 checks**, 0 dropped signals at the default burst.
   the Day 12 behaviour is unchanged (covered by an explicit test).
 - Stereo panning and obstacle occlusion remain Week 4 scope, not started.
 
+
+## Day 14 — 2026-10-24 — Week 2 wrap-up: hardening, polish, documentation
+
+*Commits: `4d5dd96`, `02b7c0a`, `a6c381e`, `ad845d7`, `b182735`, `a3d5f39`, `4754632`*
+
+**Hardening (A)**
+
+* **HTTP CORS alignment** — When `NODE_ENV=production` and `CLIENT_URL` is empty,
+  the HTTP layer is now same-origin only (no origin reflection), matching the
+  Socket.io layer exactly. Non-production defaults unchanged. Added
+  `httpCorsOrigin()` in `server/src/app.js`, documented the rule in
+  `.env.example`, regression test in `server/test/app.test.js`.
+* **Config drift guard** — `server/test/configDrift.test.js` verifies every
+  environment variable read in `server/src/config/index.js` appears in
+  `.env.example` (and vice versa), and the same for client `VITE_*` variables.
+  Added all missing entries to `.env.example`.
+* **Config validation** — Added tests for `MAX_PEERS_PER_USER`,
+  `PEER_DISCONNECT_RADIUS_PX`, socket rate limits, `AUDIT_TARGET_MS`,
+  `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_EDGE_TTL_SECONDS`, `MONGO_TIMEOUT_MS`.
+  All reject invalid values with one clear error line naming the variable.
+* **Audio-blocked hint** — Pure function `shouldShowAudioPausedHint()` in
+  `client/src/audio/audioPausedHint.js` detects `suspended` and `interrupted`
+  AudioContext states while peers exist. The `AudioStatus` overlay shows one
+  hint line. Unit tested with 8 tests.
+
+**Bug fix (B)**
+
+* **Peer name cache eviction** — `onEdgeRemoved` in `server/src/sockets/index.js`
+  previously called `forgetPeerName` for BOTH endpoints of every removed edge,
+  even when one endpoint still had other edges. Fixed to not evict names on
+  edge removal (only on leave/departure). Regression test in
+  `server/test/peerGraph.nameCache.test.js`.
+
+**Bug hunt checklist (checked, no other genuine bugs found):**
+
+* AudioMixer `closeAll` — safe (sets `context = null` before close; double-close is a no-op)
+* `attach()` after `closeAll()` — works correctly (creates new context)
+* Redis recovery reconcile — `onRecovered` fires `reconcileLocalUsers()`, errors caught
+* `pendingSyncs` cleanup — proper `then/catch` cleanup with identity check
+* `pendingCleanups` in socket server — tracked promises removed on resolve/reject
+* `edgeSweep` timer — `unref()`'d, cleared on shutdown, `running` flag prevents overlap
+* `presenceCleanup` timer — same pattern as edgeSweep
+* `remoteNames` cache — bounded by active rooms/users, cleaned on leave/dropRoom/clearRoom
+* `trackedPairUsers` — Redis-only, edgeSweep guards with `typeof === 'function'`
+* Redis adapter `guardPubSubMethods` — catches unhandled rejections on pub/sub methods
+
+**Documentation (D)**
+
+* README rewritten as one coherent document with architecture diagram, folder
+  structure, quick start (single + two instances), script table, test commands.
+* `docs/WEEK2.md` — Week 2 deliverables, full Socket.io event table with
+  payloads, data model, complete configuration table.
+* `docs/DEMO_WEEK3.md` — 8-minute demo script with exact commands, expected
+  results, and troubleshooting for each step.
+* `docs/LIMITATIONS.md` — honest list: no peer eviction, STUN only, per-instance
+  rate limiters, sticky sessions, edges not preserved across Redis wipe, audio
+  quality not measured, 60 FPS not optimized, live audio not automated.
+* `docs/REQUIREMENTS_TRACE.md` — updated with Day 14 rows (#19–#24).
+
+**Verified in this environment (2026-10-24)**
+
+* Server: `178` tests total, `121` passed, `0` failed, `57` skipped (MongoDB)
+* Client: `159` tests, `159` passed, `0` failed, `0` skipped
+* `npm run build` — succeeds
+* `npm test` — all suites passed
+* MongoDB and Redis unavailable in this sandbox (no `apt` access, no internet
+  for package repos). MongoDB-backed and Redis-backed tests skip honestly.
+* `npm run audit`, `npm run scale-check`, `npm run mesh-check` — NOT VERIFIED
+  (require running MongoDB + Redis + two server instances)
+
+**Scope boundary**
+
+* No new dependency, no TypeScript, no SFU/MCU, no TURN, no deploy config, no
+  Express-served client build, no new feature beyond the audio paused hint.
+* Week 4 (stereo panning, obstacle occlusion, room persistence, 60 FPS) remains
+  not started.
