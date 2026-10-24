@@ -210,6 +210,25 @@ test('a page pointer gesture resumes blocked audio and its listener is removed o
   assert.equal(contexts[0].resumeCalls, 2, 'no gesture listener survives closeAll');
 });
 
+test('concurrent closeAll calls close one AudioContext and remove every lifecycle listener', async () => {
+  const document = fakeDocument();
+  const contexts = [];
+  const mixer = createAudioMixer({
+    AudioContextFactory: class extends FakeAudioContext {
+      constructor() { super(); contexts.push(this); }
+    },
+    document,
+  });
+  await mixer.resume();
+
+  await Promise.all([mixer.closeAll(), mixer.closeAll()]);
+
+  assert.equal(contexts.length, 1);
+  assert.equal(contexts[0].closeCalls, 1);
+  assert.equal(document.listenerCount, 0);
+  assert.equal(mixer.getContext(), null);
+});
+
 test('Safari interrupted contexts resume from the existing gesture and visibility paths', async () => {
   const document = fakeDocument();
   const contexts = [];
