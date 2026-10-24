@@ -87,6 +87,7 @@ test('two-instance live runScaleCheck passes all 8 checks and exits cleanly', sk
   assert.equal(report.ok, true, report.lines.join('\n'));
   assert.equal(report.checks.length, 8);
   assert.ok(report.checks.every((c) => c.ok));
+  assert.match(report.checks[4].detail, /candidate/, 'scale-check must await a valid cross-instance ICE candidate');
 });
 
 test('cross-instance signal validation refuses unjoined, unknown/far peer, stale generation, spoofed sender, oversized SDP, and rate flood without dropping socket', skipOpts, async (t) => {
