@@ -183,6 +183,9 @@ export function createPeerManager({
 
     pc.onicecandidate = (event) => {
       try {
+        // A queued callback from a replaced/closed RTCPeerConnection must not
+        // emit signaling for an edge that is no longer current.
+        if (connections.get(peerId) !== edge) return;
         if (!event?.candidate) return; // end-of-candidates marker: nothing to trickle
         const candidate =
           typeof event.candidate.toJSON === 'function' ? event.candidate.toJSON() : event.candidate;
@@ -194,6 +197,9 @@ export function createPeerManager({
 
     pc.ontrack = (event) => {
       try {
+        // closeEdge() detaches the property, but an already-queued callback can
+        // still run. Never let it recreate audio after teardown/replacement.
+        if (connections.get(peerId) !== edge) return;
         const remote =
           event.streams?.[0] ??
           (typeof MediaStream === 'function' ? new MediaStream([event.track]) : null);
@@ -208,6 +214,9 @@ export function createPeerManager({
 
     pc.onconnectionstatechange = () => {
       try {
+        // In particular, an old "failed" event must not close a newer
+        // generation that now uses the same peerId key.
+        if (connections.get(peerId) !== edge) return;
         const state = pc.connectionState;
         if (state === 'failed' || state === 'closed') {
           // No auto-retry: the server owns the graph and re-creates the edge

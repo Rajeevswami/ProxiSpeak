@@ -450,6 +450,36 @@ test('closeAll leaves zero connections, audio elements, stats timers and active 
   assert.equal(localMedia.released, true);
 });
 
+test('late callbacks from a closed edge cannot recreate audio or close its replacement', async () => {
+  const { socket, createPeerConnection, remoteAudio, manager } = setup();
+  await socket.dispatch('peer:connect', connectEvent({ generation: 1 }));
+  const first = createPeerConnection.created[0];
+  const lateTrack = first.ontrack;
+  const lateStateChange = first.onconnectionstatechange;
+  const lateIceCandidate = first.onicecandidate;
+
+  await socket.dispatch('peer:connect', connectEvent({ generation: 2 }));
+  const second = createPeerConnection.created[1];
+  const signalsBefore = socket.sent.length;
+
+  first.connectionState = 'failed';
+  lateStateChange();
+  lateIceCandidate({ candidate: { candidate: 'candidate:stale' } });
+  lateTrack({ streams: [{ id: 'stale-stream' }] });
+
+  assert.equal(manager.size(), 1, 'the old state callback must not close the current generation');
+  assert.equal(second.closed, false);
+  assert.equal(manager.snapshot()[0].generation, 2);
+  assert.equal(remoteAudio.elements.size, 0, 'a stale track cannot create an orphaned audio element');
+  assert.equal(socket.sent.length, signalsBefore, 'a stale ICE callback cannot emit signaling');
+
+  const currentTrack = second.ontrack;
+  manager.closeAll();
+  currentTrack({ streams: [{ id: 'after-close-all' }] });
+  assert.equal(manager.size(), 0);
+  assert.equal(remoteAudio.elements.size, 0, 'a saved track callback is inert after closeAll');
+});
+
 test('listen-only adds a recvonly audio transceiver and no track', async () => {
   const { socket, createPeerConnection } = setup({ withMic: false });
   await socket.dispatch('peer:connect', connectEvent({ initiator: true, generation: 1 }));
