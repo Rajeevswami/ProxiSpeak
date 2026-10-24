@@ -34,7 +34,25 @@ test('cleanup query double: instance ownership, atomic age recheck, room broadca
   t.mock.method(UserPresence, 'deleteMany', async (filter) => {
     assert.deepEqual(filter, { instanceId: 'ours' }); return { deletedCount: 2 };
   });
-  await cleanupOnBoot('ours');
+  await cleanupOnBoot('ours', { multiInstance: true });
+});
+
+test('single-instance boot cleanup removes rows from a previous random instance id', async () => {
+  const filters = [];
+  const presenceModel = {
+    deleteMany: async (filter) => {
+      filters.push(filter);
+      return { deletedCount: 0 };
+    },
+  };
+
+  await cleanupOnBoot('replacement-node', { presenceModel, multiInstance: false });
+  await cleanupOnBoot('replacement-node', { presenceModel, multiInstance: true });
+
+  assert.deepEqual(filters, [
+    {},
+    { instanceId: 'replacement-node' },
+  ], 'only multi-instance boot cleanup may preserve other instances\' rows');
 });
 
 test('cleanup timer uses config, does not overlap, stops and drains in-flight sweep', async (t) => {

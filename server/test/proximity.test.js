@@ -110,8 +110,8 @@ mongoTest('live-only queries, room-scoped stale broadcasts, heartbeat and boot o
   await upsertPosition({ id: 'fresh', roomId: 'room', instanceId: 'day7', name: 'fresh',
     color: '#fff', x: 20, y: 20, lastSeen: Date.now() }, geo);
   assert.equal((await UserPresence.findOne({ sessionId: 'fresh' })).x, 20);
-  await cleanupOnBoot('day7');
-  assert.deepEqual((await UserPresence.find().lean()).map((u) => u.sessionId), ['foreign']);
+  await cleanupOnBoot('day7', { multiInstance: false });
+  assert.deepEqual((await UserPresence.find().lean()).map((u) => u.sessionId), []);
   const stop = startPresenceCleanup(io);
   await stop(); // Clears interval, including pending work, before DB shutdown.
 });

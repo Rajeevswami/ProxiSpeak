@@ -288,7 +288,10 @@ test('cross-instance presence sweep expires remote socket via raw transport clos
     (clientV.emit('join', { roomId: 'lobby', name: 'SurvivorV' }), waitEvent(clientV, 'joined')),
   ]);
 
-  await cleanupOnBoot('other-crashed-node', { presenceModel: cluster.backing.presenceModel });
+  await cleanupOnBoot('other-crashed-node', {
+    presenceModel: cluster.backing.presenceModel,
+    multiInstance: true,
+  });
   assert.equal(cluster.backing.rows.size, 2, 'boot cleanup never deletes another live instance rows');
 
   // Connect U & V within 40 px across instances
@@ -410,7 +413,7 @@ test('hard crash (kill -9) orphan edges are swept via SCAN (never KEYS), notifyi
     // Simulate OS `kill -9` on `nodeCrash` + boot cleanup of `crash-node` presence
     await nodeCrash.killAbruptly();
     doomed.close();
-    await cleanupOnBoot('crash-node', { presenceModel: backing.presenceModel });
+    await cleanupOnBoot('crash-node', { presenceModel: backing.presenceModel, multiInstance: true });
 
     assert.equal((await nodeSurvive1.io.edgeStore.allEdges()).length, 1, 'orphan edge remains in Redis right after SIGKILL');
 
