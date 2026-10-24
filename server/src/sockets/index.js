@@ -305,6 +305,10 @@ export function createSocketServer({
 
   io.drainSessions = async () => {
     while (pendingCleanups.size) await Promise.allSettled([...pendingCleanups]);
+    // Reclaim and Redis-recovery syncs are intentionally fire-and-forget during
+    // normal operation, but they still use MongoDB/Redis and must finish before
+    // shutdown closes those clients.
+    await peers.drainSyncs();
   };
 
   io.on('connection', (socket) =>
