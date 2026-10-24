@@ -9,6 +9,26 @@ import config from './config/index.js';
 import logger from './utils/logger.js';
 import { runSpatialAudit, validateAuditParams } from './services/spatialAudit.js';
 
+/**
+ * HTTP CORS origin resolver. Mirrors the Socket.io policy in utils/origin.js
+ * so the HTTP API and the WebSocket can never drift apart.
+ *
+ *   CLIENT_URL list      -> strict allow-list
+ *   CLIENT_URL="*"       -> `true` (reflect any origin)
+ *   CLIENT_URL empty     -> production: `false` (same-origin only);
+ *                           non-production: `true` (dev convenience)
+ *
+ * Non-browser callers (curl, health probes) send no Origin and are always
+ * served regardless — CORS is a browser protection, not authentication.
+ */
+export function httpCorsOrigin(cfg = config) {
+  const origins = cfg.server.clientOrigins;
+  if (origins.includes('*')) return true;
+  if (origins.length > 0) return origins;
+  if (cfg.isProduction) return false;
+  return true;
+}
+
 export function createApp({
   config: cfg = config,
   logger: log = logger,
@@ -20,9 +40,13 @@ export function createApp({
   // Reverse proxies (Nginx, PaaS routers) terminate TLS and forward
   // X-Forwarded-*; trusting one hop keeps req.ip / protocol truthful.
   app.set('trust proxy', 1);
-  // Empty CLIENT_URL on Day 1 -> reflect any origin. Once the React client
-  // exists, CLIENT_URL locks CORS down to the listed origins.
-  app.use(cors({ origin: cfg.server.clientOrigins.length ? cfg.server.clientOrigins : true }));
+  // CORS rule, aligned with the Socket.io layer (utils/origin.js):
+  //   - CLIENT_URL set (list)        -> strict allow-list
+  //   - CLIENT_URL="*"               -> reflect any origin (explicit opt-in)
+  //   - CLIENT_URL empty, non-prod   -> reflect any origin (Day 1 dev default)
+  //   - CLIENT_URL empty, production -> same-origin only (no reflection),
+  //     matching the Socket.io `false` policy exactly.
+  app.use(cors({ origin: httpCorsOrigin(cfg) }));
   app.use(express.json({ limit: '64kb' }));
 
   const startedAt = Date.now();

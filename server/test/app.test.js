@@ -110,7 +110,7 @@ test('CORS grants a listed origin and withholds a wildcard from the rest', async
   assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://localhost:5173');
 });
 
-test('CORS reflects any origin only when CLIENT_URL is left unset', async (t) => {
+test('CORS reflects any origin when CLIENT_URL is left unset in non-production', async (t) => {
   const app = await startApp({ clientOrigins: [] });
   t.after(app.close);
 
@@ -121,6 +121,30 @@ test('CORS reflects any origin only when CLIENT_URL is left unset', async (t) =>
     'http://anywhere.example',
     'the documented Day 1 default with no CLIENT_URL configured',
   );
+});
+
+test('CORS is same-origin only in production when CLIENT_URL is empty (aligned with Socket.io)', async (t) => {
+  const cfg = { ...config, isProduction: true, server: { ...config.server, clientOrigins: [] } };
+  const app = createApp({ config: cfg, logger: log });
+  const server = http.createServer();
+  server.on('request', app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const response = await fetch(`${baseUrl}/health`, { headers: { origin: 'http://anywhere.example' } });
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get('access-control-allow-origin'),
+    null,
+    'production with no CLIENT_URL must not reflect arbitrary origins',
+  );
+
+  // Non-browser clients without Origin are still served (CORS is a browser protection).
+  const noOrigin = await fetch(`${baseUrl}/health`);
+  assert.equal(noOrigin.status, 200);
+  assert.equal(noOrigin.headers.get('access-control-allow-origin'), null);
 });
 
 test('a request without an Origin header is served like any other', async (t) => {
