@@ -274,7 +274,15 @@ export function createPeerManager({
       closeEdge(peerId, 'replaced');
     }
 
-    const edge = createEdge({ peerId, name, generation, iceServers });
+    let edge;
+    try {
+      edge = createEdge({ peerId, name, generation, iceServers });
+    } catch (err) {
+      // createEdge registers before attaching tracks so its callbacks can use
+      // the registry. Roll that registration back if any setup step throws.
+      closeEdge(peerId, 'setup failed');
+      throw err;
+    }
     log.debug(`peer ${peerId} connected (generation ${generation}, initiator=${!!initiator})`);
     if (initiator) await makeOffer(edge);
   };

@@ -543,6 +543,35 @@ test('an exception inside a handler is caught and logged, never thrown', async (
   assert.equal(manager2.size(), 0);
 });
 
+test('a track setup failure closes the partial pc instead of registering a broken edge', async () => {
+  const socket = createFakeSocket();
+  const logger = createFakeLogger();
+  const factory = createFakePcFactory();
+  const remoteAudio = createFakeRemoteAudio();
+  const stats = createFakeStats();
+  const manager = createPeerManager({
+    socket,
+    createPeerConnection: (configuration) => {
+      const pc = factory(configuration);
+      pc.addTransceiver = () => { throw new Error('transceiver exploded'); };
+      return pc;
+    },
+    logger,
+    localMedia: createFakeLocalMedia({ withMic: false }),
+    remoteAudio,
+    stats,
+  });
+
+  await socket.dispatch('peer:connect', connectEvent({ generation: 1 }));
+
+  assert.equal(manager.size(), 0, 'a half-configured edge must not remain registered');
+  assert.equal(factory.created[0].closed, true, 'the partially created browser resource is closed');
+  assert.equal(stats.watched.size, 0);
+  assert.equal(remoteAudio.elements.size, 0);
+  assert.equal(logger.errors.length, 1);
+  assert.match(String(logger.errors[0].join(' ')), /transceiver exploded/);
+});
+
 test('a disconnected socket never sends stale signaling', async () => {
   const { socket, manager } = setup();
   await socket.dispatch('peer:connect', connectEvent({ initiator: true, generation: 1 }));
