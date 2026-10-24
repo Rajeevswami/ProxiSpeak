@@ -13,8 +13,8 @@ import { parseIceServers } from './iceServers.js';
 import { createLogger } from '../utils/loggerCore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const SERVER_ROOT = path.resolve(__dirname, '..', '..');
-export const REPO_ROOT = path.resolve(SERVER_ROOT, '..');
+const SERVER_ROOT = path.resolve(__dirname, '..', '..');
+const REPO_ROOT = path.resolve(SERVER_ROOT, '..');
 
 // dotenv never overrides an already-set key, so the more specific file is
 // loaded first and therefore has the higher effective priority.

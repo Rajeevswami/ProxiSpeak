@@ -67,9 +67,4 @@ export function statusAfter(status, event) {
   }
 }
 
-/** True while a join is in flight and the form should stay busy. */
-export function isConnecting(status) {
-  return status === CONNECTION_STATUS.CONNECTING;
-}
-
 export default statusAfter;
