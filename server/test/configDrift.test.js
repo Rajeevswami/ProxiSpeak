@@ -29,7 +29,7 @@ function extractEnvVars(source) {
     vars.add(match[1]);
   }
   // str('KEY', ...), num('KEY', ...), list('KEY', ...)
-  for (const match of source.matchAll(/(?:str|num|list)\s*\(\s*['"]([A-Z_][A-Z0-9_]*)['"]/g)) {
+  for (const match of source.matchAll(/(?:str|num|integer|bool|url|list|scaleUrl)\s*\(\s*['"]([A-Z_][A-Z0-9_]*)['"]/g)) {
     vars.add(match[1]);
   }
   return vars;
