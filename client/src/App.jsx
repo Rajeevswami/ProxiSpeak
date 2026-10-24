@@ -8,7 +8,7 @@ import { drawWorld } from './canvas/renderer.js';
 import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
-  const { world, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains, meshLimits } = useSocket();
+  const { world, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, getAudioContextState, updateAudioGains, meshLimits } = useSocket();
   // Movement input + per-frame controller. Its `update` runs inside the
   // canvas's single rAF loop and never touches React state, so walking
   // around causes zero re-renders.
@@ -53,7 +53,7 @@ export default function App() {
           </span>
         ) : null}
       </div>
-      <AudioStatus mic={mic} getSnapshot={getAudioSnapshot} worldRef={world} maxPeers={meshLimits?.maxPeers ?? world.current?.meshLimits?.maxPeers ?? 8} radiusPx={meshLimits?.proximityRadiusPx ?? world.current?.meshLimits?.proximityRadiusPx ?? 100} />
+      <AudioStatus mic={mic} getSnapshot={getAudioSnapshot} getAudioContextState={getAudioContextState} worldRef={world} maxPeers={meshLimits?.maxPeers ?? world.current?.meshLimits?.maxPeers ?? 8} radiusPx={meshLimits?.proximityRadiusPx ?? world.current?.meshLimits?.proximityRadiusPx ?? 100} />
     </>
   );
 }

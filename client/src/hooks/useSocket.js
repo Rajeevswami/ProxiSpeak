@@ -351,7 +351,12 @@ export function useSocket() {
     );
   }, []);
 
-  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, updateAudioGains, meshLimits };
+  const getAudioContextState = useCallback(() => {
+    const ctx = audioMixerRef.current?.getContext?.();
+    return ctx ? ctx.state : null;
+  }, []);
+
+  return { world: worldRef, status, error, joinedInfo, join, emitMove, mic, getAudioSnapshot, getAudioContextState, updateAudioGains, meshLimits };
 }
 
 export default useSocket;

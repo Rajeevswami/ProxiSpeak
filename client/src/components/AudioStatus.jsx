@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { countNearbyNotConnected, formatMeshSummary } from '../realtime/meshIndicator.js';
+import { AUDIO_PAUSED_HINT, shouldShowAudioPausedHint } from '../audio/audioPausedHint.js';
 
 /**
  * Audio connection status overlay (Day 9) — the visible proof for the
@@ -30,9 +31,10 @@ export function formatBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radiusPx }) {
+export default function AudioStatus({ mic, getSnapshot, getAudioContextState, worldRef, maxPeers, radiusPx }) {
   const [rows, setRows] = useState([]);
   const [meshInfo, setMeshInfo] = useState({ connected: 0, maxPeers: 8, nearbyNotConnected: 0 });
+  const [audioPaused, setAudioPaused] = useState(false);
 
   useEffect(() => {
     const read = () => {
@@ -60,11 +62,19 @@ export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radi
       } catch {
         /* ignore */
       }
+
+      // Audio paused hint: shown when the AudioContext is blocked and peers exist.
+      try {
+        const ctxState = typeof getAudioContextState === 'function' ? getAudioContextState() : null;
+        setAudioPaused(shouldShowAudioPausedHint(ctxState, next.length));
+      } catch {
+        /* ignore */
+      }
     };
     read();
     const timer = setInterval(read, 1000); // at most once per second
     return () => clearInterval(timer);
-  }, [getSnapshot, worldRef, maxPeers, radiusPx]);
+  }, [getSnapshot, getAudioContextState, worldRef, maxPeers, radiusPx]);
 
   return (
     <aside className="audio-status" role="status" aria-live="polite" aria-label="Audio connections">
@@ -75,6 +85,9 @@ export default function AudioStatus({ mic, getSnapshot, worldRef, maxPeers, radi
       <div className="audio-status-mesh">
         {formatMeshSummary(meshInfo)}
       </div>
+      {audioPaused ? (
+        <div className="audio-status-paused" role="alert">{AUDIO_PAUSED_HINT}</div>
+      ) : null}
       {rows.length === 0 ? (
         <div className="audio-status-empty">no nearby peers yet</div>
       ) : (
