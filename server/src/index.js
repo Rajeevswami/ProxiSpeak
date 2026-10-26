@@ -11,7 +11,7 @@ import { connectRedis, createScaleState } from './db/redis.js';
 import { createApp } from './app.js';
 import { createSocketServer } from './sockets/index.js';
 import { listenOn } from './utils/httpServer.js';
-import { listRoomIds } from './services/roomService.js';
+import { listRoomIds, backfillLegacyRoomRevisions } from './services/roomService.js';
 import { cleanupOnBoot, startPresenceCleanup } from './services/presenceCleanup.js';
 import { startOrphanEdgeSweep, sweepOrphanEdges } from './services/edgeSweep.js';
 
@@ -25,6 +25,7 @@ async function main() {
   // The geospatial engine is useless without its indexes, so create them on
   // every boot (idempotent) rather than relying on a manual migration.
   await ensureIndexes();
+  await backfillLegacyRoomRevisions();
   await cleanupOnBoot();
   log.info('MongoDB indexes ready (UserPresence.location: 2dsphere)');
 
@@ -42,6 +43,7 @@ async function main() {
   else log.warn('No rooms in the database yet — run `npm run seed` before clients can join');
 
   const io = createSocketServer({ httpServer, config, logger: log, redis });
+  app.set('io', io);
 
   if (redis.enabled) {
     await sweepOrphanEdges(io).catch((err) =>

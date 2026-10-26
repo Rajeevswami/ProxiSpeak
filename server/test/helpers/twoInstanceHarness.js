@@ -127,6 +127,38 @@ export function createSharedClusterBacking({ roomIds = [] } = {}) {
     async listRoomIds() {
       return [...rooms.keys()];
     },
+    async listRooms() {
+      return [...rooms.values()].map((r) => ({
+        roomId: r.roomId,
+        name: r.name,
+        layoutRevision: r.layoutRevision ?? 1,
+      }));
+    },
+    async saveLayout(roomId, payload, { io } = {}) {
+      const room = rooms.get(roomId);
+      if (!room) throw new Error(`Room "${roomId}" not found`);
+      const updated = {
+        ...room,
+        layoutRevision: (room.layoutRevision ?? 1) + 1,
+        obstacles: payload.obstacles,
+      };
+      rooms.set(roomId, updated);
+      if (io) {
+        io.to(roomId).emit('room:layout', {
+          roomId,
+          layoutRevision: updated.layoutRevision,
+          obstacles: updated.obstacles,
+        });
+        const adapter = io.of?.('/')?.adapter;
+        if (typeof io.serverSideEmit === 'function' && (adapter?.pubClient || adapter?.allRooms)) {
+          io.serverSideEmit('room:cache:invalidate', roomId);
+        }
+      }
+      return updated;
+    },
+    invalidateCache(roomId) {
+      // Cache invalidation tracker
+    },
     /** Throwaway room used by QA scripts; removed with `removeRoom`. */
     addRoom(roomId) {
       if (!rooms.has(roomId)) rooms.set(roomId, buildDefaultRoom(roomId, config.world));

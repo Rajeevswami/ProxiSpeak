@@ -639,11 +639,11 @@ panning and 60 FPS work remain not started.
 
 ## Day 14b — 2026-10-24 — stale-edge fencing, sweep validation, verification
 
-**Base and implementation commits:** QA fixes `fe90014` and `69066be`; then
-`ac887e8` (failing regression evidence), `07df50e` (store revisions), `bf72efd`
-(graph/socket fencing), `9d072ac` (bounded sweep validation), and `434472d`
-(body-parser patch). The subsequent documentation commit is visible in `git log`.
-Every listed short hash was checked with `git cat-file -t` and resolves to a commit.
+**Base and implementation commits:** commit `b8a6bcf` (merged in `c3f927c`), delivering
+QA credential redaction, race regressions, store revisions, graph/socket fencing,
+bounded sweep validation, and the body-parser lockfile patch. The subsequent documentation
+commit is visible in `git log`. Every listed short hash was checked with `git cat-file -t`
+and resolves to a commit.
 
 **Test-first race evidence and fix:**
 
@@ -719,3 +719,41 @@ harnesses and soaks used real Socket.io/Redis with in-memory presence backing.
 SFU/TURN, Express static hosting, Week 4 panning/occlusion/room persistence, or
 new UI work. Unlimited mode and drop-radius-equals-connect-radius behavior remain
 covered and unchanged.
+
+---
+
+## Week 4 - Room Persistence — 2026-10-26 — room layout persistence and live sync
+
+*Commits: `d83289d`, `2be63a1`, `40055b7`, `2d31aea`, `775d9a0`, `6f8ef65`, `f5adde8`, `aa04e53`*
+
+**Added**
+
+* Shared layout validator (`server/src/validators/roomLayout.js`) enforcing strict boundary checks (`[0, width]`, `[0, height]`), obstacle limits (`ROOM_LAYOUT_MAX_OBSTACLES`, default 200), unique obstacle IDs, allowed obstacle types (`wall`, `glass`, `door`, `desk`, `screen`, `pillar`), boolean `blocksAudio`, transmission `attenuation` in `[0.0, 1.0]`, mass-assignment prevention (unknown fields rejected), and path-specific error messages.
+* `layoutRevision` field on `Room` model (positive integer >= 1) with safe, atomic backfill routine `backfillLegacyRoomRevisions()` for legacy unversioned documents. Documented obstacle `attenuation` semantics as acoustic transmission coefficient (fraction of sound amplitude surviving obstacle traversal).
+* Atomic layout save mechanism (`saveLayout` in `server/src/services/roomService.js`) using atomic MongoDB `findOneAndUpdate` with expected revision filter, incrementing `layoutRevision` on success and returning HTTP 409 `RevisionConflictError` on stale revision concurrency races. Room dimensions (`width`, `height`) are strictly immutable.
+* REST API endpoints:
+  - `GET /api/rooms` — public room list with layout revisions and obstacles.
+  - `GET /api/rooms/:roomId` — public single-room details.
+  - `PUT /api/rooms/:roomId/layout` — admin token-guarded layout mutation with `x-room-admin-token` header, constant-time `crypto.timingSafeEqual` comparison against `ROOM_ADMIN_TOKEN`, HTTP 403 `editing_disabled` when token is unset, HTTP 401 on missing/invalid token, 64 KB payload cap (HTTP 413), and in-memory IP rate limiter (HTTP 429). Admin tokens are strictly redacted from logs, error messages, and responses.
+* Real-time live sync:
+  - Broadcasts `room:layout` with `{ roomId, layoutRevision, obstacles }` to active sockets in the room on layout save.
+  - Sibling instances in clustered Redis deployments receive `room:cache:invalidate` via `io.serverSideEmit`, evicting local room caches.
+  - Initial `joined` snapshot event delivers the active `layoutRevision` and obstacle list to newly connecting clients.
+* Developer CLI tooling (`server/scripts/room-layout.js`):
+  - `npm run room:show -- --room <id>` for viewing room layouts and revisions.
+  - `npm run room:save -- --room <id> --file <path> [--dry-run]` for schema validation and layout persistence.
+  - Sample blueprints added under `server/layouts/` (`valid-office.json`, `quiet-zone.json`).
+  - Seed script (`server/scripts/seed.js`) made idempotent, guaranteeing custom room layouts and revisions are never overwritten on re-runs.
+* Client-side live layout updates:
+  - `useSocket.js` handles `room:layout` events and updates mutable world ref via `updateRoomLayout`.
+  - Zero React component re-renders per layout update; canvas render loop reflects obstacle updates on the next animation frame.
+  - Drops out-of-order or stale events (`layoutRevision <= currentRev`) and ensures clean listener teardown without duplicate handlers across reconnections.
+* Test coverage:
+  - Layout validator unit tests covering valid schemas, boundary limits, and malformed inputs (`server/test/roomLayout.validation.test.js`).
+  - API integration tests covering public reads, constant-time token verification, 401/403/404/409/413/429 status flows, and credential redaction (`server/test/roomLayout.api.test.js`).
+  - Real Socket.io tests for same-room broadcasts, room isolation, late joiners, and multi-instance Redis adapter broadcast & cache eviction (`server/test/roomLayout.socket.test.js`).
+  - CLI tests for argument parsing, dry-run mode, exit codes, and credential redaction (`server/test/roomLayout.cli.test.js`).
+  - Real MongoDB integration tests covering atomic revision increments, 50-client concurrency races (exactly 1 winner, 49 conflicts), unknown room 404, dimension immutability, legacy backfills, reconnect survival, and seed idempotency (`server/test/roomPersistence.mongo.test.js`).
+  - Client tests for revision ordering, obstacle replacement, room scoping, and listener cleanup (`client/test/worldState.layout.test.js`).
+* Architecture documentation in `docs/ROOM_PERSISTENCE.md`.
+

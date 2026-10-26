@@ -36,9 +36,20 @@ At the default cap of 8, sync fills available slots nearest-first, but it does n
 
 `MAX_PEERS_PER_USER=0` preserves unlimited behavior for compatibility and tests. A full WebRTC mesh still grows quadratically in edges and places upload/CPU work in every browser. The cap bounds degree; it does not turn the system into an SFU.
 
-### Presence and room state are not a persistent world
+### Obstacles are data-only; sound occlusion not implemented
 
-Presence is ephemeral and expires. Seeded room definitions are stored in MongoDB, but custom room-layout persistence is not implemented. Obstacles do not affect audio, and Week 4 room/obstacle work has not started.
+In Week 4, room layouts and furniture/wall obstacles are persisted in MongoDB with optimistic concurrency (`layoutRevision`), validated schemas, and real-time live sync. However, obstacles remain data-only:
+- **No sound occlusion**: Obstacles do not alter audio attenuation, line of sight, or Web Audio GainNode levels.
+- **No movement collision**: Avatars can freely move across or overlap obstacle rectangles.
+- **Stereo panning and 60 FPS loop**: Panning and steady 60 FPS rendering loop remain not started.
+
+### No user authentication system (shared admin token only)
+
+The room layout save API relies on a single shared secret `ROOM_ADMIN_TOKEN` provided via `x-room-admin-token` header. There is no user authentication, role-based access control, or token rotation mechanism. If `ROOM_ADMIN_TOKEN` is unset, editing is disabled server-wide (`403 editing_disabled`).
+
+### Layout rate limits are instance-local in-memory
+
+The REST layout save endpoint enforces an in-memory IP rate limiter (10 requests/minute). In clustered multi-instance deployments behind a load balancer without sticky sessions or distributed rate-limiting, rate limits are tracked per process rather than across the cluster.
 
 ## Redis and multi-instance operation
 
@@ -80,9 +91,9 @@ There is no deployment manifest, Express static hosting of the client, SFU, or p
 
 ## Verification limits in this sandbox
 
-- Without services: server **143 passed / 63 skipped** (206 tests); client **165/165 passed**.
-- With real Redis: server **174 passed / 32 skipped** (206 tests); client **165/165 passed**.
-- All 32 remaining skips require MongoDB. A local MongoDB+Redis zero-skip run was **not achieved** because MongoDB could not be provisioned.
+- Without services: server **186 passed / 77 skipped** (263 tests); client **171/171 passed** (0 skipped).
+- With real Redis: server **223 passed / 40 skipped** (263 tests); client **171/171 passed** (0 skipped).
+- All 40 remaining skips require MongoDB. A local MongoDB+Redis zero-skip run was **not achieved** because MongoDB could not be provisioned.
 - Real embedded Redis mesh-check passed **37/37**; the external real-Socket.io/Redis harness passed **18/18**; scale-check integration passed **8/8**. The external harnesses use in-memory presence backing.
 - Fresh `npm ci` installs and the 80-module client build passed. Server and client audits each reported zero total vulnerabilities after the body-parser lockfile patch.
 - The real MongoDB spatial audit, Mongo-backed server/seed commands, and live two-browser audio demo are **NOT VERIFIED** here.
@@ -105,4 +116,4 @@ These are measurements from these fixtures, not proof of bounded memory or a
 “no leak” claim. In particular, post-cleanup RSS remained above baseline even
 though the tracked application state and Redis keys returned to zero.
 
-See `docs/WEEK3.md` for earlier commands and `CHANGELOG.md` for the Day 14b evidence. Week 4 remains room persistence/obstacles, stereo panning, and 60 FPS work; none is claimed complete.
+See `docs/ROOM_PERSISTENCE.md` for Week 4 Room Persistence specifications and `CHANGELOG.md` for evidence. Future work includes audio occlusion, stereo panning, and 60 FPS loop; none is claimed complete.

@@ -204,5 +204,7 @@ test('integer-valued settings reject fractions and extreme timeouts with one cle
     ['REDIS_EDGE_TTL_SECONDS', '60.5'],
     ['SOCKET_SIGNAL_BURST', '2.5'],
     ['REDIS_KEY_PREFIX', 'bad prefix'],
+    ['ROOM_LAYOUT_MAX_OBSTACLES', '200.5'],
+    ['ROOM_LAYOUT_MAX_OBSTACLES', '0'],
   ]) assertOneLineConfigError(key, value);
 });

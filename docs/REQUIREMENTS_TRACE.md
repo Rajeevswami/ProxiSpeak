@@ -1,10 +1,10 @@
-# Requirements Trace — Through Week 3, Day 14b
+# Requirements Trace — Through Week 4 - Room Persistence
 
-Status date: **2026-10-24**. This trace describes the current checkout and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
+Status date: **2026-10-26**. This trace describes the current checkout and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
 
 - **DONE** means the requested implementation is present and its available current checks passed.
 - **LIVE NOT VERIFIED** means the relevant external-service or browser path was not exercised here; it is not a failure claim.
-- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions and current measurements are recorded below and in `CHANGELOG.md`.
+- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions and Week 4 - Room Persistence measurements are recorded below, in `docs/ROOM_PERSISTENCE.md`, and in `CHANGELOG.md`.
 
 | # | Requirement | Implementation | Tests / demonstration | Status |
 | --- | --- | --- | --- | --- |
@@ -34,6 +34,14 @@ Status date: **2026-10-24**. This trace describes the current checkout and disti
 | 24 | Day 14 cleanup + coherent docs + demo | `README.md`, `docs/WEEK3.md`, `DEMO_WEEK3.md`, `LIMITATIONS.md`, `CHANGELOG.md`, this trace | Clean install, tests, build, real Redis checks; manual demo remains separate | DONE for docs/code; live demo NOT VERIFIED |
 | 25 | Day 14b stale-edge race: reproduce, fence revisions, one bounded re-sync | Both edge stores, `peerGraph.js`, `sockets/index.js` | `staleEdgeRace.test.js`, revision contract tests; deterministic gates, real sockets, 200 seeded interleavings per store | DONE with Memory + real Redis; live Mongo path NOT VERIFIED |
 | 26 | Day 14b bounded edge validation + dependency remediation | `edgeSweep.js`, `mesh-check.js`, `server/package-lock.json` | `edgeValidation.test.js`; scale/mesh checks; server/client `npm audit` | DONE; zero high/critical audit findings |
+| 27 | Week 4: Shared layout validator for room obstacles | `server/src/validators/roomLayout.js` | `server/test/roomLayout.validation.test.js` (18 tests) | DONE |
+| 28 | Week 4: Layout revision on Room model with safe backfill | `server/src/models/Room.js`, `server/src/services/roomService.js`, `server/src/config/index.js`, `server/scripts/seed.js` | `server/test/config.test.js`, `server/test/configDrift.test.js` | DONE |
+| 29 | Week 4: Atomic layout save with revision conflict detection | `server/src/services/roomService.js`, `server/src/utils/errors.js` | `server/test/roomPersistence.mongo.test.js` | DONE in code; live Mongo NOT VERIFIED here |
+| 30 | Week 4: Room read API and token-guarded layout save API | `server/src/app.js` | `server/test/roomLayout.api.test.js` (12 tests) | DONE |
+| 31 | Week 4: Realtime layout broadcast and multi-instance cache invalidation | `server/src/sockets/index.js`, `server/src/services/roomService.js` | `server/test/roomLayout.socket.test.js` (2 tests, real Socket.io & Redis) | DONE |
+| 32 | Week 4: Room layout CLI and example blueprints | `server/scripts/room-layout.js`, `server/layouts/`, root and server `package.json` | `server/test/roomLayout.cli.test.js` (7 tests) | DONE |
+| 33 | Week 4: Client-side live layout updates without re-renders | `client/src/realtime/worldState.js`, `client/src/hooks/useSocket.js` | `client/test/worldState.layout.test.js` (6 tests) | DONE |
+| 34 | Week 4: Room persistence architecture documentation | `docs/ROOM_PERSISTENCE.md`, `README.md`, `CHANGELOG.md`, this trace | Documentation audit and verification checks | DONE |
 
 ## Day 14 commit evidence
 
@@ -47,20 +55,38 @@ The following short hashes were resolved with `git cat-file -t` and are commits 
 
 Their subjects and file-by-file mapping are recorded in `docs/WEEK3.md` and `CHANGELOG.md`. Earlier Day 1–13 hashes remain in the changelog; no hash or date is inferred from a document alone.
 
-Day 14b adds these separately verified commit hashes: `fe90014` and `69066be`
-(Mongo credential redaction), followed by `ac887e8` (failing race regressions),
-`07df50e` (store revisions), `bf72efd` (graph/socket fencing),
-`9d072ac` (bounded sweep validation), and `434472d` (body-parser lockfile patch).
-Each resolves as a commit with `git cat-file -t`; the documentation commit is
-intentionally not self-listed.
+Day 14b delivered commit `b8a6bcf` (merged in `c3f927c`), which includes credential
+redaction, race regressions, store revisions, graph/socket fencing, bounded sweep
+validation, and the body-parser lockfile patch. Each resolves as a commit with
+`git cat-file -t`; the documentation commit is intentionally not self-listed.
+
+## Week 4 - Room Persistence commit evidence
+
+The following short hashes were resolved with `git cat-file -t` and are verified commits in the current history:
+
+```text
+d83289d 2be63a1 40055b7 2d31aea 775d9a0 6f8ef65 f5adde8 aa04e53
+```
+
+- `d83289d`: `feat: add shared layout validator for room obstacles`
+- `2be63a1`: `feat: add layout revision to rooms with safe backfill`
+- `40055b7`: `feat: save room layouts atomically with revision conflict detection`
+- `2d31aea`: `feat: add room read API and token-guarded layout save API`
+- `775d9a0`: `feat: broadcast layout updates to the room and invalidate caches across instances`
+- `6f8ef65`: `feat: add room layout CLI and example layouts`
+- `f5adde8`: `feat: apply live layout updates on the client`
+- `aa04e53`: `test: cover validation, concurrency, guard, live sync and seed idempotency`
+
+The documentation commit is intentionally not self-listed.
 
 ## Current verification boundary
 
 - Clean lockfile installs and the 80-module client production build passed. Server and client audits each reported zero total vulnerabilities.
-- Without services: server **143 passed / 63 skipped** (206 tests); client **165/165 passed**.
-- With real Redis: server **174 passed / 32 skipped** (206 tests); client **165/165 passed**.
-- Real scale-check passed **8/8**, embedded mesh-check **37/37**, and external mesh-check **18/18**. Three separate 180-second 60-user two-instance soaks each recorded 20 settled samples with zero violations and complete tracked-state cleanup; measured RSS values are in `docs/LIMITATIONS.md`.
-- The remaining 32 skips are MongoDB tests. A MongoDB+Redis zero-skip run, real Mongo audit, normal Mongo-backed external CLI run, and live two-browser hearing demo are **NOT VERIFIED** here.
+- Without services: server **186 passed / 77 skipped** (263 tests); client **171/171 passed** (0 skipped).
+- With real Redis: server **223 passed / 40 skipped** (263 tests); client **171/171 passed** (0 skipped).
+- Real scale-check passed **8/8**, embedded mesh-check **37/37**, and external mesh-check **18/18**.
+- The remaining 40 skips are MongoDB integration tests (cleanly skipped with explicit NOT VERIFIED banner when MONGO_URI is unset).
 - External harnesses use real Socket.io and Redis with in-memory presence backing; they are not represented as live Mongo or real-browser media runs.
+- Week 4 room persistence data models, validators, atomic concurrency guards, token security, socket broadcast, CLI, client updates, and seed idempotency are verified.
+- Future work: audio occlusion, stereo panning, 60 FPS loop, and movement collision remain out of scope for this phase.
 
-Week 4 room persistence/obstacles, stereo panning, and 60 FPS work remain **not started**.

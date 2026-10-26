@@ -2,21 +2,22 @@
 
 ProxiSpeak is a browser-based spatial voice chat prototype: each person moves an avatar on a 2D map, WebRTC connects nearby participants, and a Web Audio `GainNode` makes remote voice fade with distance. **Proximity is the volume knob.**
 
-The current scope is the end of Week 3 (Day 14b): proximity audio, optional Redis-backed multi-instance signaling, a bounded peer mesh, and hardening. It is not a deployed or production-hardened service.
+The current scope includes Week 4 - Room Persistence: transactional room obstacle layouts, atomic revision conflict detection, admin token security, live layout sync across instances, and layout CLI tooling. It is not a deployed or production-hardened service.
 
 ## How it works
 
 ```text
 Browser A / Browser B
   React + Canvas + WebRTC + Web Audio
-              │ Socket.io (join, move, signal)
+              │ Socket.io (join, move, signal, layout)
               ▼
 Node.js + Express + Socket.io
-  ├─ MongoDB: room definitions, presence, geospatial queries
+  ├─ MongoDB: room definitions, layout revisions, presence, geospatial queries
   ├─ PeerGraph: radius, hysteresis, cap, nearest-first refill
-  └─ EdgeStore: in-memory, or Redis Lua for multiple instances
+  ├─ EdgeStore: in-memory, or Redis Lua for multiple instances
+  └─ RoomService: atomic layout saves, revision conflict detection, cache invalidation
                          │
-                         └─ Redis Pub/Sub fans out Socket.io events
+                         └─ Redis Pub/Sub fans out Socket.io events and cache eviction
 ```
 
 - The server creates an edge only at or inside `PROXIMITY_RADIUS_PX` (default `100` px).
@@ -25,6 +26,7 @@ Node.js + Express + Socket.io
 - `MAX_PEERS_PER_USER` (default `8`) is enforced symmetrically; `0` means unlimited.
 - Remote audio is full volume through `30` px, follows a smoothstep curve to silence at the connect radius, and remains silent until the edge drops.
 - The audio overlay is sampled separately from the render loop; avatar positions do not create per-frame React state.
+- Room layouts are versioned with monotonic `layoutRevision` integers. Edits use atomic revision conflict detection (HTTP 409), broadcast `room:layout` to active clients, and invalidate caches across clustered instances via Redis. Obstacles remain data-only in this phase.
 
 ## Requirements
 
@@ -95,6 +97,22 @@ Requests without an `Origin` header, such as health probes and curl, are not bro
 
 Invalid validated numeric, boolean, and base-URL settings fail at startup with one concise error naming the variable; values and credentials are not echoed. The bidirectional drift tests require every server environment key and every client `VITE_*` key to have a commented example entry.
 
+## Room Persistence & Layout API
+
+Week 4 introduces transactional layout management and persistence for room obstacles:
+
+- **Data Model**: Rooms store dimensions, metadata, obstacles, and an atomic `layoutRevision` (integer >= 1). Obstacles define rectangular barriers (`type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`). Attenuation represents the fraction of sound amplitude that survives crossing the barrier (`0.0` = opaque, `1.0` = transparent). Obstacles remain data-only in this phase (no collision or audio gain logic).
+- **Public Endpoints**:
+  - `GET /api/rooms` — lists available rooms, dimensions, obstacles, and revisions.
+  - `GET /api/rooms/:roomId` — fetches room details.
+- **Admin Guarded Endpoint**:
+  - `PUT /api/rooms/:roomId/layout` — updates obstacles and metadata. Guarded by the `x-room-admin-token` header matching `ROOM_ADMIN_TOKEN` via constant-time comparison. Unset token disables edits server-wide (`403 Forbidden`). Requests require an `expectedRevision` and reject stale updates with `409 Conflict`. Rate-limited to 10 requests/min/IP with a 64 KB payload cap.
+- **Live Sync**: Successful layout saves emit `room:layout` to active participants in the room, evict local caches, and broadcast `room:cache:invalidate` across Redis nodes. Clients apply changes in-place without component re-renders.
+- **Developer CLI**:
+  - `npm run room:show -- --room lobby`
+  - `npm run room:save -- --room lobby --file server/layouts/valid-office.json [--dry-run]`
+  - See `docs/ROOM_PERSISTENCE.md` for full architecture and threat model details.
+
 ## Commands
 
 | Command | Purpose | External requirements |
@@ -108,6 +126,8 @@ Invalid validated numeric, boolean, and base-URL settings fail at startup with o
 | `npm run test:server` / `npm run test:client` | Run one suite | Same rule |
 | `npm run build` | Build the client into `client/dist/` | None |
 | `npm run audit -- --users=50 --samples=25 --seed=1` | Compare spatial queries with brute force and measure latency | MongoDB |
+| `npm run room:show -- --room <id>` | Inspect room layout, dimensions, and `layoutRevision` | MongoDB |
+| `npm run room:save -- --room <id> --file <path> [--dry-run]` | Validate or persist room layout JSON with revision conflict check | MongoDB (unless `--dry-run`) |
 | `npm run scale-check -- --urlA=… --urlB=… --room=lobby` | Check two running instances, including offer/answer/ICE relay | Two servers, MongoDB, Redis |
 | `npm run mesh-check` | Run embedded two-instance mesh checks | Redis |
 | `npm run mesh-check -- --urlA=… --urlB=… --room=lobby` | Check the current configuration of two running servers | Two servers, MongoDB, Redis |
@@ -131,10 +151,10 @@ The Mongo suites create and drop isolated databases derived from the test base U
 
 ## Current verification
 
-On 2026-10-24, after clean lockfile installs:
+On 2026-10-26, after clean lockfile installs:
 
-- Without services: server **143 passed / 63 skipped** (206 tests), client **165 passed / 0 skipped**.
-- With real Redis: server **174 passed / 32 skipped** (206 tests), client **165 passed / 0 skipped**. All remaining skips require MongoDB.
+- Without services: server **186 passed / 77 skipped** (263 tests), client **171 passed / 0 skipped**.
+- With real Redis: server **223 passed / 40 skipped** (263 tests), client **171 passed / 0 skipped**. All remaining skips require MongoDB.
 - `npm run build`: passed (Vite, 80 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
 - Embedded real-Redis `mesh-check`: **37/37**; external two-instance harness: **18/18**. Two-instance `scale-check`: **8/8**.
 - Random-layout probe: 24 random 50-user layouts plus one identical-position layout on Memory and Redis, zero mismatches. Signal-burst tests: **2/2**.

@@ -24,4 +24,31 @@ export class ValidationError extends AppError {
   }
 }
 
+/** Room does not exist: always a 404. */
+export class RoomNotFoundError extends AppError {
+  constructor(roomId) {
+    super(`Room "${roomId}" not found`, {
+      code: 'room_not_found',
+      status: 404,
+      details: { roomId },
+    });
+    this.name = 'RoomNotFoundError';
+  }
+}
+
+/** Optimistic concurrency revision conflict: always a 409. */
+export class RevisionConflictError extends AppError {
+  constructor(roomId, expectedRevision, currentRevision) {
+    super(
+      `Revision conflict on room "${roomId}": expected revision ${expectedRevision} but current revision is ${currentRevision}`,
+      {
+        code: 'revision_conflict',
+        status: 409,
+        details: { roomId, expectedRevision, currentRevision },
+      },
+    );
+    this.name = 'RevisionConflictError';
+  }
+}
+
 export default AppError;

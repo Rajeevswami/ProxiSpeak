@@ -12,6 +12,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test test/*.test.js",
     "seed": "node scripts/seed.js",
+    "room:show": "node scripts/room-layout.js show",
+    "room:save": "node scripts/room-layout.js save",
     "audit": "node scripts/audit.js",
     "scale-check": "node scripts/scale-check.js",
     "mesh-check": "node scripts/mesh-check.js"

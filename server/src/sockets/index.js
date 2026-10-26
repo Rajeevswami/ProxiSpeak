@@ -349,6 +349,19 @@ export function createSocketServer({
     await peers.drainSyncs();
   };
 
+  io.on('room:cache:invalidate', (roomId) => {
+    if (typeof rooms?.invalidateCache === 'function') {
+      rooms.invalidateCache(roomId);
+    }
+    roomService.invalidateRoomCache(roomId);
+  });
+
+  if (httpServer) {
+    for (const listener of httpServer.listeners('request')) {
+      if (typeof listener?.set === 'function') listener.set('io', io);
+    }
+  }
+
   io.on('connection', (socket) =>
     registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft }),
   );
@@ -687,6 +700,7 @@ function toRoomPayload(room) {
     name: room.name,
     width: room.width,
     height: room.height,
+    layoutRevision: room.layoutRevision ?? 1,
     obstacles: (room.obstacles ?? []).map((o) => ({
       id: o.id,
       type: o.type,

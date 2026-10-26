@@ -166,3 +166,42 @@ export function applyJoinedSnapshot(world, payload, { selfId = null, name = null
 
   return world;
 }
+
+/**
+ * `room:layout` — the server announced an updated layout revision for this room.
+ *
+ * Replaces the obstacle list in the mutable world state in place and updates
+ * `layoutRevision`. Ignores events from other rooms, invalid payloads, or
+ * events carrying an older or equal revision than the current one.
+ *
+ * @param {object} world the mutable world state
+ * @param {object} payload { roomId, layoutRevision, obstacles }
+ * @returns {boolean} whether the layout was updated
+ */
+export function updateRoomLayout(world, payload) {
+  if (!world || !world.room || typeof payload !== 'object' || payload === null) {
+    return false;
+  }
+
+  // Must match current room
+  if (payload.roomId && world.room.roomId && payload.roomId !== world.room.roomId) {
+    return false;
+  }
+
+  const incomingRev = payload.layoutRevision;
+  if (!Number.isFinite(incomingRev)) {
+    return false;
+  }
+
+  const currentRev = world.room.layoutRevision ?? 1;
+  // Ignore events with older or equal revision
+  if (incomingRev <= currentRev) {
+    return false;
+  }
+
+  // Replace obstacles and revision
+  world.room.obstacles = Array.isArray(payload.obstacles) ? payload.obstacles : [];
+  world.room.layoutRevision = incomingRev;
+  return true;
+}
+
