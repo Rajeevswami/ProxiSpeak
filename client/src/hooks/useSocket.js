@@ -10,6 +10,7 @@ import {
   hasJoinedConnection,
   moveUser,
   removeUser,
+  updateRoomLayout,
 } from '../realtime/worldState.js';
 import { createAudioMixer } from '../audio/audioMixer.js';
 import { createLocalMedia } from '../webrtc/localMedia.js';
@@ -252,6 +253,10 @@ export function useSocket() {
 
       socket.on('user:moved', (user) => {
         moveUser(worldRef.current, user);
+      });
+
+      socket.on('room:layout', (layout) => {
+        updateRoomLayout(worldRef.current, layout);
       });
 
       socket.on('user:left', (user) => {
