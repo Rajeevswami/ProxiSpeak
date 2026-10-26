@@ -13,7 +13,7 @@ import { connectMongo, disconnectMongo, redactUri } from '../src/db/mongo.js';
 import config from '../src/config/index.js';
 import logger from '../src/utils/logger.js';
 import { getRoom, saveLayout } from '../src/services/roomService.js';
-import { validateLayoutPayload } from '../validators/roomLayout.js';
+import { validateLayoutPayload } from '../src/validators/roomLayout.js';
 
 const log = logger.child('cli:room-layout');
 
@@ -51,22 +51,9 @@ async function handleShow(roomId) {
 }
 
 async function handleSave(roomId, filePath, dryRun) {
-  if (!filePath) {
-    throw new Error('Missing required argument: --file <path.json>');
-  }
-
   const resolvedPath = path.resolve(process.cwd(), filePath);
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Layout file not found at ${resolvedPath}`);
-  }
-
-  let fileContent;
-  try {
-    const raw = fs.readFileSync(resolvedPath, 'utf8');
-    fileContent = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Failed to parse JSON file at ${resolvedPath}: ${err.message}`);
-  }
+  const raw = fs.readFileSync(resolvedPath, 'utf8');
+  const fileContent = JSON.parse(raw);
 
   const currentRoom = await getRoom(roomId);
   if (!currentRoom) {
@@ -79,11 +66,6 @@ async function handleSave(roomId, filePath, dryRun) {
     maxObstacles: config.room.maxObstacles,
     requireExpectedRevision: false,
   });
-
-  if (dryRun) {
-    log.info(`[dry-run] Layout for "${roomId}" is valid (${validated.obstacles.length} obstacles)`);
-    return;
-  }
 
   const expectedRevision = fileContent.expectedRevision ?? currentRoom.layoutRevision ?? 1;
   const saved = await saveLayout(roomId, {
@@ -98,11 +80,44 @@ async function main() {
   const { action, roomId, filePath, dryRun } = parseArgs(process.argv.slice(2));
 
   if (!action || !['show', 'save'].includes(action)) {
-    throw new Error('Command required: "show" or "save" (e.g. npm run room:show -- --room lobby)');
+    throw new Error('Usage: room-layout <show|save> --room <id> [--file <path>] [--dry-run]');
   }
 
   if (!roomId) {
     throw new Error('Missing required argument: --room <roomId>');
+  }
+
+  if (action === 'save') {
+    if (!filePath) {
+      throw new Error('Missing required argument: --file <path.json>');
+    }
+
+    const resolvedPath = path.resolve(process.cwd(), filePath);
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`Cannot read layout file at ${resolvedPath}`);
+    }
+
+    let fileContent;
+    try {
+      const raw = fs.readFileSync(resolvedPath, 'utf8');
+      fileContent = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Failed to parse JSON file at ${resolvedPath}: ${err.message}`);
+    }
+
+    if (dryRun) {
+      const defaultBounds = {
+        width: Number.isFinite(fileContent.width) ? fileContent.width : 1920,
+        height: Number.isFinite(fileContent.height) ? fileContent.height : 1080,
+      };
+      const validated = validateLayoutPayload(fileContent, {
+        room: defaultBounds,
+        maxObstacles: config.room.maxObstacles,
+        requireExpectedRevision: false,
+      });
+      log.info(`[dry-run] Layout for "${roomId}" is valid (${validated.obstacles.length} obstacles)`);
+      return;
+    }
   }
 
   log.info(`Target MongoDB: ${redactUri(config.mongo.uri)}`);

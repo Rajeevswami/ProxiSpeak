@@ -149,7 +149,8 @@ export function createSharedClusterBacking({ roomIds = [] } = {}) {
           layoutRevision: updated.layoutRevision,
           obstacles: updated.obstacles,
         });
-        if (typeof io.serverSideEmit === 'function') {
+        const adapter = io.of?.('/')?.adapter;
+        if (typeof io.serverSideEmit === 'function' && (adapter?.pubClient || adapter?.allRooms)) {
           io.serverSideEmit('room:cache:invalidate', roomId);
         }
       }

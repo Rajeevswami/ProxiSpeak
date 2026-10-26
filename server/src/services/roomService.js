@@ -141,8 +141,14 @@ export function notifyLayoutBroadcast(io, roomWire) {
     obstacles: roomWire.obstacles,
   });
   invalidateRoomCache(roomWire.roomId);
-  if (typeof io.serverSideEmit === 'function') {
-    io.serverSideEmit('room:cache:invalidate', roomWire.roomId);
+  // serverSideEmit is supported across multiple server instances with RedisAdapter
+  const adapter = io.of?.('/')?.adapter;
+  if (typeof io.serverSideEmit === 'function' && (adapter?.pubClient || adapter?.allRooms)) {
+    try {
+      io.serverSideEmit('room:cache:invalidate', roomWire.roomId);
+    } catch {
+      // safe fallback if adapter cannot deliver
+    }
   }
 }
 
