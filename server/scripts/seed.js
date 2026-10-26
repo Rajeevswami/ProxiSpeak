@@ -14,7 +14,7 @@ import { connectMongo, disconnectMongo, ensureIndexes } from '../src/db/mongo.js
 import config from '../src/config/index.js';
 import logger from '../src/utils/logger.js';
 import UserPresence from '../src/models/UserPresence.js';
-import { buildDefaultRoom, persistRoom } from '../src/services/roomService.js';
+import { buildDefaultRoom, persistRoom, backfillLegacyRoomRevisions } from '../src/services/roomService.js';
 
 const log = logger.child('seed');
 
@@ -31,6 +31,7 @@ async function main() {
   // Idempotent and safe on an empty remote database: creates
   // UserPresence.location: 2dsphere plus the unique/lookup indexes.
   await ensureIndexes();
+  await backfillLegacyRoomRevisions();
   log.info('indexes ensured (UserPresence.location = 2dsphere)');
 
   for (const roomId of ROOMS) {

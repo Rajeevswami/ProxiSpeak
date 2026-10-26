@@ -43,6 +43,7 @@ export function buildDefaultRoom(roomId, world = config.world) {
     description: 'Default office blueprint generated on first join.',
     width: w,
     height: h,
+    layoutRevision: 1,
     obstacles,
     spawnPoints,
   };
@@ -63,6 +64,7 @@ export function toRoomWire(doc) {
     description: doc.description ?? '',
     width: doc.width,
     height: doc.height,
+    layoutRevision: doc.layoutRevision ?? 1,
     obstacles: doc.obstacles.map((o) => ({
       id: o.id,
       type: o.type,
@@ -117,3 +119,16 @@ export function invalidateRoomCache(roomId) {
   if (roomId) cache.delete(roomId);
   else cache.clear();
 }
+
+/**
+ * Safely backfill legacy room documents that lack `layoutRevision`.
+ * Idempotent, atomic across instances, and prevents duplicate-write races.
+ */
+export async function backfillLegacyRoomRevisions() {
+  const result = await Room.updateMany(
+    { layoutRevision: { $exists: false } },
+    { $set: { layoutRevision: 1 } },
+  );
+  return result.modifiedCount ?? 0;
+}
+

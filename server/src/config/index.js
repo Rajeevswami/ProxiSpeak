@@ -228,6 +228,11 @@ export const config = Object.freeze({
     roomId: str('SCALE_CHECK_ROOM', 'lobby'),
   }),
 
+  room: Object.freeze({
+    adminToken: str('ROOM_ADMIN_TOKEN', ''),
+    maxObstacles: integer('ROOM_LAYOUT_MAX_OBSTACLES', 200, { min: 1, max: 10000 }),
+  }),
+
   world,
 });
 

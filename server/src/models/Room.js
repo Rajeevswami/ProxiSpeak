@@ -28,6 +28,7 @@ const RoomSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     width: { type: Number, required: true, min: 200 },
     height: { type: Number, required: true, min: 200 },
+    layoutRevision: { type: Number, required: true, default: 1, min: 1 },
     obstacles: { type: [ObstacleSchema], default: [] },
     spawnPoints: {
       type: [{ x: { type: Number, required: true }, y: { type: Number, required: true } }],
