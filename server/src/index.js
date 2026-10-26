@@ -43,6 +43,7 @@ async function main() {
   else log.warn('No rooms in the database yet — run `npm run seed` before clients can join');
 
   const io = createSocketServer({ httpServer, config, logger: log, redis });
+  app.set('io', io);
 
   if (redis.enabled) {
     await sweepOrphanEdges(io).catch((err) =>
