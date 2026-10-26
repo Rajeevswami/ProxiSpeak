@@ -1,0 +1,56 @@
+{
+  "name": "Quiet Focus Library",
+  "description": "Library zone with dense acoustic absorption, individual carrels, and sound buffers.",
+  "obstacles": [
+    {
+      "id": "acoustic-perimeter-wall",
+      "type": "wall",
+      "x": 200,
+      "y": 150,
+      "w": 30,
+      "h": 700,
+      "blocksAudio": true,
+      "attenuation": 0.08
+    },
+    {
+      "id": "focus-carrel-1",
+      "type": "desk",
+      "x": 400,
+      "y": 250,
+      "w": 120,
+      "h": 60,
+      "blocksAudio": true,
+      "attenuation": 0.4
+    },
+    {
+      "id": "focus-carrel-2",
+      "type": "desk",
+      "x": 400,
+      "y": 450,
+      "w": 120,
+      "h": 60,
+      "blocksAudio": true,
+      "attenuation": 0.4
+    },
+    {
+      "id": "sound-baffle-screen",
+      "type": "screen",
+      "x": 700,
+      "y": 300,
+      "w": 200,
+      "h": 14,
+      "blocksAudio": true,
+      "attenuation": 0.35
+    },
+    {
+      "id": "rubber-plant-divider",
+      "type": "plant",
+      "x": 1000,
+      "y": 350,
+      "w": 28,
+      "h": 28,
+      "blocksAudio": true,
+      "attenuation": 0.7
+    }
+  ]
+}
