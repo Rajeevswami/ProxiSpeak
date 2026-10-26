@@ -1,11 +1,11 @@
 /**
- * Room persistence (Day 2): the default room blueprint and its writer.
- * Layouts + furniture obstacles are stored in MongoDB as plain data — the
- * occlusion model that will consume `blocksAudio` / `attenuation` and the
- * room-catalogue API reads arrive on their own days.
+ * Room persistence (Week 4 - Room Persistence): blueprint persistence,
+ * optimistic revision concurrency, atomic layout saves, and multi-node sync.
  */
 import Room from '../models/Room.js';
 import config from '../config/index.js';
+import { validateLayoutPayload } from '../validators/roomLayout.js';
+import { RoomNotFoundError, RevisionConflictError, ValidationError } from '../utils/errors.js';
 
 const cache = new Map(); // roomId -> room document (plain object)
 
@@ -113,6 +113,106 @@ export async function getRoom(roomId) {
 export async function listRoomIds() {
   const docs = await Room.find({}, { roomId: 1, _id: 0 }).sort({ roomId: 1 }).lean();
   return docs.map((doc) => doc.roomId);
+}
+
+/**
+ * Returns summary list of all persisted rooms (ids, names, revisions).
+ * Used by GET /api/rooms.
+ */
+export async function listRooms() {
+  const docs = await Room.find({}, { roomId: 1, name: 1, layoutRevision: 1, _id: 0 })
+    .sort({ roomId: 1 })
+    .lean();
+  return docs.map((doc) => ({
+    roomId: doc.roomId,
+    name: doc.name,
+    layoutRevision: doc.layoutRevision ?? 1,
+  }));
+}
+
+/**
+ * Broadcast layout updates to a room channel and invalidate cache across nodes.
+ */
+export function notifyLayoutBroadcast(io, roomWire) {
+  if (!io) return;
+  io.to(roomWire.roomId).emit('room:layout', {
+    roomId: roomWire.roomId,
+    layoutRevision: roomWire.layoutRevision,
+    obstacles: roomWire.obstacles,
+  });
+  invalidateRoomCache(roomWire.roomId);
+  if (typeof io.serverSideEmit === 'function') {
+    io.serverSideEmit('room:cache:invalidate', roomWire.roomId);
+  }
+}
+
+/**
+ * Atomically saves an updated layout for an existing room with revision conflict detection.
+ *
+ * @param {string} roomId
+ * @param {object} payload - { expectedRevision, obstacles, name?, description? }
+ * @param {object} [options]
+ * @param {object} [options.io] - optional Socket.io instance for live sync broadcast
+ * @returns {Promise<object>} updated room in wire format
+ */
+export async function saveLayout(roomId, payload, { io = null } = {}) {
+  const key = String(roomId ?? '').trim().toLowerCase();
+  if (!key) {
+    throw new ValidationError('"roomId" is required', { path: 'roomId' });
+  }
+
+  // 1. Verify existence and retrieve immutable room dimensions
+  const existing = await Room.findOne({ roomId: key }).lean();
+  if (!existing) {
+    throw new RoomNotFoundError(key);
+  }
+
+  // 2. Validate payload using shared validator against room dimensions
+  const validated = validateLayoutPayload(payload, {
+    room: existing,
+    maxObstacles: config.room.maxObstacles,
+    requireExpectedRevision: true,
+  });
+
+  const expectedRevision = validated.expectedRevision;
+
+  // 3. Atomic MongoDB update with revision in filter
+  // Handles legacy documents without layoutRevision as revision 1
+  const revisionFilter = expectedRevision === 1
+    ? { $or: [{ layoutRevision: 1 }, { layoutRevision: { $exists: false } }] }
+    : { layoutRevision: expectedRevision };
+
+  const updateSet = {
+    obstacles: validated.obstacles,
+    layoutRevision: expectedRevision + 1,
+  };
+  if (validated.name !== undefined) updateSet.name = validated.name;
+  if (validated.description !== undefined) updateSet.description = validated.description;
+
+  const updatedDoc = await Room.findOneAndUpdate(
+    { roomId: key, ...revisionFilter },
+    { $set: updateSet },
+    { new: true, runValidators: true },
+  ).lean();
+
+  if (!updatedDoc) {
+    // Determine if room disappeared or if revision conflicted
+    const current = await Room.findOne({ roomId: key }).lean();
+    if (!current) {
+      throw new RoomNotFoundError(key);
+    }
+    const currentRevision = current.layoutRevision ?? 1;
+    throw new RevisionConflictError(key, expectedRevision, currentRevision);
+  }
+
+  const wire = toRoomWire(updatedDoc);
+  cache.set(key, wire);
+
+  if (io) {
+    notifyLayoutBroadcast(io, wire);
+  }
+
+  return wire;
 }
 
 export function invalidateRoomCache(roomId) {
