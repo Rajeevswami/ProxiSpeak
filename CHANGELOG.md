@@ -639,11 +639,11 @@ panning and 60 FPS work remain not started.
 
 ## Day 14b — 2026-10-24 — stale-edge fencing, sweep validation, verification
 
-**Base and implementation commits:** QA fixes `fe90014` and `69066be`; then
-`ac887e8` (failing regression evidence), `07df50e` (store revisions), `bf72efd`
-(graph/socket fencing), `9d072ac` (bounded sweep validation), and `434472d`
-(body-parser patch). The subsequent documentation commit is visible in `git log`.
-Every listed short hash was checked with `git cat-file -t` and resolves to a commit.
+**Base and implementation commits:** commit `b8a6bcf` (merged in `c3f927c`), delivering
+QA credential redaction, race regressions, store revisions, graph/socket fencing,
+bounded sweep validation, and the body-parser lockfile patch. The subsequent documentation
+commit is visible in `git log`. Every listed short hash was checked with `git cat-file -t`
+and resolves to a commit.
 
 **Test-first race evidence and fix:**
 

@@ -55,12 +55,10 @@ The following short hashes were resolved with `git cat-file -t` and are commits 
 
 Their subjects and file-by-file mapping are recorded in `docs/WEEK3.md` and `CHANGELOG.md`. Earlier Day 1–13 hashes remain in the changelog; no hash or date is inferred from a document alone.
 
-Day 14b adds these separately verified commit hashes: `fe90014` and `69066be`
-(Mongo credential redaction), followed by `ac887e8` (failing race regressions),
-`07df50e` (store revisions), `bf72efd` (graph/socket fencing),
-`9d072ac` (bounded sweep validation), and `434472d` (body-parser lockfile patch).
-Each resolves as a commit with `git cat-file -t`; the documentation commit is
-intentionally not self-listed.
+Day 14b delivered commit `b8a6bcf` (merged in `c3f927c`), which includes credential
+redaction, race regressions, store revisions, graph/socket fencing, bounded sweep
+validation, and the body-parser lockfile patch. Each resolves as a commit with
+`git cat-file -t`; the documentation commit is intentionally not self-listed.
 
 ## Week 4 - Room Persistence commit evidence
 
