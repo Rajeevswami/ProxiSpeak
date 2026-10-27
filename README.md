@@ -2,7 +2,7 @@
 
 ProxiSpeak is a browser-based spatial voice chat prototype: each person moves an avatar on a 2D map, WebRTC connects nearby participants, and a Web Audio `GainNode` makes remote voice fade with distance. **Proximity is the volume knob.**
 
-The current scope includes Week 4 - Room Persistence: transactional room obstacle layouts, atomic revision conflict detection, admin token security, live layout sync across instances, and layout CLI tooling. It is not a deployed or production-hardened service.
+The current scope includes room layout persistence (`layoutRevision`, guarded REST/CLI saves, live `room:layout` broadcast) and **Week 3 (Day 16)** client-side sound-blocking obstacles in the Web Audio path (`gainForDistance(d) × T`). It is not a deployed or production-hardened service.
 
 ## How it works
 
@@ -25,8 +25,9 @@ Node.js + Express + Socket.io
 - Accepted moves persist position, then bump a shared per-user revision; edge creation checks both endpoint revisions and retries a stale read once. A bounded sweep validates stored edge distances as a safety net.
 - `MAX_PEERS_PER_USER` (default `8`) is enforced symmetrically; `0` means unlimited.
 - Remote audio is full volume through `30` px, follows a smoothstep curve to silence at the connect radius, and remains silent until the edge drops.
-- The audio overlay is sampled separately from the render loop; avatar positions do not create per-frame React state.
-- Room layouts are versioned with monotonic `layoutRevision` integers. Edits use atomic revision conflict detection (HTTP 409), broadcast `room:layout` to active clients, and invalidate caches across clustered instances via Redis. Obstacles remain data-only in this phase.
+- Blocking room obstacles (`blocksAudio === true`) multiply line-of-sight transmission `T` (`attenuation` in `[0, 1]`) into each peer's target gain (`gainForDistance(d) × T`) on the client with `0.08` s `setTargetAtTime` smoothing across obstacle edges (`docs/OCCLUSION.md`).
+- The audio overlay is sampled separately from the render loop (at most once per second) and shows per-peer distance, output volume, and obstacle transmission percentage; avatar positions do not create per-frame React state.
+- Room layouts are versioned with monotonic `layoutRevision` integers. Edits use atomic revision conflict detection (HTTP 409), broadcast `room:layout` to active clients (taking acoustic effect on the very next mixer tick without re-join), and invalidate caches across clustered instances via Redis.
 
 ## Requirements
 
@@ -101,7 +102,7 @@ Invalid validated numeric, boolean, and base-URL settings fail at startup with o
 
 Week 4 introduces transactional layout management and persistence for room obstacles:
 
-- **Data Model**: Rooms store dimensions, metadata, obstacles, and an atomic `layoutRevision` (integer >= 1). Obstacles define rectangular barriers (`type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`). Attenuation represents the fraction of sound amplitude that survives crossing the barrier (`0.0` = opaque, `1.0` = transparent). Obstacles remain data-only in this phase (no collision or audio gain logic).
+- **Data Model**: Rooms store dimensions, metadata, obstacles, and an atomic `layoutRevision` (integer >= 1). Obstacles define rectangular barriers (`type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`). Attenuation represents the fraction of sound amplitude that survives crossing the barrier (`0.0` = opaque, `1.0` = transparent), consumed client-side in **Week 3 (Day 16)** line-of-sight occlusion (`client/src/audio/occlusion.js`, `docs/OCCLUSION.md`). Avatars have no movement collision with obstacles.
 - **Public Endpoints**:
   - `GET /api/rooms` — lists available rooms, dimensions, obstacles, and revisions.
   - `GET /api/rooms/:roomId` — fetches room details.
@@ -146,32 +147,32 @@ The Mongo suites create and drop isolated databases derived from the test base U
 
 - **WASD / arrow keys:** move.
 - **Click the floor:** walk toward that position.
-- **Audio overlay:** connected peers, mesh cap, distance, volume, connection state, and inbound audio bytes.
+- **Audio overlay:** connected peers, mesh cap, distance, volume + obstacle transmission percentage (for example `volume 4% (blocked 12%)`), connection state, and inbound audio bytes.
 - **Browser-paused audio:** when peers exist and the context is `suspended` or `interrupted`, one line says `Audio is paused by the browser. Click anywhere on the page.` A page pointer gesture and visible-tab resume path attempt recovery.
 
 ## Current verification
 
-On 2026-10-26, after clean lockfile installs:
+On 2026-10-27 (**Week 3 (Day 16)**), after clean lockfile installs:
 
-- Without services: server **186 passed / 77 skipped** (263 tests), client **171 passed / 0 skipped**.
-- With real Redis: server **223 passed / 40 skipped** (263 tests), client **171 passed / 0 skipped**. All remaining skips require MongoDB.
-- `npm run build`: passed (Vite, 80 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
-- Embedded real-Redis `mesh-check`: **37/37**; external two-instance harness: **18/18**. Two-instance `scale-check`: **8/8**.
-- Random-layout probe: 24 random 50-user layouts plus one identical-position layout on Memory and Redis, zero mismatches. Signal-burst tests: **2/2**.
-- Three separate **180-second, 60-user, two-instance** soaks: **20 settled samples each, zero violations at every sample**, with all tracked runtime state and Redis keys at zero after disconnect. See `docs/LIMITATIONS.md` for measured RSS figures; no “no leak” claim is made.
+- Without services: server **186 passed / 77 skipped** (263 tests), client **179 passed / 0 skipped**.
+- With real Redis (`redis-server` 7.2.5): server **223 passed / 40 skipped** (263 tests), client **179 passed / 0 skipped**. All remaining skips require MongoDB.
+- `npm run build`: passed (Vite 6.4.4, 81 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
+- Occlusion benchmark (`node client/scripts/occlusion-bench.js`, 8 peers × 200 obstacles per tick): spread room `p50 = 11.04 µs` / `p95 = 12.41 µs` (**99.69%** rejected by bounding-box pre-check), full mixer tick `p50 = 11.21 µs` / `p95 = 13.67 µs`, `20,000`-case 4-edge geometry cross-check with **0 disagreements**.
 
-MongoDB was unavailable in the verification sandbox, so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server commands are **NOT VERIFIED** here. No live two-browser microphone/hearing test was performed. See `docs/WEEK3.md` for earlier evidence and `CHANGELOG.md` for the Day 14b record.
+MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastdl.mongodb.org` unreachable under sandbox egress rules), so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server/CLI commands are **NOT VERIFIED** here. No browser is installed in this sandbox, so live two-browser microphone/hearing and audible occlusion checks are **NOT VERIFIED** here. See `docs/OCCLUSION.md`, `docs/WEEK3.md`, and `CHANGELOG.md` for full records.
 
 ## Documentation
 
 - `docs/WEEK1.md`, `docs/WEEK2.md`, `docs/WEEK3.md` — weekly implementation notes
+- `docs/ROOM_PERSISTENCE.md` — room layout persistence, revision concurrency, REST API, live sync, and CLI
+- `docs/OCCLUSION.md` — Week 3 (Day 16) sound-blocking obstacle geometry, smoothing, worked table, and benchmark
 - `docs/DEMO_WEEK3.md` — approximately eight-minute, two-instance demo
 - `docs/LIMITATIONS.md` — known technical and verification limits
-- `docs/REQUIREMENTS_TRACE.md` — requirement-to-code/test mapping
+- `docs/REQUIREMENTS_TRACE.md` — requirement-to-code/test mapping with company plan weeks and delivered calendar weeks
 - `CHANGELOG.md` — dated history and commit hashes
 
 ## Known limits and next scope
 
-The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible quality is unmeasured. Obstacles do not occlude audio, stereo panning is absent, custom room-layout persistence is absent, and 60 FPS at high occupancy is unverified. Read `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
+The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible quality is unmeasured. Occlusion is pure 2D straight line-of-sight gain reduction on the client (no diffraction, reflection, thickness-based loss, height, movement collision, or server/network stream cutoff). Read `docs/OCCLUSION.md` and `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
 
-Week 4 remains **room persistence/obstacles, stereo panning, and 60 FPS work**. It has not been started in this wrap-up.
+Next planned tasks: **stereo panning** and **60 FPS rendering/performance work** (neither started yet).
