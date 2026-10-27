@@ -48,6 +48,9 @@ export class RevisionConflictError extends AppError {
       },
     );
     this.name = 'RevisionConflictError';
+    this.roomId = roomId;
+    this.expectedRevision = expectedRevision;
+    this.currentRevision = currentRevision;
   }
 }
 

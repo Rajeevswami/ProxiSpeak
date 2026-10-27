@@ -1,4 +1,5 @@
 import { distanceBetween, gainForDistance } from './attenuation.js';
+import { createObstacleCache, transmissionBetween } from './occlusion.js';
 
 const defaultLogger = {
   warn(message) {
@@ -8,7 +9,13 @@ const defaultLogger = {
   },
 };
 const UPDATE_INTERVAL_MS = 50;
-const TARGET_TIME_CONSTANT = 0.05;
+export const TARGET_TIME_CONSTANT = 0.05;
+/**
+ * Smoothing time constant (seconds) used when line-of-sight transmission is
+ * attenuated or transitions across an obstacle boundary so stepping behind or
+ * out from behind a wall never produces an audible click — Week 3 (Day 16).
+ */
+export const OCCLUSION_TIME_CONSTANT = 0.08;
 
 /**
  * Create the app's one remote-audio Web Audio mixer. Dependencies are
@@ -32,6 +39,8 @@ export function createAudioMixer({
   let outerPx = 100;
   let lastUpdateMs = -Infinity;
   let lifecycleListening = false;
+  const gainOptions = { innerPx: 30, outerPx: 100 };
+  const obstacleCache = createObstacleCache();
   const peers = new Map();
 
   const warnUnavailableOnce = () => {
@@ -118,7 +127,15 @@ export function createAudioMixer({
     const audioContext = ensureContext();
     if (!audioContext) {
       fallbackElement(element);
-      peers.set(peerId, { source: null, gain: null, element, destinationConnected: true, gainValue: 1, distancePx: null });
+      peers.set(peerId, {
+        source: null,
+        gain: null,
+        element,
+        destinationConnected: true,
+        gainValue: 1,
+        transmission: 1,
+        distancePx: null,
+      });
       return null;
     }
 
@@ -137,6 +154,7 @@ export function createAudioMixer({
         element,
         destinationConnected: false,
         gainValue: 0,
+        transmission: 1,
         distancePx: null,
       });
       return { source, gain };
@@ -146,50 +164,89 @@ export function createAudioMixer({
       try { source?.disconnect(); } catch { /* best-effort setup rollback */ }
       try { gain?.disconnect(); } catch { /* best-effort setup rollback */ }
       fallbackElement(element);
-      peers.set(peerId, { source: null, gain: null, element, destinationConnected: true, gainValue: 1, distancePx: null });
+      peers.set(peerId, {
+        source: null,
+        gain: null,
+        element,
+        destinationConnected: true,
+        gainValue: 1,
+        transmission: 1,
+        distancePx: null,
+      });
       return null;
     }
   };
 
-  const updateGains = (localPos, getRemotePos, peerList) => {
+  const applyPeerGain = (peerId, localPos, getRemotePos, prepared) => {
+    const peer = peers.get(peerId);
+    if (!peer) return;
+    let remotePos = null;
+    try {
+      remotePos = typeof getRemotePos === 'function' ? getRemotePos(peerId) : null;
+    } catch {
+      remotePos = null;
+    }
+    const distancePx = distanceBetween(localPos, remotePos);
+    const hasDistance = Number.isFinite(distancePx);
+    const transmission = hasDistance && prepared.length > 0
+      ? transmissionBetween(localPos, remotePos, prepared)
+      : 1;
+    const rawTarget = hasDistance
+      ? gainForDistance(distancePx, gainOptions) * transmission
+      : 0;
+    const target = rawTarget <= 0 ? 0 : rawTarget >= 1 ? 1 : rawTarget;
+    const timeConstant = (transmission !== peer.transmission || transmission < 1)
+      ? OCCLUSION_TIME_CONSTANT
+      : TARGET_TIME_CONSTANT;
+
+    peer.distancePx = hasDistance ? distancePx : null;
+    if (!peer.gain) {
+      peer.gainValue = 1; // plain HTMLMediaElement fallback is intentionally full-volume
+      peer.transmission = 1;
+      return;
+    }
+    peer.transmission = transmission;
+    peer.gainValue = target;
+    try {
+      peer.gain.gain.setTargetAtTime(target, context.currentTime, timeConstant);
+      if (!peer.destinationConnected) {
+        peer.gain.connect(context.destination);
+        peer.destinationConnected = true;
+      }
+    } catch {
+      // A peer can be concurrently torn down by a browser connection event.
+    }
+  };
+
+  const updateGains = (localPos, getRemotePos, peerList, roomOrObstacles = null) => {
     const timestamp = now();
     if (timestamp - lastUpdateMs < UPDATE_INTERVAL_MS) return false;
     lastUpdateMs = timestamp;
-    const ids = peerList instanceof Map
-      ? [...peerList.keys()]
-      : Array.isArray(peerList)
-        ? peerList.map((peer) => typeof peer === 'string' ? peer : peer?.peerId).filter(Boolean)
-        : peerList && typeof peerList[Symbol.iterator] === 'function'
-          ? [...peerList]
-          : [...peers.keys()];
 
-    for (const peerId of ids) {
-      const peer = peers.get(peerId);
-      if (!peer) continue;
-      let remotePos = null;
-      try {
-        remotePos = typeof getRemotePos === 'function' ? getRemotePos(peerId) : null;
-      } catch {
-        remotePos = null;
+    const prepared = obstacleCache.resolve(roomOrObstacles);
+
+    if (peerList == null) {
+      for (const peerId of peers.keys()) {
+        applyPeerGain(peerId, localPos, getRemotePos, prepared);
       }
-      const distancePx = distanceBetween(localPos, remotePos);
-      const target = Number.isFinite(distancePx)
-        ? gainForDistance(distancePx, { innerPx: 30, outerPx })
-        : 0;
-      peer.distancePx = Number.isFinite(distancePx) ? distancePx : null;
-      if (!peer.gain) {
-        peer.gainValue = 1; // plain HTMLMediaElement fallback is intentionally full-volume
-        continue;
+    } else if (Array.isArray(peerList)) {
+      for (let i = 0; i < peerList.length; i += 1) {
+        const entry = peerList[i];
+        const peerId = typeof entry === 'string' ? entry : entry?.peerId;
+        if (peerId) applyPeerGain(peerId, localPos, getRemotePos, prepared);
       }
-      peer.gainValue = target;
-      try {
-        peer.gain.gain.setTargetAtTime(target, context.currentTime, TARGET_TIME_CONSTANT);
-        if (!peer.destinationConnected) {
-          peer.gain.connect(context.destination);
-          peer.destinationConnected = true;
-        }
-      } catch {
-        // A peer can be concurrently torn down by a browser connection event.
+    } else if (peerList instanceof Map) {
+      for (const peerId of peerList.keys()) {
+        if (peerId) applyPeerGain(peerId, localPos, getRemotePos, prepared);
+      }
+    } else if (typeof peerList[Symbol.iterator] === 'function') {
+      for (const entry of peerList) {
+        const peerId = typeof entry === 'string' ? entry : entry?.peerId;
+        if (peerId) applyPeerGain(peerId, localPos, getRemotePos, prepared);
+      }
+    } else {
+      for (const peerId of peers.keys()) {
+        applyPeerGain(peerId, localPos, getRemotePos, prepared);
       }
     }
     return true;
@@ -197,6 +254,7 @@ export function createAudioMixer({
 
   const closeAll = async () => {
     for (const peerId of [...peers.keys()]) remove(peerId);
+    obstacleCache.clear();
     if (lifecycleListening) {
       doc?.removeEventListener?.('visibilitychange', onVisibilityChange);
       doc?.removeEventListener?.('pointerdown', onPageGesture);
@@ -218,10 +276,18 @@ export function createAudioMixer({
     closeAll,
     setProximityRadius(value) {
       outerPx = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 100;
+      gainOptions.outerPx = outerPx;
     },
     peerMetrics(peerId) {
       const peer = peers.get(peerId);
       return peer ? { distancePx: peer.distancePx, volumePercent: Math.round(peer.gainValue * 100) } : null;
+    },
+    peerTransmission(peerId) {
+      const peer = peers.get(peerId);
+      return peer ? peer.transmission : null;
+    },
+    obstacleCacheStats() {
+      return obstacleCache.stats();
     },
     size() { return peers.size; },
     getContext() { return context; },

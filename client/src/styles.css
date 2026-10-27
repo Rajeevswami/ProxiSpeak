@@ -110,7 +110,7 @@ body {
   right: 1rem;
   z-index: 1;
   min-width: 220px;
-  max-width: min(320px, 40vw);
+  max-width: min(440px, 50vw);
   padding: 0.6rem 0.8rem;
   border-radius: 10px;
   background: rgba(11, 16, 32, 0.82);

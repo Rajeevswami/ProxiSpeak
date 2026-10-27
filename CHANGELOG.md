@@ -722,18 +722,18 @@ covered and unchanged.
 
 ---
 
-## Week 4 - Room Persistence — 2026-10-26 — room layout persistence and live sync
+## Week 3 (Day 15) — 2026-10-26 — room layout persistence and live sync (Company Plan Week 4)
 
 *Commits: `d83289d`, `2be63a1`, `40055b7`, `2d31aea`, `775d9a0`, `6f8ef65`, `f5adde8`, `aa04e53`*
 
 **Added**
 
-* Shared layout validator (`server/src/validators/roomLayout.js`) enforcing strict boundary checks (`[0, width]`, `[0, height]`), obstacle limits (`ROOM_LAYOUT_MAX_OBSTACLES`, default 200), unique obstacle IDs, allowed obstacle types (`wall`, `glass`, `door`, `desk`, `screen`, `pillar`), boolean `blocksAudio`, transmission `attenuation` in `[0.0, 1.0]`, mass-assignment prevention (unknown fields rejected), and path-specific error messages.
+* Shared layout validator (`server/src/validators/roomLayout.js`) enforcing strict boundary checks (`[0, width]`, `[0, height]`), obstacle limits (`ROOM_LAYOUT_MAX_OBSTACLES`, default 200), unique obstacle IDs, allowed obstacle types (`wall`, `desk`, `plant`, `pillar`, `screen`), boolean `blocksAudio`, transmission `attenuation` in `[0.0, 1.0]`, mass-assignment prevention (unknown fields rejected), and path-specific error messages.
 * `layoutRevision` field on `Room` model (positive integer >= 1) with safe, atomic backfill routine `backfillLegacyRoomRevisions()` for legacy unversioned documents. Documented obstacle `attenuation` semantics as acoustic transmission coefficient (fraction of sound amplitude surviving obstacle traversal).
 * Atomic layout save mechanism (`saveLayout` in `server/src/services/roomService.js`) using atomic MongoDB `findOneAndUpdate` with expected revision filter, incrementing `layoutRevision` on success and returning HTTP 409 `RevisionConflictError` on stale revision concurrency races. Room dimensions (`width`, `height`) are strictly immutable.
 * REST API endpoints:
-  - `GET /api/rooms` — public room list with layout revisions and obstacles.
-  - `GET /api/rooms/:roomId` — public single-room details.
+  - `GET /api/rooms` — public room summary list (`roomId`, `name`, `layoutRevision`).
+  - `GET /api/rooms/:roomId` — public single-room details (dimensions, `layoutRevision`, `obstacles`, `spawnPoints`).
   - `PUT /api/rooms/:roomId/layout` — admin token-guarded layout mutation with `x-room-admin-token` header, constant-time `crypto.timingSafeEqual` comparison against `ROOM_ADMIN_TOKEN`, HTTP 403 `editing_disabled` when token is unset, HTTP 401 on missing/invalid token, 64 KB payload cap (HTTP 413), and in-memory IP rate limiter (HTTP 429). Admin tokens are strictly redacted from logs, error messages, and responses.
 * Real-time live sync:
   - Broadcasts `room:layout` with `{ roomId, layoutRevision, obstacles }` to active sockets in the room on layout save.
@@ -756,4 +756,50 @@ covered and unchanged.
   - Real MongoDB integration tests covering atomic revision increments, 50-client concurrency races (exactly 1 winner, 49 conflicts), unknown room 404, dimension immutability, legacy backfills, reconnect survival, and seed idempotency (`server/test/roomPersistence.mongo.test.js`).
   - Client tests for revision ordering, obstacle replacement, room scoping, and listener cleanup (`client/test/worldState.layout.test.js`).
 * Architecture documentation in `docs/ROOM_PERSISTENCE.md`.
+
+---
+
+## Week 3 (Day 16) — 2026-10-27 — sound-blocking obstacles in the audio path
+
+*Commits: `35642cc`, `fd2fbd1`, `afb9df3`, `faeff7c`, `424af75` (this documentation commit follows them)*
+
+**Added**
+
+* Pure, zero-allocation 2D acoustic occlusion geometry (`client/src/audio/occlusion.js`):
+  - `segmentIntersectsRect(ax, ay, bx, by, rect)` implementing closed-segment versus closed-rectangle Liang-Barsky clipping with endpoint canonicalization (exact symmetry under endpoint swap), fast closed bounding-box rejection, division-free handling for horizontal/vertical/zero-length segments, and 4-ULP relative parametric tolerance (`PARAM_EPSILON = 4 * Number.EPSILON`).
+  - `prepareObstacles(obstacles, layoutRevision)` and per-mixer `createObstacleCache()` normalizing valid blocking obstacles (`blocksAudio === true`, finite coordinates, `w > 0`, `h > 0`, `attenuation` clamped to `[0, 1]`, deduplicated by reference and `id`) and caching by `(roomId, layoutRevision)`.
+  - `transmissionBetween(listener, speaker, prepared)` computing multiplicative transmission `T` in `[0, 1]` with a 4-comparison bounding-box pre-check before exact clipping.
+  - Pure overlay helpers `formatPeerVolume` and `derivePeerVolume` formatting output volume and transmission percentage (e.g. `volume 4% (blocked 12%)` when occluded, `volume 39% (100%)` when unobstructed).
+* Audio mixer & live layout integration (`client/src/audio/audioMixer.js`, `client/src/hooks/useSocket.js`):
+  - Per-peer target gain is now `gainForDistance(d) * transmissionBetween(localPos, remotePos, prepared)` using local predicted and remote interpolated positions from `worldRef.current`.
+  - Uses `OCCLUSION_TIME_CONSTANT = 0.08` s via `setTargetAtTime` while occluded or transitioning out of occlusion so crossing wall edges never clicks, while preserving `TARGET_TIME_CONSTANT = 0.05` s in unobstructed space (identical behavior when no obstacles exist).
+  - Live `room:layout` events update `world.room.layoutRevision` and `world.room.obstacles` in place and take acoustic effect on the very next mixer tick (at most 20 Hz) without re-joining or React re-renders.
+* Read-only overlay update (`client/src/components/AudioStatus.jsx`, `client/src/styles.css`):
+  - Per-peer row displays transmission percentage alongside volume at <= 1 Hz with no new UI controls and no per-frame React state.
+* Test coverage, benchmark, and documentation (`client/test/audio.occlusion.test.js`, `client/scripts/occlusion-bench.js`, `docs/OCCLUSION.md`):
+  - Deterministic geometry edge cases, **20,000**-case random cross-check against an independent 4-edge + point-in-rectangle reference (**0 disagreements**), transmission monotonicity property test, `layoutRevision` caching, seeded lobby geometries (`70 px` open `0.39359` vs across `0.12` wall `0.04723`), live `room:layout` updates, 50-cycle node teardown, 20 Hz throttle, Web Audio fallback, and pure overlay derivation.
+  - Added `"Delivered in calendar week"` column and Week 3 (Day 16) evidence to `docs/REQUIREMENTS_TRACE.md`.
+
+**Measured (`node client/scripts/occlusion-bench.js`, 8 peers × 200 obstacles per tick)**
+
+* Spread 1920×1080 room (`1,600` checks/tick, **99.69%** rejected by bounding-box pre-check): `p50 = 11.04 µs` (`0.0110 ms`), `p95 = 12.41 µs` (`0.0124 ms`), `max = 145.92 µs` (`0.1459 ms`).
+* Dense overlap worst-case (all `1,600` pairs run full Liang-Barsky): `p50 = 16.11 µs` (`0.0161 ms`), `p95 = 22.13 µs` (`0.0221 ms`), `max = 205.21 µs` (`0.2052 ms`).
+* Full `audioMixer.updateGains` tick (`prepareObstacles` ran **1** time across `6,000` ticks): `p50 = 11.21 µs` (`0.0112 ms`), `p95 = 13.67 µs` (`0.0137 ms`), `max = 363.65 µs` (`0.3637 ms`).
+
+**Verified in this environment (2026-10-27)**
+
+* Fresh `npm ci --prefix server` and `npm ci --prefix client` installs succeeded; `npm run build --prefix client` succeeded (Vite 6.4.4, 81 modules); `npm audit` for both packages reported **0 high, 0 critical, 0 total vulnerabilities**.
+* Without `REDIS_URL_TEST`: server **191 passed / 0 failed / 77 skipped** (268 tests); client **179 passed / 0 failed / 0 skipped**.
+* With real `redis-server` 7.2.5 (`REDIS_URL_TEST="redis://127.0.0.1:6379"`): server **228 passed / 0 failed / 40 skipped** (268 tests); client **179 passed / 0 failed / 0 skipped**.
+* `server/`, `client/src/audio/attenuation.js`, `client/src/movement/`, and all pre-existing test files are completely unchanged.
+
+**NOT VERIFIED here**
+
+* MongoDB could not be installed in this sandbox (`deb.debian.org` and `fastdl.mongodb.org` unreachable under sandbox egress allowlist), so the 40 MongoDB-backed server tests remain skipped (`NOT VERIFIED`).
+* No browser binary is installed in this sandbox, so live two-window audible volume drop across obstacles and live CLI wall-removal hearing recovery remain **NOT VERIFIED** here; manual steps are in `docs/OCCLUSION.md`.
+
+**Scope boundary**
+
+* Client-only occlusion gain calculation. Server code untouched (peer edges still depend only on Euclidean radius and cap; blocked peers keep their WebRTC connection). No new library, no movement collision, no low-pass/reverb, no stereo panning, and no 60 FPS work (stereo panning is the next planned task).
+
 

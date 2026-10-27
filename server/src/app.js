@@ -240,6 +240,18 @@ export function createApp({
     }
 
     const isApiRoomRoute = req.originalUrl?.startsWith('/api/rooms');
+    if (err?.type === 'entity.parse.failed') {
+      if (isApiRoomRoute) {
+        return res.status(400).json({
+          error: {
+            code: 'invalid_payload',
+            message: 'Invalid JSON payload',
+          },
+        });
+      }
+      return res.status(400).json({ ok: false, error: 'Malformed JSON body' });
+    }
+
     const isAppError = err instanceof AppError;
 
     if (isApiRoomRoute || isAppError) {

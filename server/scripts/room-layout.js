@@ -107,8 +107,8 @@ async function main() {
 
     if (dryRun) {
       const defaultBounds = {
-        width: Number.isFinite(fileContent.width) ? fileContent.width : 1920,
-        height: Number.isFinite(fileContent.height) ? fileContent.height : 1080,
+        width: config.world.width,
+        height: config.world.height,
       };
       const validated = validateLayoutPayload(fileContent, {
         room: defaultBounds,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { countNearbyNotConnected, formatMeshSummary } from '../realtime/meshIndicator.js';
 import { AUDIO_PAUSED_HINT, shouldShowAudioPausedHint } from '../audio/audioPausedHint.js';
+import { formatPeerVolume } from '../audio/occlusion.js';
 
 /**
  * Audio connection status overlay (Day 9) — the visible proof for the
@@ -99,8 +100,8 @@ export default function AudioStatus({ mic, getSnapshot, getAudioContextState, wo
               <span className="peer-distance" title="distance from your avatar">
                 {Number.isFinite(row.distancePx) ? `${Math.round(row.distancePx)} px` : 'distance unknown'}
               </span>
-              <span className="peer-volume" title="current distance-based output gain">
-                {Number.isFinite(row.volumePercent) ? `${row.volumePercent}%` : '0%'}
+              <span className="peer-volume" title="current output gain and obstacle transmission">
+                {formatPeerVolume(row.volumePercent, row.transmission)}
               </span>
               <span className="peer-bytes" title="inbound audio bytes received">
                 {formatBytes(row.bytesReceived)}

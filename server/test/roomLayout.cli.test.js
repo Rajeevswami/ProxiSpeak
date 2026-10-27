@@ -119,3 +119,29 @@ test('CLI output redacts database credentials from log messages', async () => {
     }
   }
 });
+
+test('CLI save --dry-run with non-object null JSON fails cleanly with validation message', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const tmpNullFile = path.join(os.tmpdir(), `proxispeak-null-layout-${process.pid}.json`);
+  fs.writeFileSync(tmpNullFile, 'null', 'utf8');
+  try {
+    await execFileAsync('node', [
+      cliPath,
+      'save',
+      '--room',
+      'lobby',
+      '--file',
+      tmpNullFile,
+      '--dry-run',
+    ]);
+    assert.fail('Should have exited 1');
+  } catch (err) {
+    assert.equal(err.code, 1);
+    const output = (err.stdout || '') + (err.stderr || '');
+    assert.match(output, /Layout payload must be a JSON object/);
+    assert.doesNotMatch(output, /Cannot read properties of null/);
+  } finally {
+    fs.unlinkSync(tmpNullFile);
+  }
+});

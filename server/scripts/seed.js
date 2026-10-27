@@ -12,7 +12,7 @@ import process from 'node:process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
-import { connectMongo, disconnectMongo, ensureIndexes } from '../src/db/mongo.js';
+import { connectMongo, disconnectMongo, ensureIndexes, redactUri } from '../src/db/mongo.js';
 import config from '../src/config/index.js';
 import logger from '../src/utils/logger.js';
 import UserPresence from '../src/models/UserPresence.js';
@@ -21,7 +21,6 @@ import { buildDefaultRoom, persistRoom, backfillLegacyRoomRevisions } from '../s
 const log = logger.child('seed');
 
 export const ROOMS = ['lobby', 'studio', 'lounge'];
-const redact = (uri) => uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:***@');
 
 /**
  * Ensures indexes, runs safe revision backfill, and creates default rooms
@@ -45,7 +44,7 @@ export async function seedRooms() {
 
 async function main() {
   const target = config.mongo.uri;
-  log.info(`target: ${redact(target)}`);
+  log.info(`target: ${redactUri(target)}`);
 
   await connectMongo();
   log.info(`connected to ${mongoose.connection.name || 'proxispeak'}`);
