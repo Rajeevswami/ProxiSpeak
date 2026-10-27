@@ -334,10 +334,14 @@ export function useSocket() {
    */
   const getAudioSnapshot = useCallback(() => {
     const mixer = audioMixerRef.current;
-    return (peerManagerRef.current?.snapshot() ?? []).map((row) => ({
-      ...row,
-      ...(mixer.peerMetrics(row.peerId) ?? { distancePx: null, volumePercent: 0 }),
-    }));
+    return (peerManagerRef.current?.snapshot() ?? []).map((row) => {
+      const transmission = mixer.peerTransmission(row.peerId);
+      return {
+        ...row,
+        ...(mixer.peerMetrics(row.peerId) ?? { distancePx: null, volumePercent: 0 }),
+        transmission: typeof transmission === 'number' ? transmission : 1,
+      };
+    });
   }, []);
 
   const getRemotePositionRef = useRef(null);

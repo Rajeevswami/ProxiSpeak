@@ -3,6 +3,7 @@
  * obstacles — Week 3 (Day 16).
  * No browser, DOM, React or Web Audio dependencies; zero allocations in the hot path.
  */
+import { distanceBetween, gainForDistance } from './attenuation.js';
 
 /**
  * Relative parametric tolerance (4 ULPs in t-space, ~8.88e-16) for Liang-Barsky
@@ -331,4 +332,69 @@ export function transmissionBetween(listener, speaker, prepared) {
   if (transmission < 0) return 0;
   if (transmission > 1) return 1;
   return transmission;
+}
+
+/**
+ * Format a peer's output volume and line-of-sight transmission percentage for
+ * the read-only audio status overlay (e.g. `volume 4% (blocked 12%)` when
+ * occluded, or `volume 39% (100%)` when unobstructed).
+ *
+ * @param {number|null|undefined} volumePercent
+ * @param {number|null|undefined} [transmission=1]
+ * @returns {string}
+ */
+export function formatPeerVolume(volumePercent, transmission = 1) {
+  const vol = typeof volumePercent === 'number' && Number.isFinite(volumePercent)
+    ? Math.max(0, Math.min(100, Math.round(volumePercent)))
+    : 0;
+  const clampedT = typeof transmission === 'number' && Number.isFinite(transmission)
+    ? Math.max(0, Math.min(1, transmission))
+    : 1;
+  const transmissionPercent = Math.round(clampedT * 100);
+  if (clampedT < 1) {
+    return `volume ${vol}% (blocked ${transmissionPercent}%)`;
+  }
+  return `volume ${vol}% (${transmissionPercent}%)`;
+}
+
+/**
+ * Pure derivation of distance, transmission, combined target gain, and formatted
+ * overlay volume text from known listener/speaker positions and room obstacles.
+ *
+ * @param {{x: number, y: number}|null|undefined} localPos
+ * @param {{x: number, y: number}|null|undefined} remotePos
+ * @param {ReadonlyArray<object>|Array<object>|null|undefined} obstacles
+ * @param {{innerPx?: number, outerPx?: number}} [options]
+ */
+export function derivePeerVolume(localPos, remotePos, obstacles, options = {}) {
+  const distancePx = distanceBetween(localPos, remotePos);
+  if (!Number.isFinite(distancePx)) {
+    return {
+      distancePx: null,
+      distanceGain: 0,
+      transmission: 1,
+      gain: 0,
+      volumePercent: 0,
+      transmissionPercent: 100,
+      blocked: false,
+      text: formatPeerVolume(0, 1),
+    };
+  }
+  const distanceGain = gainForDistance(distancePx, options);
+  const transmission = transmissionBetween(localPos, remotePos, obstacles);
+  const rawGain = distanceGain * transmission;
+  const gain = rawGain <= 0 ? 0 : rawGain >= 1 ? 1 : rawGain;
+  const volumePercent = Math.round(gain * 100);
+  const transmissionPercent = Math.round(transmission * 100);
+  const blocked = transmission < 1;
+  return {
+    distancePx,
+    distanceGain,
+    transmission,
+    gain,
+    volumePercent,
+    transmissionPercent,
+    blocked,
+    text: formatPeerVolume(volumePercent, transmission),
+  };
 }
