@@ -347,6 +347,11 @@ test('admin token never appears in responses or error payloads', async (t) => {
       headers: { 'content-type': 'application/json', 'x-room-admin-token': secret },
       body: JSON.stringify({ expectedRevision: 1, obstacles: [] }),
     }),
+    fetch(`${server.baseUrl}/api/rooms/lobby/layout`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-room-admin-token': secret },
+      body: `{"obstacles": ${secret}}`,
+    }),
   ];
 
   for (const promise of checks) {

@@ -76,3 +76,25 @@ test('the bound listeners never throw when an event fires', () => {
   assert.doesNotThrow(() => connection.emit('disconnected'));
   assert.doesNotThrow(() => connection.emit('error', new Error('connection reset')));
 });
+
+test('seed script redacts @-bearing passwords and query secrets via redactUri', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const execFileAsync = promisify(execFile);
+  const seedPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/seed.js');
+  const secretUri = 'mongodb://adminUser:p@ssSecret99@127.0.0.1:1/proxispeak?password=querySecret88';
+
+  try {
+    await execFileAsync('node', [seedPath], {
+      env: { ...process.env, MONGO_URI: secretUri, MONGO_TIMEOUT_MS: '500' },
+    });
+    assert.fail('Expected seed to exit non-zero against closed port');
+  } catch (err) {
+    assert.equal(err.code, 1);
+    const combined = (err.stdout || '') + (err.stderr || '');
+    assert.doesNotMatch(combined, /adminUser|ssSecret99|querySecret88/);
+    assert.match(combined, /mongodb:\/\/\*\*\*:\*\*\*@127\.0\.0\.1:1\/proxispeak\?password=\*\*\*/);
+  }
+});
