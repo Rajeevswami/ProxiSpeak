@@ -722,18 +722,18 @@ covered and unchanged.
 
 ---
 
-## Week 4 - Room Persistence — 2026-10-26 — room layout persistence and live sync
+## Week 3 (Day 15) — 2026-10-26 — room layout persistence and live sync (Company Plan Week 4)
 
 *Commits: `d83289d`, `2be63a1`, `40055b7`, `2d31aea`, `775d9a0`, `6f8ef65`, `f5adde8`, `aa04e53`*
 
 **Added**
 
-* Shared layout validator (`server/src/validators/roomLayout.js`) enforcing strict boundary checks (`[0, width]`, `[0, height]`), obstacle limits (`ROOM_LAYOUT_MAX_OBSTACLES`, default 200), unique obstacle IDs, allowed obstacle types (`wall`, `glass`, `door`, `desk`, `screen`, `pillar`), boolean `blocksAudio`, transmission `attenuation` in `[0.0, 1.0]`, mass-assignment prevention (unknown fields rejected), and path-specific error messages.
+* Shared layout validator (`server/src/validators/roomLayout.js`) enforcing strict boundary checks (`[0, width]`, `[0, height]`), obstacle limits (`ROOM_LAYOUT_MAX_OBSTACLES`, default 200), unique obstacle IDs, allowed obstacle types (`wall`, `desk`, `plant`, `pillar`, `screen`), boolean `blocksAudio`, transmission `attenuation` in `[0.0, 1.0]`, mass-assignment prevention (unknown fields rejected), and path-specific error messages.
 * `layoutRevision` field on `Room` model (positive integer >= 1) with safe, atomic backfill routine `backfillLegacyRoomRevisions()` for legacy unversioned documents. Documented obstacle `attenuation` semantics as acoustic transmission coefficient (fraction of sound amplitude surviving obstacle traversal).
 * Atomic layout save mechanism (`saveLayout` in `server/src/services/roomService.js`) using atomic MongoDB `findOneAndUpdate` with expected revision filter, incrementing `layoutRevision` on success and returning HTTP 409 `RevisionConflictError` on stale revision concurrency races. Room dimensions (`width`, `height`) are strictly immutable.
 * REST API endpoints:
-  - `GET /api/rooms` — public room list with layout revisions and obstacles.
-  - `GET /api/rooms/:roomId` — public single-room details.
+  - `GET /api/rooms` — public room summary list (`roomId`, `name`, `layoutRevision`).
+  - `GET /api/rooms/:roomId` — public single-room details (dimensions, `layoutRevision`, `obstacles`, `spawnPoints`).
   - `PUT /api/rooms/:roomId/layout` — admin token-guarded layout mutation with `x-room-admin-token` header, constant-time `crypto.timingSafeEqual` comparison against `ROOM_ADMIN_TOKEN`, HTTP 403 `editing_disabled` when token is unset, HTTP 401 on missing/invalid token, 64 KB payload cap (HTTP 413), and in-memory IP rate limiter (HTTP 429). Admin tokens are strictly redacted from logs, error messages, and responses.
 * Real-time live sync:
   - Broadcasts `room:layout` with `{ roomId, layoutRevision, obstacles }` to active sockets in the room on layout save.
@@ -789,8 +789,8 @@ covered and unchanged.
 **Verified in this environment (2026-10-27)**
 
 * Fresh `npm ci --prefix server` and `npm ci --prefix client` installs succeeded; `npm run build --prefix client` succeeded (Vite 6.4.4, 81 modules); `npm audit` for both packages reported **0 high, 0 critical, 0 total vulnerabilities**.
-* Without `REDIS_URL_TEST`: server **186 passed / 0 failed / 77 skipped** (263 tests); client **179 passed / 0 failed / 0 skipped**.
-* With real `redis-server` 7.2.5 (`REDIS_URL_TEST="redis://127.0.0.1:6379"`): server **223 passed / 0 failed / 40 skipped** (263 tests); client **179 passed / 0 failed / 0 skipped**.
+* Without `REDIS_URL_TEST`: server **191 passed / 0 failed / 77 skipped** (268 tests); client **179 passed / 0 failed / 0 skipped**.
+* With real `redis-server` 7.2.5 (`REDIS_URL_TEST="redis://127.0.0.1:6379"`): server **228 passed / 0 failed / 40 skipped** (268 tests); client **179 passed / 0 failed / 0 skipped**.
 * `server/`, `client/src/audio/attenuation.js`, `client/src/movement/`, and all pre-existing test files are completely unchanged.
 
 **NOT VERIFIED here**

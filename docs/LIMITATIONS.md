@@ -1,6 +1,6 @@
 # Known Limitations
 
-Scope: end of Week 3, Day 14b (2026-10-24). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
+Scope: end of Week 3, Day 16 (2026-10-27). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
 
 ## Audio and browser behavior
 
@@ -24,7 +24,7 @@ The hint covers `suspended` and `interrupted`; Join, page pointer, and visible-t
 
 ### Audio quality and performance are unmeasured
 
-Inbound byte counts are proof-of-life, not a latency, jitter, packet-loss, or bitrate guarantee. Mono gain attenuation is implemented; stereo panning and obstacle occlusion are not. Sixty-FPS rendering and a dense real-audio mesh are not verified.
+Inbound byte counts are proof-of-life, not a latency, jitter, packet-loss, or bitrate guarantee. Mono distance attenuation and straight-line AABB obstacle gain occlusion (`GainNode` only) are implemented; stereo panning, frequency-dependent filtering (`BiquadFilterNode`), reverb, and diffraction are not. Sixty-FPS rendering and a dense real-audio mesh are not verified.
 
 ## Mesh behavior
 
@@ -36,11 +36,11 @@ At the default cap of 8, sync fills available slots nearest-first, but it does n
 
 `MAX_PEERS_PER_USER=0` preserves unlimited behavior for compatibility and tests. A full WebRTC mesh still grows quadratically in edges and places upload/CPU work in every browser. The cap bounds degree; it does not turn the system into an SFU.
 
-### Obstacles are data-only; sound occlusion not implemented
+### Obstacles use straight-line gain occlusion only; no movement collision
 
-In Week 4, room layouts and furniture/wall obstacles are persisted in MongoDB with optimistic concurrency (`layoutRevision`), validated schemas, and real-time live sync. However, obstacles remain data-only:
-- **No sound occlusion**: Obstacles do not alter audio attenuation, line of sight, or Web Audio GainNode levels.
-- **No movement collision**: Avatars can freely move across or overlap obstacle rectangles.
+In Week 3 (Days 15–16, company plan Week 4), room layouts and furniture/wall obstacles are persisted in MongoDB with optimistic concurrency (`layoutRevision`), validated schemas, real-time live sync, and client-side straight-line `GainNode` sound occlusion (`docs/OCCLUSION.md`). Remaining limits:
+- **Simplified ray model**: Occlusion tests a single straight line segment between peer centers using multiplicative `GainNode` transmission; there is no wave diffraction around corners, frequency-dependent low-pass filtering, or acoustic reflection/reverb.
+- **No movement collision**: Avatars can freely move across or overlap obstacle rectangles (segments with an endpoint inside an obstacle still count that obstacle).
 - **Stereo panning and 60 FPS loop**: Panning and steady 60 FPS rendering loop remain not started.
 
 ### No user authentication system (shared admin token only)
@@ -91,8 +91,8 @@ There is no deployment manifest, Express static hosting of the client, SFU, or p
 
 ## Verification limits in this sandbox
 
-- Without services: server **186 passed / 77 skipped** (263 tests); client **171/171 passed** (0 skipped).
-- With real Redis: server **223 passed / 40 skipped** (263 tests); client **171/171 passed** (0 skipped).
+- Without services: server **191 passed / 77 skipped** (268 tests); client **179/179 passed** (0 skipped).
+- With real Redis: server **228 passed / 40 skipped** (268 tests); client **179/179 passed** (0 skipped).
 - All 40 remaining skips require MongoDB. A local MongoDB+Redis zero-skip run was **not achieved** because MongoDB could not be provisioned.
 - Real embedded Redis mesh-check passed **37/37**; the external real-Socket.io/Redis harness passed **18/18**; scale-check integration passed **8/8**. The external harnesses use in-memory presence backing.
 - Fresh `npm ci` installs and the 80-module client build passed. Server and client audits each reported zero total vulnerabilities after the body-parser lockfile patch.
@@ -116,4 +116,4 @@ These are measurements from these fixtures, not proof of bounded memory or a
 “no leak” claim. In particular, post-cleanup RSS remained above baseline even
 though the tracked application state and Redis keys returned to zero.
 
-See `docs/ROOM_PERSISTENCE.md` for Week 4 Room Persistence specifications and `CHANGELOG.md` for evidence. Future work includes audio occlusion, stereo panning, and 60 FPS loop; none is claimed complete.
+See `docs/ROOM_PERSISTENCE.md` (Week 3, Day 15 — company plan Week 4), `docs/OCCLUSION.md` (Week 3, Day 16 — company plan Week 4), and `CHANGELOG.md` for specifications and evidence. Future work includes stereo panning and the 60 FPS rendering loop; none is claimed complete.

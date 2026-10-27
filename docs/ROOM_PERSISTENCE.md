@@ -1,16 +1,16 @@
 # Room Persistence Architecture & Specification
 
-Week 4 - Room Persistence introduces transactional room obstacle layouts, atomic revision conflict detection, secure token-guarded layout APIs, real-time multi-instance broadcast, and developer CLI tooling to ProxiSpeak.
+**Calendar Week 3 (Day 15 — 2026-10-26, Company Plan Week 4)** introduces transactional room obstacle layouts, atomic revision conflict detection, secure token-guarded layout APIs, real-time multi-instance broadcast, and developer CLI tooling to ProxiSpeak.
 
 ---
 
 ## 1. Architectural Overview & Data Model
 
-ProxiSpeak rooms represent 2D shared audio spaces. Layouts define physical structures (such as walls, glass partitions, desks, screens, and pillars) that will later affect acoustic propagation. In Week 4, obstacles remain purely architectural and data-only (no movement collision and no Web Audio gain calculations are introduced in this phase).
+ProxiSpeak rooms represent 2D shared audio spaces. Layouts define physical structures (`wall`, `desk`, `plant`, `pillar`, `screen`) stored in MongoDB and broadcast live to connected clients. Starting in **Week 3 (Day 16)**, blocking obstacles (`blocksAudio === true`) attenuate remote voice along the 2D line of sight in the client Web Audio mixer (`docs/OCCLUSION.md`), while avatars continue to have no movement collision with obstacles.
 
 ### Data Model: `Room` & `Obstacle`
 
-Rooms are stored in MongoDB in the `rooms` collection. Each document includes dimensions, metadata, obstacles, and an integer `layoutRevision`:
+Rooms are stored in MongoDB in the `rooms` collection. Each document includes dimensions, metadata, obstacles, spawn points, and an integer `layoutRevision`:
 
 ```typescript
 interface Room {
@@ -19,20 +19,20 @@ interface Room {
   description?: string;        // Optional description
   width: number;              // Immutable width in pixels (e.g. 1920)
   height: number;             // Immutable height in pixels (e.g. 1080)
-  center: GeoJSONPoint;       // Tangent plane GeoJSON origin [0, 0]
   layoutRevision: number;     // Integer >= 1, increments on successful save
   obstacles: Obstacle[];      // Bounded array of obstacles (max 200)
+  spawnPoints: Array<{ x: number; y: number }>;
   createdAt: Date;
   updatedAt: Date;
 }
 
 interface Obstacle {
-  id: string;                 // Unique identifier within the room (trimmed string, 1..64 chars)
-  type: ObstacleType;         // 'wall' | 'glass' | 'door' | 'desk' | 'screen' | 'pillar'
+  id: string;                 // Unique identifier within the room ([A-Za-z0-9_-]{1,64})
+  type: ObstacleType;         // 'wall' | 'desk' | 'plant' | 'pillar' | 'screen'
   x: number;                  // Top-left X coordinate (0 <= x < room.width)
   y: number;                  // Top-left Y coordinate (0 <= y < room.height)
-  w: number;                  // Width in pixels (0 < w, x + w <= room.width)
-  h: number;                  // Height in pixels (0 < h, y + h <= room.height)
+  w: number;                  // Width in pixels (1 <= w, x + w <= room.width)
+  h: number;                  // Height in pixels (1 <= h, y + h <= room.height)
   blocksAudio: boolean;       // Whether obstacle blocks acoustic line of sight
   attenuation: number;        // Transmission coefficient [0.0, 1.0]
 }
@@ -74,19 +74,19 @@ Documents already possessing a valid `layoutRevision >= 1` are left untouched. O
 
 ## 3. Strict Layout Validation Rules
 
-Validation is unified across the REST API, the CLI, and service hooks via `server/src/validators/roomLayout.js`. Requests failing validation are rejected immediately with descriptive, path-specific error messages.
+Validation is unified across the REST API, the CLI, and Mongoose `Room` schema validation via `server/src/validators/roomLayout.js`. Requests failing validation are rejected immediately with descriptive, path-specific error messages.
 
 Rules enforced:
 1. **Root Fields**: Only allowed keys (`obstacles`, `name`, `description`, `expectedRevision`) may be present. Unknown root fields trigger an immediate validation error (mass assignment defense).
 2. **Obstacle Count**: Must be an array containing between 0 and `ROOM_LAYOUT_MAX_OBSTACLES` (default `200`) items.
 3. **Obstacle IDs**:
-   - Must be non-empty strings (1..64 characters).
-   - Must be unique within the room (duplicate IDs are rejected with `duplicate_id`).
-4. **Obstacle Types**: Must match the allowed enum: `['wall', 'glass', 'door', 'desk', 'screen', 'pillar']`.
+   - Must match `/^[A-Za-z0-9_-]{1,64}$/` (1..64 alphanumeric, dash, or underscore characters).
+   - Must be unique within the room (duplicate IDs are rejected with `invalid_payload` at path `obstacles[i].id`).
+4. **Obstacle Types**: Must match the allowed enum: `['wall', 'desk', 'plant', 'pillar', 'screen']`.
 5. **Coordinates & Bounds**:
    - Coordinates `x`, `y`, `w`, `h` must be finite numbers.
    - `x >= 0` and `y >= 0`.
-   - `w > 0` and `h > 0`.
+   - `w >= 1` and `h >= 1`.
    - `x + w <= room.width` and `y + h <= room.height`.
    - An obstacle touching the edge (`x + w === width`) is valid; an obstacle exceeding the edge by even one pixel is rejected.
 6. **Audio Properties**:
@@ -136,7 +136,16 @@ const updated = await Room.findOneAndUpdate(
 2. **Revision Mismatch (409 Conflict)**: If another process updated the room first, the atomic query filter matches 0 documents. The service queries the current document and throws `RevisionConflictError`:
    - HTTP Status: `409 Conflict`
    - Response Code: `revision_conflict`
-   - Payload: `{ code: 'revision_conflict', currentRevision: N, expectedRevision: M, message: '...' }`
+   - Payload:
+     ```json
+     {
+       "error": {
+         "code": "revision_conflict",
+         "message": "Revision conflict on room \"lobby\": expected revision M but current revision is N",
+         "details": { "roomId": "lobby", "expectedRevision": M, "currentRevision": N }
+       }
+     }
+     ```
 3. **Unknown Room (404 Not Found)**: If the room ID does not exist in MongoDB, throws `RoomNotFoundError` with HTTP status `404`.
 4. **Immutable Dimensions**: Room dimensions (`width`, `height`) are strictly immutable and cannot be altered by layout saves.
 
@@ -148,9 +157,25 @@ const updated = await Room.findOneAndUpdate(
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/rooms` | Public | Returns array of rooms with dimensions, layout revisions, and obstacles |
-| `GET` | `/api/rooms/:roomId` | Public | Returns room details for `:roomId` |
-| `PUT` | `/api/rooms/:roomId/layout` | `x-room-admin-token` | Updates room layout with revision guard |
+| `GET` | `/api/rooms` | Public | Returns JSON array `[{ roomId, name, layoutRevision }]` |
+| `GET` | `/api/rooms/:roomId` | Public | Returns room wire object `{ roomId, name, description, width, height, layoutRevision, obstacles, spawnPoints }` |
+| `PUT` | `/api/rooms/:roomId/layout` | `x-room-admin-token` | Updates room layout with revision guard and returns updated room wire object |
+
+### Example `curl` Requests
+
+```bash
+# List persisted rooms (public)
+curl -s http://127.0.0.1:4000/api/rooms
+
+# Fetch full room layout (public)
+curl -s http://127.0.0.1:4000/api/rooms/lobby
+
+# Save an updated layout (requires ROOM_ADMIN_TOKEN)
+curl -s -X PUT http://127.0.0.1:4000/api/rooms/lobby/layout \
+  -H "Content-Type: application/json" \
+  -H "x-room-admin-token: your-secure-token" \
+  -d '{"expectedRevision":1,"obstacles":[]}'
+```
 
 ### Authentication & Threat Model
 
@@ -218,8 +243,8 @@ npm run room:save -- --room lobby --file server/layouts/valid-office.json
 ### Sample Blueprints
 
 Sample layout files are stored in `server/layouts/`:
-- `valid-office.json`: Perimeter walls, conference rooms with acoustic glass (`attenuation: 0.8`), and open desk clusters.
-- `quiet-zone.json`: Heavily insulated recording/meeting booth with dense masonry walls (`attenuation: 0.12`).
+- `valid-office.json`: Central concrete spine wall (`attenuation: 0.12`), huddle screens (`0.45`), workstation desk rows (`0.5`), atrium pillars (`0.25`), and corner fern (`0.65`).
+- `quiet-zone.json`: Dense acoustic perimeter wall (`attenuation: 0.08`), focus carrels (`0.4`), sound-baffle screen (`0.35`), and rubber-plant divider (`0.7`).
 
 ### Seed Idempotency
 

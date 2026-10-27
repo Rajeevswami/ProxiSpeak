@@ -35,12 +35,12 @@ Status date: **2026-10-27**. This trace maps each requirement from the company's
 | 24 | Day 14 cleanup + coherent docs + demo | Week 2 (Day 14) | `README.md`, `docs/WEEK3.md`, `DEMO_WEEK3.md`, `LIMITATIONS.md`, `CHANGELOG.md`, this trace | Clean install, tests, build, real Redis checks; manual demo remains separate | DONE for docs/code; live demo NOT VERIFIED |
 | 25 | Day 14b stale-edge race: reproduce, fence revisions, one bounded re-sync | Week 2 (Day 14b) | Both edge stores, `peerGraph.js`, `sockets/index.js` | `staleEdgeRace.test.js`, revision contract tests; deterministic gates, real sockets, 200 seeded interleavings per store | DONE with Memory + real Redis; live Mongo path NOT VERIFIED |
 | 26 | Day 14b bounded edge validation + dependency remediation | Week 2 (Day 14b) | `edgeSweep.js`, `mesh-check.js`, `server/package-lock.json` | `edgeValidation.test.js`; scale/mesh checks; server/client `npm audit` | DONE; zero high/critical audit findings |
-| 27 | Week 4: Shared layout validator for room obstacles | Week 3 (Day 15) | `server/src/validators/roomLayout.js` | `server/test/roomLayout.validation.test.js` (18 tests) | DONE |
+| 27 | Week 4: Shared layout validator for room obstacles | Week 3 (Day 15) | `server/src/validators/roomLayout.js`, `server/src/models/Room.js` | `server/test/roomLayout.validation.test.js` (21 tests) | DONE |
 | 28 | Week 4: Layout revision on Room model with safe backfill | Week 3 (Day 15) | `server/src/models/Room.js`, `server/src/services/roomService.js`, `server/src/config/index.js`, `server/scripts/seed.js` | `server/test/config.test.js`, `server/test/configDrift.test.js` | DONE |
 | 29 | Week 4: Atomic layout save with revision conflict detection | Week 3 (Day 15) | `server/src/services/roomService.js`, `server/src/utils/errors.js` | `server/test/roomPersistence.mongo.test.js` | DONE in code; live Mongo NOT VERIFIED here |
 | 30 | Week 4: Room read API and token-guarded layout save API | Week 3 (Day 15) | `server/src/app.js` | `server/test/roomLayout.api.test.js` (12 tests) | DONE |
 | 31 | Week 4: Realtime layout broadcast and multi-instance cache invalidation | Week 3 (Day 15) | `server/src/sockets/index.js`, `server/src/services/roomService.js` | `server/test/roomLayout.socket.test.js` (2 tests, real Socket.io & Redis) | DONE |
-| 32 | Week 4: Room layout CLI and example blueprints | Week 3 (Day 15) | `server/scripts/room-layout.js`, `server/layouts/`, root and server `package.json` | `server/test/roomLayout.cli.test.js` (7 tests) | DONE |
+| 32 | Week 4: Room layout CLI and example blueprints | Week 3 (Day 15) | `server/scripts/room-layout.js`, `server/layouts/`, root and server `package.json` | `server/test/roomLayout.cli.test.js` (8 tests) | DONE |
 | 33 | Week 4: Client-side live layout updates without re-renders | Week 3 (Day 15) | `client/src/realtime/worldState.js`, `client/src/hooks/useSocket.js` | `client/test/worldState.layout.test.js` (6 tests) | DONE |
 | 34 | Week 4: Room persistence architecture documentation | Week 3 (Day 15) | `docs/ROOM_PERSISTENCE.md`, `README.md`, `CHANGELOG.md`, this trace | Documentation audit and verification checks | DONE |
 | 35 | Week 4: Furniture obstacles which block sound | Week 3 (Day 16) | `client/src/audio/occlusion.js`, `client/src/audio/audioMixer.js`, `client/src/hooks/useSocket.js`, `client/src/components/AudioStatus.jsx` | `client/test/audio.occlusion.test.js` (20,000-case cross-check, mixer, caching, overlay), `client/scripts/occlusion-bench.js`; `docs/OCCLUSION.md` | DONE in code/Node; audible browser path NOT VERIFIED |
@@ -64,7 +64,7 @@ redaction, race regressions, store revisions, graph/socket fencing, bounded swee
 validation, and the body-parser lockfile patch. Each resolves as a commit with
 `git cat-file -t`; the documentation commit is intentionally not self-listed.
 
-## Week 4 - Room Persistence commit evidence
+## Week 3 (Day 15) — Room Persistence (Company Plan Week 4) commit evidence
 
 The following short hashes were resolved with `git cat-file -t` and are verified commits in the current history:
 
@@ -102,8 +102,8 @@ The documentation commit is intentionally not self-listed.
 ## Current verification boundary
 
 - Clean lockfile installs (`npm ci` in both `server/` and `client/`) and the 81-module Vite 6.4.4 client production build passed. Server and client `npm audit` each reported zero high/critical and zero total vulnerabilities.
-- Without services: server **186 passed / 77 skipped** (263 tests); client **179/179 passed** (0 skipped).
-- With real Redis (`redis-server` 7.2.5): server **223 passed / 40 skipped** (263 tests); client **179/179 passed** (0 skipped).
+- Without services: server **191 passed / 77 skipped** (268 tests); client **179/179 passed** (0 skipped).
+- With real Redis (`redis-server` 7.2.5): server **228 passed / 40 skipped** (268 tests); client **179/179 passed** (0 skipped).
 - All 40 remaining skips are MongoDB integration tests (cleanly skipped with explicit NOT VERIFIED banner when `MONGO_URI_TEST` is unset; `mongod` could not be installed in this sandbox because `deb.debian.org` and `fastdl.mongodb.org` are outside outbound network allowlist).
 - Week 3 (Day 16) occlusion geometry cross-checked across 20,000 random segment/rectangle pairs against an independent 4-edge + point-in-rectangle reference with 0 disagreements; 8 peers × 200 obstacles benchmarked at `p50 = 11.04 µs` / `p95 = 12.41 µs` (spread room, 99.69% AABB rejected) and `p50 = 11.21 µs` / `p95 = 13.67 µs` for a full `audioMixer.updateGains` tick.
 - No browser is installed in this sandbox, so audible browser playback and live hearing drop across walls remain **NOT VERIFIED** here.

@@ -100,12 +100,12 @@ Invalid validated numeric, boolean, and base-URL settings fail at startup with o
 
 ## Room Persistence & Layout API
 
-Week 4 introduces transactional layout management and persistence for room obstacles:
+**Week 3 (Day 15, Company Plan Week 4)** introduces transactional layout management and persistence for room obstacles:
 
 - **Data Model**: Rooms store dimensions, metadata, obstacles, and an atomic `layoutRevision` (integer >= 1). Obstacles define rectangular barriers (`type`, `x`, `y`, `w`, `h`, `blocksAudio`, `attenuation`). Attenuation represents the fraction of sound amplitude that survives crossing the barrier (`0.0` = opaque, `1.0` = transparent), consumed client-side in **Week 3 (Day 16)** line-of-sight occlusion (`client/src/audio/occlusion.js`, `docs/OCCLUSION.md`). Avatars have no movement collision with obstacles.
 - **Public Endpoints**:
-  - `GET /api/rooms` — lists available rooms, dimensions, obstacles, and revisions.
-  - `GET /api/rooms/:roomId` — fetches room details.
+  - `GET /api/rooms` — lists persisted room summaries (`roomId`, `name`, `layoutRevision`).
+  - `GET /api/rooms/:roomId` — fetches full room details (dimensions, `layoutRevision`, `obstacles`, `spawnPoints`).
 - **Admin Guarded Endpoint**:
   - `PUT /api/rooms/:roomId/layout` — updates obstacles and metadata. Guarded by the `x-room-admin-token` header matching `ROOM_ADMIN_TOKEN` via constant-time comparison. Unset token disables edits server-wide (`403 Forbidden`). Requests require an `expectedRevision` and reject stale updates with `409 Conflict`. Rate-limited to 10 requests/min/IP with a 64 KB payload cap.
 - **Live Sync**: Successful layout saves emit `room:layout` to active participants in the room, evict local caches, and broadcast `room:cache:invalidate` across Redis nodes. Clients apply changes in-place without component re-renders.
@@ -154,8 +154,8 @@ The Mongo suites create and drop isolated databases derived from the test base U
 
 On 2026-10-27 (**Week 3 (Day 16)**), after clean lockfile installs:
 
-- Without services: server **186 passed / 77 skipped** (263 tests), client **179 passed / 0 skipped**.
-- With real Redis (`redis-server` 7.2.5): server **223 passed / 40 skipped** (263 tests), client **179 passed / 0 skipped**. All remaining skips require MongoDB.
+- Without services: server **191 passed / 77 skipped** (268 tests), client **179 passed / 0 skipped**.
+- With real Redis (`redis-server` 7.2.5): server **228 passed / 40 skipped** (268 tests), client **179 passed / 0 skipped**. All remaining skips require MongoDB.
 - `npm run build`: passed (Vite 6.4.4, 81 modules). Server and client `npm audit`: **0 high/critical** (0 total vulnerabilities each).
 - Occlusion benchmark (`node client/scripts/occlusion-bench.js`, 8 peers × 200 obstacles per tick): spread room `p50 = 11.04 µs` / `p95 = 12.41 µs` (**99.69%** rejected by bounding-box pre-check), full mixer tick `p50 = 11.21 µs` / `p95 = 13.67 µs`, `20,000`-case 4-edge geometry cross-check with **0 disagreements**.
 
