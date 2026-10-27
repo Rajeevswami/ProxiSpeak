@@ -11,7 +11,9 @@ import {
   OBSTACLE_TYPES,
   DEFAULT_MAX_OBSTACLES,
 } from '../src/validators/roomLayout.js';
-import { ValidationError } from '../src/utils/errors.js';
+import { ValidationError, RevisionConflictError } from '../src/utils/errors.js';
+import Room from '../src/models/Room.js';
+import { backfillLegacyRoomRevisions, buildDefaultRoom } from '../src/services/roomService.js';
 
 const ROOM = { width: 1920, height: 1080 };
 
@@ -363,4 +365,79 @@ test('optional name and description validation', () => {
     () => validateLayoutPayload(validPayload({ description: 'd'.repeat(501) }), { room: ROOM }),
     (err) => err instanceof ValidationError && err.details?.path === 'description',
   );
+});
+
+test('RevisionConflictError exposes top-level revision fields alongside details', () => {
+  const err = new RevisionConflictError('lobby', 1, 2);
+  assert.equal(err.status, 409);
+  assert.equal(err.code, 'revision_conflict');
+  assert.equal(err.roomId, 'lobby');
+  assert.equal(err.expectedRevision, 1);
+  assert.equal(err.currentRevision, 2);
+  assert.deepEqual(err.details, { roomId: 'lobby', expectedRevision: 1, currentRevision: 2 });
+});
+
+test('backfillLegacyRoomRevisions covers missing, null, and <1 revisions and returns modifiedCount object', async () => {
+  const origUpdateMany = Room.updateMany;
+  let capturedFilter = null;
+  let capturedUpdate = null;
+  Room.updateMany = async (filter, update) => {
+    capturedFilter = filter;
+    capturedUpdate = update;
+    return { modifiedCount: 3 };
+  };
+  try {
+    const res = await backfillLegacyRoomRevisions();
+    assert.deepEqual(res, { modifiedCount: 3 });
+    assert.deepEqual(capturedUpdate, { $set: { layoutRevision: 1 } });
+    assert.deepEqual(capturedFilter, {
+      $or: [
+        { layoutRevision: { $exists: false } },
+        { layoutRevision: null },
+        { layoutRevision: { $lt: 1 } },
+      ],
+    });
+  } finally {
+    Room.updateMany = origUpdateMany;
+  }
+});
+
+test('Room Mongoose model enforces shared layout validator rules on validateSync', () => {
+  // Default seeded blueprint and exact-edge obstacle pass
+  const defaultDoc = new Room(buildDefaultRoom('lobby'));
+  assert.equal(defaultDoc.validateSync(), undefined);
+
+  const edgeTouchDoc = new Room({
+    roomId: 'lobby',
+    width: 1920,
+    height: 1080,
+    obstacles: [validObstacle({ x: 1870, y: 1000, w: 50, h: 80 })],
+  });
+  assert.equal(edgeTouchDoc.validateSync(), undefined);
+
+  const invalidCases = [
+    { label: 'bad id format', obstacles: [validObstacle({ id: 'bad id!' })] },
+    { label: 'duplicate ids', obstacles: [validObstacle({ id: 'dup-1' }), validObstacle({ id: 'dup-1', x: 300 })] },
+    { label: 'negative x', obstacles: [validObstacle({ x: -1 })] },
+    { label: 'negative y', obstacles: [validObstacle({ y: -1 })] },
+    { label: 'zero width', obstacles: [validObstacle({ w: 0 })] },
+    { label: 'Infinity coord', obstacles: [validObstacle({ x: Infinity })] },
+    { label: 'NaN coord', obstacles: [validObstacle({ y: NaN })] },
+    { label: 'string size', obstacles: [validObstacle({ w: '50' })] },
+    { label: 'string boolean', obstacles: [validObstacle({ blocksAudio: 'true' })] },
+    { label: '1 px outside right edge', obstacles: [validObstacle({ x: 1870, w: 51 })] },
+    { label: '1 px outside bottom edge', obstacles: [validObstacle({ y: 1000, h: 81 })] },
+    { label: 'unknown type', obstacles: [validObstacle({ type: 'glass' })] },
+    { label: 'extra obstacle field', obstacles: [validObstacle({ unknownProp: 1 })] },
+    {
+      label: '201 obstacles',
+      obstacles: Array.from({ length: 201 }, (_, i) => validObstacle({ id: `obs-${i}`, x: i % 100, y: 10, w: 10, h: 10 })),
+    },
+  ];
+
+  for (const c of invalidCases) {
+    const doc = new Room({ roomId: 'lobby', width: 1920, height: 1080, obstacles: c.obstacles });
+    const err = doc.validateSync();
+    assert.ok(err, `Expected Room.validateSync() to reject case: ${c.label}`);
+  }
 });
