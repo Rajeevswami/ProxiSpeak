@@ -183,9 +183,16 @@ export async function saveLayout(roomId, payload, { io = null } = {}) {
   const expectedRevision = validated.expectedRevision;
 
   // 3. Atomic MongoDB update with revision in filter
-  // Handles legacy documents without layoutRevision as revision 1
+  // Handles legacy documents without a valid layoutRevision as revision 1
   const revisionFilter = expectedRevision === 1
-    ? { $or: [{ layoutRevision: 1 }, { layoutRevision: { $exists: false } }] }
+    ? {
+        $or: [
+          { layoutRevision: 1 },
+          { layoutRevision: { $exists: false } },
+          { layoutRevision: null },
+          { layoutRevision: { $lt: 1 } },
+        ],
+      }
     : { layoutRevision: expectedRevision };
 
   const updateSet = {
@@ -232,9 +239,15 @@ export function invalidateRoomCache(roomId) {
  */
 export async function backfillLegacyRoomRevisions() {
   const result = await Room.updateMany(
-    { layoutRevision: { $exists: false } },
+    {
+      $or: [
+        { layoutRevision: { $exists: false } },
+        { layoutRevision: null },
+        { layoutRevision: { $lt: 1 } },
+      ],
+    },
     { $set: { layoutRevision: 1 } },
   );
-  return result.modifiedCount ?? 0;
+  return { modifiedCount: result.modifiedCount ?? 0 };
 }
 
