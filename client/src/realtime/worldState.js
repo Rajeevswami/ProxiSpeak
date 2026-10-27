@@ -179,17 +179,25 @@ export function applyJoinedSnapshot(world, payload, { selfId = null, name = null
  * @returns {boolean} whether the layout was updated
  */
 export function updateRoomLayout(world, payload) {
-  if (!world || !world.room || typeof payload !== 'object' || payload === null) {
+  if (!world || !world.room || typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     return false;
   }
 
-  // Must match current room
-  if (payload.roomId && world.room.roomId && payload.roomId !== world.room.roomId) {
+  // Must match current room whenever world.room has a roomId
+  if (world.room.roomId) {
+    if (typeof payload.roomId !== 'string' || payload.roomId !== world.room.roomId) {
+      return false;
+    }
+  } else if (payload.roomId) {
     return false;
   }
 
   const incomingRev = payload.layoutRevision;
-  if (!Number.isFinite(incomingRev)) {
+  if (typeof incomingRev !== 'number' || !Number.isFinite(incomingRev)) {
+    return false;
+  }
+
+  if (!Array.isArray(payload.obstacles)) {
     return false;
   }
 
@@ -200,7 +208,7 @@ export function updateRoomLayout(world, payload) {
   }
 
   // Replace obstacles and revision
-  world.room.obstacles = Array.isArray(payload.obstacles) ? payload.obstacles : [];
+  world.room.obstacles = payload.obstacles;
   world.room.layoutRevision = incomingRev;
   return true;
 }

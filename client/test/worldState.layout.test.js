@@ -135,7 +135,12 @@ test('invalid or missing payload returns false without throwing', () => {
   assert.equal(updateRoomLayout(world, null), false);
   assert.equal(updateRoomLayout(world, undefined), false);
   assert.equal(updateRoomLayout(world, 'string'), false);
+  assert.equal(updateRoomLayout(world, []), false);
   assert.equal(updateRoomLayout(world, { roomId: 'lobby' }), false); // Missing layoutRevision
+  assert.equal(updateRoomLayout(world, { layoutRevision: 2, obstacles: [] }), false); // Missing roomId
+  assert.equal(updateRoomLayout(world, { roomId: 'lobby', layoutRevision: 2 }), false); // Missing obstacles array
+  assert.equal(updateRoomLayout(world, { roomId: 'lobby', layoutRevision: 2, obstacles: 'bad' }), false);
+  assert.equal(world.room.obstacles.length, 1, 'Rejected layout payload must not wipe existing obstacles');
   assert.equal(updateRoomLayout(null, { roomId: 'lobby', layoutRevision: 2, obstacles: [] }), false);
 });
 
