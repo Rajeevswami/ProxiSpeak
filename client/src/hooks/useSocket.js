@@ -340,19 +340,21 @@ export function useSocket() {
     }));
   }, []);
 
+  const getRemotePositionRef = useRef(null);
+  if (getRemotePositionRef.current === null) {
+    getRemotePositionRef.current = (peerId) => worldRef.current.users.get(peerId) ?? null;
+  }
+
   /** Called from the canvas's existing rAF after movement/interpolation. */
   const updateAudioGains = useCallback(() => {
     const world = worldRef.current;
     const local = world.users.get(world.selfId);
     if (!local) return false;
-    const peerIds = peerManagerRef.current?.peerIds?.() ?? [];
     return audioMixerRef.current.updateGains(
-      { x: local.x, y: local.y },
-      (peerId) => {
-        const remote = world.users.get(peerId);
-        return remote ? { x: remote.x, y: remote.y } : null;
-      },
-      peerIds,
+      local,
+      getRemotePositionRef.current,
+      null,
+      world.room,
     );
   }, []);
 
