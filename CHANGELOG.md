@@ -803,3 +803,48 @@ covered and unchanged.
 * Client-only occlusion gain calculation. Server code untouched (peer edges still depend only on Euclidean radius and cap; blocked peers keep their WebRTC connection). No new library, no movement collision, no low-pass/reverb, no stereo panning, and no 60 FPS work (stereo panning is the next planned task).
 
 
+
+## Week 3 (Day 17) — 2026-10-28 — stereo panning in the audio mixer (Company Plan Week 4)
+
+*Commits: `65c2b0e`, `291811c`, `a5a1ba8`, `2f620d4` (this documentation commit follows them and is not self-listed)*
+
+**Added**
+
+* Pure stereo pan law (`client/src/audio/panning.js`): `panForPositions(listener, speaker)` returns `pan = MAX_PAN * dx / max(dist, PAN_INNER_PX)` with `MAX_PAN = 0.85` and `PAN_INNER_PX = 30`. It is continuous (including at zero distance), antisymmetric, bounded to `[-0.85, 0.85]`, has no dead zone, and returns `0` for invalid input without throwing. Screen axes: larger `x` is heard in the right ear. Avatar facing is not used.
+* Stereo panner in each peer's audio chain (`client/src/audio/audioMixer.js`): `MediaStreamAudioSourceNode -> StereoPannerNode -> GainNode -> destination`. The first connection sets the pan with `setValueAtTime`; later ticks glide with `setTargetAtTime(target, currentTime, PAN_TIME_CONSTANT)` where `PAN_TIME_CONSTANT = 0.05` s. Without `createStereoPanner` the chain is `source -> gain -> destination` and one warning is logged.
+* Overlay (`client/src/components/AudioStatus.jsx`, `client/src/hooks/useSocket.js`): each peer row shows `pan R 62%`, `pan L 40%` or `pan C`, from the same pure function, at the existing once-per-second poll. `pan n/a` when there is no panner.
+* Tests (`client/test/audio.panning.test.js`, `client/test/audio.panningMixer.test.js`): worked values, 100,000-pair property checks, continuity sweeps, invalid input, overlay text, chain order, `setValueAtTime` then `setTargetAtTime` with no `pan.value` writes, blocked peers keeping their side, missing panner, 50-cycle cleanup with zero leftovers, 20 Hz throttle, Web Audio fallback, and `room:layout` changing gain but not pan.
+* `client/scripts/panning-report.js`: the worked table, an 8-peer x 200-obstacle tick benchmark and a heap check (`node --expose-gc client/scripts/panning-report.js`).
+* `docs/PANNING.md`: semantics, formula, figure, worked table, smoothing constant, chain diagram, measurements, manual test and limitations.
+
+**Changed**
+
+* `docs/REQUIREMENTS_TRACE.md`: stereo panning is marked DONE in code and Node tests (audible browser check NOT VERIFIED); 60 FPS stays MISSING.
+* `README.md`: current verification and documentation list.
+
+**Note on the expected value**
+
+* The planning note listed `0.60098` for `(dx=70, dy=70)`. The formula gives `0.6010408`, so the test asserts `0.60104`. The formula is unchanged.
+
+**Measured (`node --expose-gc client/scripts/panning-report.js`, Node v22.22.3, shared Linux VM)**
+
+* Full `updateGains` tick, 8 peers x 200 obstacles (occlusion + gain + pan, Web Audio replaced by a counting fake): `p50 = 12.87 µs`, `p95 = 15.07 µs`, `max = 1175 µs`.
+* Panning alone (8 `panForPositions` per tick): `p50 = 0.57 µs`, `p95 = 0.8 µs`.
+* Before/after on the same benchmark (`112ff8c` tree): `p50 = 17.21 µs` and `11.06 µs` on two runs; with panning `11.83 µs` and `10.85 µs`. Difference inside run-to-run noise.
+* Heap over 50,000 ticks after forced GC: `-61,352 B` (no growth).
+
+**Verified in this environment (2026-10-28)**
+
+* Fresh `npm ci --prefix server` and `npm ci --prefix client` succeeded; `npm run build --prefix client` succeeded.
+* `npm audit`: client 0 vulnerabilities; server 1 moderate (`qs` DoS, transitive), 0 high, 0 critical. The server lockfile was not changed, because the server is out of scope for this task.
+* Without `REDIS_URL_TEST`: server **191 passed / 77 skipped** (268); client **201 passed / 0 skipped**.
+* With real `redis-server` 6.2.14 (`REDIS_URL_TEST=redis://127.0.0.1:6379`): server **228 passed / 40 skipped** (268); client **201 passed / 0 skipped**. The 40 skips are MongoDB-only.
+
+**NOT VERIFIED here**
+
+* MongoDB could not be installed (no `mongod` on the allowed registries), so the 40 MongoDB-backed server tests remain skipped.
+* No browser or audio output is available, so the audible left/right result, the absence of clicks while walking, and the headphone check are NOT VERIFIED. The manual steps are in `docs/PANNING.md`.
+
+**Scope boundary**
+
+* Client-only. No server files, protocol messages, or environment variables changed. `client/src/audio/attenuation.js`, `client/src/audio/occlusion.js` and `server/` are unchanged. No HRTF, elevation, head orientation, reverb, or 60 FPS work (60 FPS rendering is the next planned task).

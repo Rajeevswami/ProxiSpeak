@@ -340,6 +340,7 @@ export function useSocket() {
         ...row,
         ...(mixer.peerMetrics(row.peerId) ?? { distancePx: null, volumePercent: 0 }),
         transmission: typeof transmission === 'number' ? transmission : 1,
+        pan: mixer.peerPan(row.peerId),
       };
     });
   }, []);

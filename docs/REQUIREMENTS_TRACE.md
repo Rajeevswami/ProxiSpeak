@@ -1,11 +1,11 @@
-# Requirements Trace — Through Week 3 (Day 16): Sound-Blocking Obstacles
+# Requirements Trace — Through Week 3 (Day 17): Stereo Panning
 
-Status date: **2026-10-27**. This trace maps each requirement from the company's four-week plan against the internship calendar week in which it was delivered (`Days 1–7 = Week 1`, `Days 8–14 = Week 2`, `Days 15–21 = Week 3`, `Days 22–28 = Week 4`) and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
+Status date: **2026-10-28**. This trace maps each requirement from the company's four-week plan against the internship calendar week in which it was delivered (`Days 1–7 = Week 1`, `Days 8–14 = Week 2`, `Days 15–21 = Week 3`, `Days 22–28 = Week 4`) and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
 
 - **DONE** means the requested implementation is present and its available current checks passed.
 - **LIVE NOT VERIFIED** means the relevant external-service or browser path was not exercised here; it is not a failure claim.
 - **MISSING** means the requirement has not been started yet.
-- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions, Room Persistence (`docs/ROOM_PERSISTENCE.md`), and Week 3 (Day 16) audio occlusion (`docs/OCCLUSION.md`) measurements are recorded below and in `CHANGELOG.md`.
+- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions, Room Persistence (`docs/ROOM_PERSISTENCE.md`), and Week 3 (Day 16) audio occlusion (`docs/OCCLUSION.md`) measurements and Week 3 (Day 17) stereo panning (`docs/PANNING.md`) are recorded below and in `CHANGELOG.md`.
 
 | # | Requirement | Delivered in calendar week | Implementation | Tests / demonstration | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ Status date: **2026-10-27**. This trace maps each requirement from the company's
 | 33 | Week 4: Client-side live layout updates without re-renders | Week 3 (Day 15) | `client/src/realtime/worldState.js`, `client/src/hooks/useSocket.js` | `client/test/worldState.layout.test.js` (6 tests) | DONE |
 | 34 | Week 4: Room persistence architecture documentation | Week 3 (Day 15) | `docs/ROOM_PERSISTENCE.md`, `README.md`, `CHANGELOG.md`, this trace | Documentation audit and verification checks | DONE |
 | 35 | Week 4: Furniture obstacles which block sound | Week 3 (Day 16) | `client/src/audio/occlusion.js`, `client/src/audio/audioMixer.js`, `client/src/hooks/useSocket.js`, `client/src/components/AudioStatus.jsx` | `client/test/audio.occlusion.test.js` (20,000-case cross-check, mixer, caching, overlay), `client/scripts/occlusion-bench.js`; `docs/OCCLUSION.md` | DONE in code/Node; audible browser path NOT VERIFIED |
-| 36 | Week 4: Stereo panning (left/right ear logic) | — | — | — | MISSING |
+| 36 | Week 4: Stereo panning (left/right ear logic) | Week 3 (Day 17) | `client/src/audio/panning.js`, `client/src/audio/audioMixer.js`, `client/src/components/AudioStatus.jsx`, `client/src/hooks/useSocket.js` | `client/test/audio.panning.test.js`, `client/test/audio.panningMixer.test.js`, `client/scripts/panning-report.js`; `docs/PANNING.md` | DONE in code/Node; audible left/right NOT VERIFIED |
 | 37 | Week 4: 60 FPS rendering loop / performance polish | — | — | — | MISSING |
 
 ## Day 14 commit evidence
@@ -99,6 +99,21 @@ The following short hashes were resolved with `git cat-file -t` and are verified
 
 The documentation commit is intentionally not self-listed.
 
+## Week 3 (Day 17) commit evidence
+
+The following short hashes were resolved with `git cat-file -t` and are verified commits in the current history:
+
+```text
+65c2b0e 291811c a5a1ba8 2f620d4
+```
+
+- `65c2b0e`: `feat: add stereo pan law for peer positions`
+- `291811c`: `feat: add a stereo panner node to each peer audio chain`
+- `a5a1ba8`: `feat: show pan side and strength in the audio overlay`
+- `2f620d4`: `test: cover panning maths, mixer chain order and cleanup`
+
+The documentation commit is intentionally not self-listed.
+
 ## Current verification boundary
 
 - Clean lockfile installs (`npm ci` in both `server/` and `client/`) and the 81-module Vite 6.4.4 client production build passed. Server and client `npm audit` each reported zero high/critical and zero total vulnerabilities.
@@ -107,4 +122,8 @@ The documentation commit is intentionally not self-listed.
 - All 40 remaining skips are MongoDB integration tests (cleanly skipped with explicit NOT VERIFIED banner when `MONGO_URI_TEST` is unset; `mongod` could not be installed in this sandbox because `deb.debian.org` and `fastdl.mongodb.org` are outside outbound network allowlist).
 - Week 3 (Day 16) occlusion geometry cross-checked across 20,000 random segment/rectangle pairs against an independent 4-edge + point-in-rectangle reference with 0 disagreements; 8 peers × 200 obstacles benchmarked at `p50 = 11.04 µs` / `p95 = 12.41 µs` (spread room, 99.69% AABB rejected) and `p50 = 11.21 µs` / `p95 = 13.67 µs` for a full `audioMixer.updateGains` tick.
 - No browser is installed in this sandbox, so audible browser playback and live hearing drop across walls remain **NOT VERIFIED** here.
-- Stereo panning and 60 FPS rendering work remain **MISSING** (not started).
+- Week 3 (Day 17) stereo panning: `audio.panning.test.js` (12 tests incl. 100,000-pair property checks) and `audio.panningMixer.test.js` (10 tests). Client suite **201/201** without and with Redis. `node --expose-gc client/scripts/panning-report.js`: 8 peers × 200 obstacles full tick `p50 = 12.87 µs` / `p95 = 15.07 µs`; panning alone `p50 = 0.57 µs`; heap delta over 50,000 ticks `-61,352 B`.
+- Week 3 (Day 17) server audit: `npm audit` reports 1 **moderate** transitive `qs` advisory in `server/` (0 high/critical); the server lockfile was not changed (out of scope). Client: 0 vulnerabilities.
+- With real `redis-server` 6.2.14 (installed from PyPI `redislite`, because the Debian and MongoDB download hosts are outside the sandbox allowlist): server **228 passed / 40 skipped** (268 tests). The 40 skips are MongoDB-only; no `mongod` could be installed, so Mongo-backed tests stay NOT VERIFIED here.
+- Audible stereo separation, click-free walking, and headphone checks: NOT VERIFIED (no browser or audio output in this sandbox).
+- 60 FPS rendering work remains **MISSING** (not started).
