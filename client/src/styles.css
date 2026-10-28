@@ -165,7 +165,8 @@ body {
   color: #ffb4c0;
 }
 .audio-status .peer-distance,
-.audio-status .peer-volume {
+.audio-status .peer-volume,
+.audio-status .peer-pan {
   color: #a8b6d2;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;

@@ -74,3 +74,19 @@ export function panForPositions(listener, speaker) {
   // Normalise -0 to 0 so "centred" is always exactly zero.
   return pan === 0 ? 0 : pan;
 }
+
+/**
+ * Overlay text for a peer's stereo pan, e.g. `pan R 62%`, `pan L 40%` or
+ * `pan C`. Strength is the percentage of the maximum pan (`MAX_PAN`), so 100%
+ * means the largest pan the law can produce, not a fully silent ear. Returns
+ * `pan n/a` when no pan value is known (no panner in this browser).
+ *
+ * @param {number|null|undefined} pan value from `panForPositions` or the mixer
+ * @returns {string}
+ */
+export function formatPeerPan(pan) {
+  if (typeof pan !== 'number' || !Number.isFinite(pan)) return 'pan n/a';
+  const strength = Math.round(Math.min(1, Math.abs(pan) / MAX_PAN) * 100);
+  if (strength === 0) return 'pan C';
+  return `pan ${pan > 0 ? 'R' : 'L'} ${strength}%`;
+}

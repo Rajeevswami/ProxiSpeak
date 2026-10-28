@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { countNearbyNotConnected, formatMeshSummary } from '../realtime/meshIndicator.js';
 import { AUDIO_PAUSED_HINT, shouldShowAudioPausedHint } from '../audio/audioPausedHint.js';
 import { formatPeerVolume } from '../audio/occlusion.js';
+import { formatPeerPan } from '../audio/panning.js';
 
 /**
  * Audio connection status overlay (Day 9) — the visible proof for the
@@ -102,6 +103,9 @@ export default function AudioStatus({ mic, getSnapshot, getAudioContextState, wo
               </span>
               <span className="peer-volume" title="current output gain and obstacle transmission">
                 {formatPeerVolume(row.volumePercent, row.transmission)}
+              </span>
+              <span className="peer-pan" title="stereo side (R = right ear) and strength as a share of the maximum pan">
+                {formatPeerPan(row.pan)}
               </span>
               <span className="peer-bytes" title="inbound audio bytes received">
                 {formatBytes(row.bytesReceived)}

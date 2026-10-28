@@ -330,6 +330,11 @@ export function createAudioMixer({
       const peer = peers.get(peerId);
       return peer ? peer.transmission : null;
     },
+    /** Last applied stereo pan in [-0.85, 0.85], or null when no panner is in the chain. */
+    peerPan(peerId) {
+      const peer = peers.get(peerId);
+      return peer && peer.panner ? peer.pan : null;
+    },
     obstacleCacheStats() {
       return obstacleCache.stats();
     },
