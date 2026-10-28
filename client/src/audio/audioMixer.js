@@ -1,5 +1,6 @@
 import { distanceBetween, gainForDistance } from './attenuation.js';
 import { createObstacleCache, transmissionBetween } from './occlusion.js';
+import { PAN_TIME_CONSTANT, panForPositions } from './panning.js';
 
 const defaultLogger = {
   warn(message) {
@@ -36,6 +37,7 @@ export function createAudioMixer({
   let context = null;
   let unavailable = false;
   let warned = false;
+  let warnedNoPanner = false;
   let outerPx = 100;
   let lastUpdateMs = -Infinity;
   let lifecycleListening = false;
@@ -47,6 +49,21 @@ export function createAudioMixer({
     if (warned) return;
     warned = true;
     logger?.warn?.('Web Audio API unavailable; remote audio is using full-volume element playback.');
+  };
+
+  const warnNoPannerOnce = () => {
+    if (warnedNoPanner) return;
+    warnedNoPanner = true;
+    logger?.warn?.('StereoPannerNode unavailable; remote audio is centred (no left/right panning).');
+  };
+
+  /** Stereo panner for one peer, or null when this browser has none (chain skips it). */
+  const createPanner = (audioContext) => {
+    if (typeof audioContext.createStereoPanner !== 'function') {
+      warnNoPannerOnce();
+      return null;
+    }
+    return audioContext.createStereoPanner();
   };
 
   const fallbackElement = (element) => {
@@ -110,6 +127,7 @@ export function createAudioMixer({
     if (!peer) return false;
     peers.delete(peerId);
     try { peer.source?.disconnect(); } catch { /* already disconnected */ }
+    try { peer.panner?.disconnect(); } catch { /* already disconnected */ }
     try { peer.gain?.disconnect(); } catch { /* already disconnected */ }
     try { peer.element?.pause?.(); } catch { /* no longer playing */ }
     if (peer.element) {
@@ -140,28 +158,40 @@ export function createAudioMixer({
     }
 
     let source = null;
+    let panner = null;
     let gain = null;
     try {
       source = audioContext.createMediaStreamSource(stream);
+      // Chain: source -> StereoPannerNode -> GainNode -> destination. Without a
+      // panner (very old browsers) the chain is source -> GainNode -> destination.
+      panner = createPanner(audioContext);
       gain = audioContext.createGain();
       gain.gain.value = 0;
-      source.connect(gain);
+      if (panner) {
+        source.connect(panner);
+        panner.connect(gain);
+      } else {
+        source.connect(gain);
+      }
       // Deliberately do not connect gain -> destination until updateGains has
       // applied the first distance-derived value (including unknown = 0).
       peers.set(peerId, {
         source,
+        panner,
         gain,
         element,
         destinationConnected: false,
         gainValue: 0,
         transmission: 1,
         distancePx: null,
+        pan: 0,
       });
       return { source, gain };
     } catch {
       // A partially built chain is not in `peers` yet, so remove() cannot
       // reach it. Disconnect it here before falling back to element playback.
       try { source?.disconnect(); } catch { /* best-effort setup rollback */ }
+      try { panner?.disconnect(); } catch { /* best-effort setup rollback */ }
       try { gain?.disconnect(); } catch { /* best-effort setup rollback */ }
       fallbackElement(element);
       peers.set(peerId, {
@@ -198,16 +228,30 @@ export function createAudioMixer({
     const timeConstant = (transmission !== peer.transmission || transmission < 1)
       ? OCCLUSION_TIME_CONSTANT
       : TARGET_TIME_CONSTANT;
+    // Pan depends only on the two positions, never on obstacles: a blocked
+    // speaker is quieter but stays on its side.
+    const pan = panForPositions(localPos, remotePos);
 
     peer.distancePx = hasDistance ? distancePx : null;
     if (!peer.gain) {
       peer.gainValue = 1; // plain HTMLMediaElement fallback is intentionally full-volume
       peer.transmission = 1;
+      peer.pan = 0;
       return;
     }
     peer.transmission = transmission;
     peer.gainValue = target;
+    peer.pan = pan;
     try {
+      if (peer.panner) {
+        // First connection: jump straight to the pan (no sweep from centre).
+        // Afterwards glide with a time constant, never a direct `pan.value` write.
+        if (!peer.destinationConnected) {
+          peer.panner.pan.setValueAtTime(pan, context.currentTime);
+        } else {
+          peer.panner.pan.setTargetAtTime(pan, context.currentTime, PAN_TIME_CONSTANT);
+        }
+      }
       peer.gain.gain.setTargetAtTime(target, context.currentTime, timeConstant);
       if (!peer.destinationConnected) {
         peer.gain.connect(context.destination);
