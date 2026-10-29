@@ -163,5 +163,3 @@ export function createFrameStats({ capacity = DEFAULT_RING_CAPACITY } = {}) {
     },
   };
 }
-
-export default createFrameStats;

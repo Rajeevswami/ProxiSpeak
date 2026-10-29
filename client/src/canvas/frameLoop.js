@@ -39,7 +39,7 @@ export const MAX_FRAME_DT_MS = 50;
  * @param {number} dpr
  * @returns {string}
  */
-export function resolutionMediaQuery(dpr) {
+function resolutionMediaQuery(dpr) {
   const safeDpr = typeof dpr === 'number' && Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
   return `(resolution: ${safeDpr}dppx)`;
 }
@@ -370,5 +370,3 @@ export function createCanvasLoop({
     getErrorCount: () => errorCount,
   };
 }
-
-export default createCanvasLoop;

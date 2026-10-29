@@ -8,7 +8,7 @@
  * and no frame timing samples are recorded.
  */
 
-export const PERF_QUERY_PARAM = 'perf';
+const PERF_QUERY_PARAM = 'perf';
 export const PERF_READOUT_INTERVAL_MS = 1000;
 
 /**

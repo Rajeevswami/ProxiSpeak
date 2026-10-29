@@ -22,7 +22,7 @@
 import { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX, updateCanvasSize } from './coords.js';
 import { drawStatic as defaultDrawStatic } from './renderer.js';
 
-export { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX };
+export { MAX_BACKING_PIXELS };
 
 function defaultCreateCanvas() {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
@@ -219,5 +219,3 @@ export function createStaticLayer({
     },
   };
 }
-
-export default createStaticLayer;

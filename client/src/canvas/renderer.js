@@ -371,7 +371,7 @@ export function createLabelCache() {
   };
 }
 
-export const defaultLabelCache = createLabelCache();
+const defaultLabelCache = createLabelCache();
 
 function resolveDynamicViewport(view, world) {
   if (!view) return null;
