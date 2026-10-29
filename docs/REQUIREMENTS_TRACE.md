@@ -1,11 +1,11 @@
-# Requirements Trace — Through Week 3 (Day 17): Stereo Panning
+# Requirements Trace — Through Week 3 (Day 18): Steady 60 FPS Canvas Rendering
 
-Status date: **2026-10-28**. This trace maps each requirement from the company's four-week plan against the internship calendar week in which it was delivered (`Days 1–7 = Week 1`, `Days 8–14 = Week 2`, `Days 15–21 = Week 3`, `Days 22–28 = Week 4`) and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
+Status date: **2026-10-29**. This trace maps each requirement from the company's four-week plan against the internship calendar week in which it was delivered (`Days 1–7 = Week 1`, `Days 8–14 = Week 2`, `Days 15–21 = Week 3`, `Days 22–28 = Week 4`) and distinguishes implementation/Node evidence from live MongoDB or browser evidence. Historical results are not reused as proof of a current live run.
 
 - **DONE** means the requested implementation is present and its available current checks passed.
 - **LIVE NOT VERIFIED** means the relevant external-service or browser path was not exercised here; it is not a failure claim.
 - **MISSING** means the requirement has not been started yet.
-- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions, Room Persistence (`docs/ROOM_PERSISTENCE.md`), and Week 3 (Day 16) audio occlusion (`docs/OCCLUSION.md`) measurements and Week 3 (Day 17) stereo panning (`docs/PANNING.md`) are recorded below and in `CHANGELOG.md`.
+- Exact Day 14 evidence is in `docs/WEEK3.md`; Day 14b additions, Room Persistence (`docs/ROOM_PERSISTENCE.md`), Week 3 (Day 16) audio occlusion (`docs/OCCLUSION.md`), Week 3 (Day 17) stereo panning (`docs/PANNING.md`), and Week 3 (Day 18) 60 FPS Canvas rendering (`docs/RENDERING.md`) are recorded below and in `CHANGELOG.md`.
 
 | # | Requirement | Delivered in calendar week | Implementation | Tests / demonstration | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -45,7 +45,7 @@ Status date: **2026-10-28**. This trace maps each requirement from the company's
 | 34 | Week 4: Room persistence architecture documentation | Week 3 (Day 15) | `docs/ROOM_PERSISTENCE.md`, `README.md`, `CHANGELOG.md`, this trace | Documentation audit and verification checks | DONE |
 | 35 | Week 4: Furniture obstacles which block sound | Week 3 (Day 16) | `client/src/audio/occlusion.js`, `client/src/audio/audioMixer.js`, `client/src/hooks/useSocket.js`, `client/src/components/AudioStatus.jsx` | `client/test/audio.occlusion.test.js` (20,000-case cross-check, mixer, caching, overlay), `client/scripts/occlusion-bench.js`; `docs/OCCLUSION.md` | DONE in code/Node; audible browser path NOT VERIFIED |
 | 36 | Week 4: Stereo panning (left/right ear logic) | Week 3 (Day 17) | `client/src/audio/panning.js`, `client/src/audio/audioMixer.js`, `client/src/components/AudioStatus.jsx`, `client/src/hooks/useSocket.js` | `client/test/audio.panning.test.js`, `client/test/audio.panningMixer.test.js`, `client/scripts/panning-report.js`; `docs/PANNING.md` | DONE in code/Node; audible left/right NOT VERIFIED |
-| 37 | Week 4: 60 FPS rendering loop / performance polish | — | — | — | MISSING |
+| 37 | Week 4: 60 FPS rendering loop / performance polish | Week 3 (Day 18) | `client/src/perf/frameStats.js`, `client/src/perf/perfReadout.js`, `client/src/canvas/staticLayer.js`, `client/src/canvas/renderer.js`, `client/src/canvas/frameLoop.js`, `client/src/canvas/coords.js`, `client/src/components/WorldCanvas.jsx` | `client/test/frameStats.test.js`, `staticLayer.test.js`, `renderEquivalence.test.js`, `frameLoop.test.js`, `client/scripts/render-report.js`; `docs/RENDERING.md` | DONE in code/Node; live browser 60 FPS NOT VERIFIED here |
 
 ## Day 14 commit evidence
 
@@ -114,16 +114,33 @@ The following short hashes were resolved with `git cat-file -t` and are verified
 
 The documentation commit is intentionally not self-listed.
 
+## Week 3 (Day 18) commit evidence
+
+The following short hashes were resolved with `git cat-file -t` and are verified commits in the current history:
+
+```text
+bdad57b 9c92896 8c04f3e b36feef cccdac2 7656ef8 7c5544e 0a0ce6d
+```
+
+- `bdad57b`: `docs: record the canvas render baseline before optimization`
+- `9c92896`: `feat: add a frame statistics ring buffer`
+- `8c04f3e`: `feat: cache the static canvas layer and rebuild it only when inputs change`
+- `b36feef`: `refactor: split static and dynamic drawing and remove per-frame allocations`
+- `cccdac2`: `feat: coalesce resize and watch device pixel ratio changes`
+- `7656ef8`: `feat: add an opt-in performance readout`
+- `7c5544e`: `perf: keep avatar screen coordinates in stack locals to avoid HeapNumber boxing`
+- `0a0ce6d`: `test: cover frame stats, static layer, drawing equivalence and loop cleanup`
+
+The documentation commit is intentionally not self-listed.
+
 ## Current verification boundary
 
-- Clean lockfile installs (`npm ci` in both `server/` and `client/`) and the 81-module Vite 6.4.4 client production build passed. Server and client `npm audit` each reported zero high/critical and zero total vulnerabilities.
-- Without services: server **191 passed / 77 skipped** (268 tests); client **179/179 passed** (0 skipped).
-- With real Redis (`redis-server` 7.2.5): server **228 passed / 40 skipped** (268 tests); client **179/179 passed** (0 skipped).
+- Clean lockfile installs (`npm ci` in both `server/` and `client/`) and the 86-module Vite 6.4.4 client production build passed on 2026-10-29.
+- Without services: server **191 passed / 77 skipped** (268 tests); client **223/223 passed** (0 skipped).
+- With real `redis-server` 6.2.14 (installed from PyPI `redislite` in `/tmp` outside the repository, because Debian and MongoDB download hosts are outside the sandbox allowlist): server **228 passed / 40 skipped** (268 tests); client **223/223 passed** (0 skipped).
 - All 40 remaining skips are MongoDB integration tests (cleanly skipped with explicit NOT VERIFIED banner when `MONGO_URI_TEST` is unset; `mongod` could not be installed in this sandbox because `deb.debian.org` and `fastdl.mongodb.org` are outside outbound network allowlist).
 - Week 3 (Day 16) occlusion geometry cross-checked across 20,000 random segment/rectangle pairs against an independent 4-edge + point-in-rectangle reference with 0 disagreements; 8 peers × 200 obstacles benchmarked at `p50 = 11.04 µs` / `p95 = 12.41 µs` (spread room, 99.69% AABB rejected) and `p50 = 11.21 µs` / `p95 = 13.67 µs` for a full `audioMixer.updateGains` tick.
-- No browser is installed in this sandbox, so audible browser playback and live hearing drop across walls remain **NOT VERIFIED** here.
-- Week 3 (Day 17) stereo panning: `audio.panning.test.js` (12 tests incl. 100,000-pair property checks) and `audio.panningMixer.test.js` (10 tests). Client suite **201/201** without and with Redis. `node --expose-gc client/scripts/panning-report.js`: 8 peers × 200 obstacles full tick `p50 = 12.87 µs` / `p95 = 15.07 µs`; panning alone `p50 = 0.57 µs`; heap delta over 50,000 ticks `-61,352 B`.
-- Week 3 (Day 17) server audit: `npm audit` reports 1 **moderate** transitive `qs` advisory in `server/` (0 high/critical); the server lockfile was not changed (out of scope). Client: 0 vulnerabilities.
-- With real `redis-server` 6.2.14 (installed from PyPI `redislite`, because the Debian and MongoDB download hosts are outside the sandbox allowlist): server **228 passed / 40 skipped** (268 tests). The 40 skips are MongoDB-only; no `mongod` could be installed, so Mongo-backed tests stay NOT VERIFIED here.
-- Audible stereo separation, click-free walking, and headphone checks: NOT VERIFIED (no browser or audio output in this sandbox).
-- 60 FPS rendering work remains **MISSING** (not started).
+- Week 3 (Day 17) stereo panning: `audio.panning.test.js` (12 tests incl. 100,000-pair property checks) and `audio.panningMixer.test.js` (10 tests). `node --expose-gc client/scripts/panning-report.js`: 8 peers × 200 obstacles full tick `p50 = 12.87 µs` / `p95 = 15.07 µs`; panning alone `p50 = 0.57 µs`; heap delta over 50,000 ticks `-61,352 B`.
+- Week 3 (Day 18) 60 FPS Canvas rendering: `frameStats.test.js` (6 tests), `staticLayer.test.js` (4 tests), `renderEquivalence.test.js` (5 tests), and `frameLoop.test.js` (6 tests) — +22 new tests (**223/223** total client tests). `node --expose-gc client/scripts/render-report.js` (`60` avatars × `200` obstacles, fake 2D context — JS cost only): per-frame 2D operations reduced from `1,075` to `424` (constant `11 / 74 / 424` across `0..200` obstacles after 1 static build); JS callback `p50 = 3.12 µs` / `p95 = 3.42 µs` (vs `8.52 µs` / `9.90 µs` before); retained heap delta over `50,000` frames `+272 B` (`0.0054 B/frame`), sampled allocations `4,928 B` (`0.099 B/frame`).
+- `npm audit`: client reports 0 vulnerabilities; server reports 1 **moderate** transitive `qs` advisory (0 high/critical; server lockfile untouched as out of scope).
+- No browser or audio output is available in this sandbox (`cdn.playwright.dev` and `deb.debian.org` unreachable under sandbox egress rules), so audible browser playback, hearing drop across walls, stereo headphone checks, and live 60-second hardware-composited browser 60 FPS pacing remain **NOT VERIFIED** here. Manual verification procedures are documented in `docs/OCCLUSION.md`, `docs/PANNING.md`, and `docs/RENDERING.md`.

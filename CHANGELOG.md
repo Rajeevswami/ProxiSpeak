@@ -848,3 +848,47 @@ covered and unchanged.
 **Scope boundary**
 
 * Client-only. No server files, protocol messages, or environment variables changed. `client/src/audio/attenuation.js`, `client/src/audio/occlusion.js` and `server/` are unchanged. No HRTF, elevation, head orientation, reverb, or 60 FPS work (60 FPS rendering is the next planned task).
+
+
+
+## Week 3 (Day 18) — 2026-10-29 — steady 60 FPS Canvas rendering pipeline (Company Plan Week 4)
+
+*Commits: `bdad57b`, `9c92896`, `8c04f3e`, `b36feef`, `cccdac2`, `7656ef8`, `7c5544e`, `0a0ce6d` (this documentation commit follows them and is not self-listed)*
+
+**Added**
+
+* Pure rolling frame-statistics ring buffer (`client/src/perf/frameStats.js`): preallocated `Float64Array(240)` buffers (`DEFAULT_RING_CAPACITY = 240`) for frame `intervalMs` and callback `workMs`, nearest-rank `p50` / `p95` / `max` (`ceil(q * n) - 1`, matching `server/src/services/spatialAudit.js`), `DROPPED_FRAME_MS = 25` (`strict >`), first-frame sentinel (`EXCLUDED_INTERVAL_MS = -1`), post-hidden exclusion (`markHidden()`), and `MAX_VALID_INTERVAL_MS = 1000`.
+* Offscreen static room canvas cache (`client/src/canvas/staticLayer.js`): `createStaticLayer` caches the letterbox backdrop, room floor, grid, border, obstacles, and obstacle type labels on an offscreen `<canvas>`, rebuilding ONLY when backing dimensions, effective DPR, `room.roomId`, or `room.layoutRevision` changes (`MAX_BACKING_PIXELS = 16,000,000` budget; `destroy()` releases backing memory via `width = 0; height = 0`).
+* Lifecycle-managed Canvas 2D frame loop (`client/src/canvas/frameLoop.js`): single `requestAnimationFrame` subscription, timestamp-driven `dt` clamped to `MAX_FRAME_DT_MS = 50` ms, `document.hidden` draw skipping + `visibilitychange` time-base reset, coalesced `resize` handling (at most one rebuild per frame), and a re-arming `matchMedia('(resolution: <dpr>dppx)')` watcher across monitors.
+* Opt-in `?perf=1` performance readout (`client/src/perf/perfReadout.js`, `WorldCanvas.jsx`, `styles.css`): read-only line `fps 60 | frame p95 16.9 ms | work p95 0.8 ms | dropped 0` written via `perfElement.textContent` at `<= 1 Hz` with zero React state; completely disabled and unsampled when `?perf=1` is absent.
+* Tests (`client/test/frameStats.test.js`, `client/test/staticLayer.test.js`, `client/test/renderEquivalence.test.js`, `client/test/frameLoop.test.js`): ring wrap-around, percentiles, `25.0` vs `25.1 ms` dropped boundary, `--expose-gc` 100k `record()` check, `1,000`-frame static cache hit, single rebuild per invalidation trigger, `MAX_BACKING_PIXELS` checks on `3840x2160@3` / `390x844@3` / `1440x900@2`, exact 2D operation-list equivalence on seeded `lobby` + 200 obstacles and `1 / 10 / 60` avatars, 50 join/leave label-cache pruning + rename updates, 50 mount/unmount zero-leak cycle check, 100-event resize burst coalescing, 5s hidden-tab clamp, 60 Hz vs 144 Hz movement equivalence, and `?perf=1` gating.
+* Reproducible report (`client/scripts/render-report.js`) and full pipeline documentation (`docs/RENDERING.md`, preserving the Step 0 pre-optimization baseline intact).
+
+**Changed**
+
+* `client/src/canvas/renderer.js` and `client/src/canvas/coords.js`: split `drawStatic` and `drawDynamic`, added `drawFrame` (`1 × drawImage` + `drawDynamic`) and `createLabelCache()` (per-user cached colour, initial, truncated label, and optional `measureText` width with `O(1)` steady-state pruning), kept `centreX`/`centreY` in stack locals to avoid V8 `HeapNumber` boxing, added zero-allocation `updateCanvasSize` / `updateViewport` / `screenToWorldInto`, and preserved compatible `drawRoom`, `drawAvatars`, and `drawWorld` exports.
+* `client/src/components/WorldCanvas.jsx` and `client/src/App.jsx`: switched `<WorldCanvas>` to `createCanvasLoop` on the cached `drawFrame` pipeline with zero per-frame React state.
+* `docs/REQUIREMENTS_TRACE.md` and `README.md`: updated Week 3 (Day 18) status, commit evidence, and verification records.
+
+**Measured (`node --expose-gc client/scripts/render-report.js`, Node v22.22.3, Linux x64)**
+
+* Per-frame 2D context operations (`1440×900` CSS px, `1920×1080` room): reduced from `62..662` (`1` avatar), `125..725` (`10` avatars), and `475..1,075` (`60` avatars) across `{0, 10, 100, 200}` obstacles down to a constant **`11 / 74 / 424`** (`-651` calls/frame, `-60.6%` at `60` avatars × `200` obstacles).
+* JS callback benchmark (`60` avatars × `200` obstacles, `5,000` frames, counting fake 2D context — JavaScript cost only, not GPU/compositing): `p50 = 8.52 µs` / `p95 = 9.90 µs` before → **`p50 = 3.12 µs` / `p95 = 3.42 µs`** after (`static builds = 1`).
+* Heap & allocation checks (`--expose-gc` + V8 `HeapProfiler` at 32 B sampling interval): `100,000` `frameStats.record` calls sampled `9,496 B` (`0.095 B/call`); `50,000` `drawFrame` calls (`60` avatars, `200` obstacles) had `retainedDelta = +272 B` (**`0.0054 B/frame`**) and `sampledAlloc = 4,928 B` (**`0.099 B/frame`**), with 50-frame pre-scavenge young-gen burst reduced from `1,300,664 B` (`26,013.28 B/frame`) to `96,000 B` (`1,920.00 B/frame`).
+
+**Verified in this environment (2026-10-29)**
+
+* Fresh `npm ci --prefix server` and `npm ci --prefix client` succeeded; `npm run build --prefix client` succeeded (Vite 6.4.4, 86 modules).
+* `npm audit`: client 0 vulnerabilities; server 1 moderate (`qs` DoS, transitive), 0 high, 0 critical (server lockfile untouched, out of scope).
+* Without `REDIS_URL_TEST`: server **191 passed / 77 skipped** (268); client **223 passed / 0 skipped**.
+* With real `redis-server` 6.2.14 (`REDIS_URL_TEST=redis://127.0.0.1:6379`): server **228 passed / 40 skipped** (268); client **223 passed / 0 skipped**. All 40 skips are MongoDB-only.
+
+**NOT VERIFIED here**
+
+* MongoDB could not be installed (`deb.debian.org` and `fastdl.mongodb.org` outside sandbox egress allowlist), so the 40 MongoDB-backed server tests remain skipped (`NOT VERIFIED`).
+* No browser binary is installed and `cdn.playwright.dev` / `deb.debian.org` are unreachable under sandbox egress rules, so a live 60-second hardware-composited browser FPS run (`200` obstacles, `20` moving avatars, `?perf=1`) is **NOT VERIFIED** here; manual verification steps are in `docs/RENDERING.md`.
+
+**Scope boundary**
+
+* Client Canvas render path only. `server/`, `client/src/audio/`, WebRTC modules, Socket.io protocol, and environment variables are completely untouched. No new dependencies, no WebGL/OffscreenCanvas workers, no dirty-flag frame skipping, and no visual look changes.
+
