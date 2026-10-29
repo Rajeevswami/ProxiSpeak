@@ -173,11 +173,7 @@ export default drawRoom;
 /** Stable per-user colour so the same avatar looks the same in every tab. */
 const AVATAR_PALETTE = ['#4f8cff', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#22d3ee', '#fb7185', '#a3e635'];
 
-/**
- * Reused for every avatar, every frame: the render loop must not allocate
- * per entity (the same rule the room painter follows).
- */
-const scratchCentre = { x: 0, y: 0 };
+const MAX_SMI_TAG = 0x3fffffff;
 
 /** Uncached fallback scratch entry for synthetic test users without a string id. */
 const scratchAnonEntry = {
@@ -287,10 +283,10 @@ export function createLabelCache() {
       }
     },
 
-    /** Advance and return the next monotonic frame tag for mark-and-prune. */
+    /** Advance and return the next monotonic 31-bit SMI frame tag for mark-and-prune. */
     nextFrameTag() {
       frameTag += 1;
-      if (frameTag >= Number.MAX_SAFE_INTEGER) {
+      if (frameTag >= MAX_SMI_TAG) {
         frameTag = 1;
         for (const entry of map.values()) entry.seenTag = 0;
       }
@@ -437,13 +433,12 @@ export function drawDynamic(ctx, view, world, labelCache = defaultLabelCache) {
       seenCount += 1;
     }
 
-    const centre = scratchCentre;
-    centre.x = offsetX + user.x * scale;
-    centre.y = offsetY + user.y * scale;
+    const centreX = offsetX + user.x * scale;
+    const centreY = offsetY + user.y * scale;
     const isSelf = entry.isSelf;
 
     ctx.beginPath();
-    ctx.arc(centre.x, centre.y, radius, 0, TWO_PI);
+    ctx.arc(centreX, centreY, radius, 0, TWO_PI);
     ctx.fillStyle = entry.color;
     ctx.fill();
 
@@ -453,7 +448,7 @@ export function drawDynamic(ctx, view, world, labelCache = defaultLabelCache) {
 
     if (isSelf) {
       ctx.beginPath();
-      ctx.arc(centre.x, centre.y, radius + 5, 0, TWO_PI);
+      ctx.arc(centreX, centreY, radius + 5, 0, TWO_PI);
       ctx.strokeStyle = 'rgba(255, 209, 102, 0.55)';
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -464,16 +459,16 @@ export function drawDynamic(ctx, view, world, labelCache = defaultLabelCache) {
     ctx.font = initialFont;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(entry.initial, centre.x, centre.y + 0.5);
+    ctx.fillText(entry.initial, centreX, centreY + 0.5);
 
     // Name label above the avatar (with a " (you)" marker for self).
     ctx.font = LABEL_FONT;
     ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(5, 7, 13, 0.8)';
-    ctx.strokeText(entry.text, centre.x, centre.y - radius - 6);
+    ctx.strokeText(entry.text, centreX, centreY - radius - 6);
     ctx.fillStyle = '#e5e9f0';
-    ctx.fillText(entry.text, centre.x, centre.y - radius - 6);
+    ctx.fillText(entry.text, centreX, centreY - radius - 6);
   }
 
   labelCache.finishFrame(tag, seenCount);
