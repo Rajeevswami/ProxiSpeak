@@ -201,6 +201,42 @@ test('MAX_BACKING_PIXELS clamps 4K@3x proportionally while keeping phone@3x and 
   assert.equal(laptop.backingHeight, 1800);
   assert.ok(laptop.backingWidth * laptop.backingHeight <= MAX_BACKING_PIXELS);
 
+  // Full HD desktop: 1920x1080 at DPR 1 -> 1920x1080 = 2,073,600 px (<= 16M, unclamped)
+  const fullHd = resolveBackingMetrics(1920, 1080, 1);
+  assert.equal(fullHd.dpr, 1);
+  assert.equal(fullHd.backingWidth, 1920);
+  assert.equal(fullHd.backingHeight, 1080);
+
+  // Off-by-one boundary sweep: neither Math.round nor extreme aspect ratios may exceed MAX_BACKING_PIXELS,
+  // and dimensions must always be positive integers (>= 1).
+  const trickyCases = [
+    [143, 7715, 4], // previously rounded 544.58 -> 545 * 29381 = 16,012,645 (> 16M)
+    [4001, 4000, 3],
+    [4000, 4000, 3],
+    [4096, 4096, 2],
+    [25000000, 1, 2],
+    [0, 0, 3],
+    [0.2, 0.2, 1],
+  ];
+  let seed = 0x51a71c;
+  for (let i = 0; i < 10000; i += 1) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const w = (seed % 8000) + 1;
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const h = (seed % 8000) + 1;
+    const dpr = [0.5, 1, 1.25, 1.5, 2, 2.5, 3, 4][i & 7];
+    trickyCases.push([w, h, dpr]);
+  }
+  for (const [w, h, dpr] of trickyCases) {
+    const m = resolveBackingMetrics(w, h, dpr);
+    assert.ok(Number.isInteger(m.backingWidth) && m.backingWidth >= 1);
+    assert.ok(Number.isInteger(m.backingHeight) && m.backingHeight >= 1);
+    assert.ok(
+      m.backingWidth * m.backingHeight <= MAX_BACKING_PIXELS,
+      `off-by-one overflow for ${w}x${h}@${dpr}: ${m.backingWidth}x${m.backingHeight}=${m.backingWidth * m.backingHeight}`,
+    );
+  }
+
   // Also verify createStaticLayer sets effective DPR on the offscreen 2D context.
   const env = createFakeCanvasEnv();
   const layer = createStaticLayer({ createCanvas: env.createCanvas });

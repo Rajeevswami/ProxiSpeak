@@ -19,7 +19,7 @@
  *    leaving phones (390x844 @ DPR 3 = 2.96M px) and retina laptops
  *    (1440x900 @ DPR 2 = 5.18M px) at their full native ratio.
  */
-import { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX } from './coords.js';
+import { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX, updateCanvasSize } from './coords.js';
 import { drawStatic as defaultDrawStatic } from './renderer.js';
 
 export { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX };
@@ -29,12 +29,6 @@ function defaultCreateCanvas() {
     throw new Error('createStaticLayer requires document.createElement or an injected createCanvas factory');
   }
   return document.createElement('canvas');
-}
-
-function sanitizeCssLength(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? value
-    : MIN_CANVAS_SIZE_PX;
 }
 
 /**
@@ -48,20 +42,7 @@ function sanitizeCssLength(value) {
  * @returns {{ width: number, height: number, dpr: number, backingWidth: number, backingHeight: number }}
  */
 export function resolveBackingMetrics(cssWidth, cssHeight, devicePixelRatio = 1, out = {}) {
-  const width = sanitizeCssLength(cssWidth);
-  const height = sanitizeCssLength(cssHeight);
-  const requestedDpr = typeof devicePixelRatio === 'number' && Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
-    ? devicePixelRatio
-    : 1;
-  const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (width * height));
-  const dpr = requestedDpr <= budgetDpr ? requestedDpr : budgetDpr;
-
-  out.width = width;
-  out.height = height;
-  out.dpr = dpr;
-  out.backingWidth = Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr));
-  out.backingHeight = Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr));
-  return out;
+  return updateCanvasSize(out, cssWidth, cssHeight, devicePixelRatio);
 }
 
 /**
@@ -98,7 +79,14 @@ export function createStaticLayer({
   let lastRoomWidth = 0;
   let lastRoomHeight = 0;
 
-  // Reused across rebuilds so even a rebuild allocates no view wrapper.
+  // Reused scratch objects so ensure() and rebuilds allocate nothing.
+  const scratchMetrics = {
+    width: MIN_CANVAS_SIZE_PX,
+    height: MIN_CANVAS_SIZE_PX,
+    dpr: 1,
+    backingWidth: MIN_CANVAS_SIZE_PX,
+    backingHeight: MIN_CANVAS_SIZE_PX,
+  };
   const renderView = {
     width: MIN_CANVAS_SIZE_PX,
     height: MIN_CANVAS_SIZE_PX,
@@ -120,14 +108,12 @@ export function createStaticLayer({
     ensure(view, room) {
       const rawWidth = view?.width ?? view?.canvasWidth;
       const rawHeight = view?.height ?? view?.canvasHeight;
-      const cssWidth = sanitizeCssLength(rawWidth);
-      const cssHeight = sanitizeCssLength(rawHeight);
-      const rawDpr = view?.dpr;
-      const requestedDpr = typeof rawDpr === 'number' && Number.isFinite(rawDpr) && rawDpr > 0 ? rawDpr : 1;
-      const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (cssWidth * cssHeight));
-      const effectiveDpr = requestedDpr <= budgetDpr ? requestedDpr : budgetDpr;
-      const backingWidth = Math.max(MIN_CANVAS_SIZE_PX, Math.round(cssWidth * effectiveDpr));
-      const backingHeight = Math.max(MIN_CANVAS_SIZE_PX, Math.round(cssHeight * effectiveDpr));
+      updateCanvasSize(scratchMetrics, rawWidth, rawHeight, view?.dpr);
+      const cssWidth = scratchMetrics.width;
+      const cssHeight = scratchMetrics.height;
+      const effectiveDpr = scratchMetrics.dpr;
+      const backingWidth = scratchMetrics.backingWidth;
+      const backingHeight = scratchMetrics.backingHeight;
 
       const hasRoom = room !== null && typeof room === 'object';
       const roomId = hasRoom ? room.roomId : null;

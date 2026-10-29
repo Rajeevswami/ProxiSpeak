@@ -47,11 +47,27 @@ export function updateCanvasSize(out, cssWidth, cssHeight, devicePixelRatio = 1)
   const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (width * height));
   const dpr = Math.min(requestedDpr, budgetDpr);
 
+  let backingWidth = Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr));
+  let backingHeight = Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr));
+  if (backingWidth * backingHeight > MAX_BACKING_PIXELS) {
+    backingWidth = Math.min(MAX_BACKING_PIXELS, Math.max(MIN_CANVAS_SIZE_PX, Math.floor(width * dpr)));
+    backingHeight = Math.min(MAX_BACKING_PIXELS, Math.max(MIN_CANVAS_SIZE_PX, Math.floor(height * dpr)));
+    while (backingWidth * backingHeight > MAX_BACKING_PIXELS) {
+      if (backingWidth >= backingHeight && backingWidth > MIN_CANVAS_SIZE_PX) {
+        backingWidth -= 1;
+      } else if (backingHeight > MIN_CANVAS_SIZE_PX) {
+        backingHeight -= 1;
+      } else {
+        break;
+      }
+    }
+  }
+
   out.width = width;
   out.height = height;
   out.dpr = dpr;
-  out.backingWidth = Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr));
-  out.backingHeight = Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr));
+  out.backingWidth = backingWidth;
+  out.backingHeight = backingHeight;
   return out;
 }
 
