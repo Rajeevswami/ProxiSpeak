@@ -178,3 +178,24 @@ body {
   color: #c3d4f5;
   font-variant-numeric: tabular-nums;
 }
+
+/* Opt-in ?perf=1 frame timing readout (Week 3, Day 18): read-only, <= 1 Hz
+   direct textContent updates, no controls and no React state. */
+.perf-readout {
+  position: fixed;
+  bottom: 0.75rem;
+  left: 1rem;
+  z-index: 1;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(11, 16, 32, 0.82);
+  border: 1px solid #26314d;
+  color: #a8b6d2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.perf-readout:empty {
+  display: none;
+}

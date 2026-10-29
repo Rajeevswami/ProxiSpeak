@@ -13,12 +13,17 @@
  *    coalesced via `needsResize` so the canvas and static layer rebuild at most
  *    once per animation frame; the DPR watcher re-arms after every monitor/zoom
  *    transition and tears down completely on `stop()`.
+ *  - Optional `?perf=1` readout: samples intervals and callback work into a
+ *    preallocated `frameStats` ring buffer ONLY when enabled, updating
+ *    `perfElement.textContent` directly at most once per second (no React state).
  *  - Owns one `staticLayer` and one `labelCache` per mounted canvas and
  *    releases both on `stop()`.
  */
 import { MIN_CANVAS_SIZE_PX, screenToWorldInto, updateCanvasSize, updateViewport } from './coords.js';
 import { createLabelCache, drawFrame } from './renderer.js';
 import { createStaticLayer } from './staticLayer.js';
+import { EXCLUDED_INTERVAL_MS, createFrameStats } from '../perf/frameStats.js';
+import { PERF_READOUT_INTERVAL_MS, formatPerfReadout, isPerfEnabled } from '../perf/perfReadout.js';
 
 /**
  * Maximum simulation step per animation frame, in milliseconds (50 ms = 0.05 s,
@@ -52,6 +57,13 @@ const scratchClickViewport = {
   canvasHeight: 0,
 };
 
+function defaultPerfNow(win) {
+  if (typeof win?.performance?.now === 'function') {
+    return () => win.performance.now();
+  }
+  return () => performance.now();
+}
+
 /**
  * Create and manage the single `requestAnimationFrame` loop for one `<canvas>`.
  *
@@ -61,6 +73,10 @@ const scratchClickViewport = {
  * @param {((deltaSeconds: number) => void)|null} [options.updateFrame]
  * @param {((ctx: CanvasRenderingContext2D, world: object, view: object) => void)|null} [options.renderFrame]
  * @param {((point: { x: number, y: number }) => void)|null} [options.onWorldClick]
+ * @param {HTMLElement|null} [options.perfElement] DOM node whose `textContent` receives the <= 1 Hz `?perf=1` line
+ * @param {boolean} [options.perfEnabled] override URL detection in tests
+ * @param {object|null} [options.frameStats] injectable `createFrameStats()` instance
+ * @param {() => number} [options.perfNow] injectable monotonic clock in ms for callback work timing
  * @param {Window} [options.window]
  * @param {Document|null} [options.document]
  * @param {() => HTMLCanvasElement} [options.createCanvas]
@@ -71,6 +87,10 @@ export function createCanvasLoop({
   updateFrame = null,
   renderFrame = null,
   onWorldClick = null,
+  perfElement = null,
+  perfEnabled,
+  frameStats: injectedFrameStats = null,
+  perfNow: injectedPerfNow = null,
   window: win = typeof window === 'undefined' ? null : window,
   document: doc = typeof document === 'undefined' ? null : document,
   createCanvas,
@@ -83,10 +103,24 @@ export function createCanvasLoop({
   }
 
   const ctx = canvas.getContext('2d');
-  if (!ctx) return { start() {}, stop() {}, getStaticLayer: () => null, getLabelCache: () => null };
+  if (!ctx) {
+    return {
+      start() {},
+      stop() {},
+      getStaticLayer: () => null,
+      getLabelCache: () => null,
+      getFrameStats: () => null,
+    };
+  }
 
   const staticLayer = createStaticLayer(createCanvas ? { createCanvas } : undefined);
   const labelCache = createLabelCache();
+
+  const samplingEnabled = perfEnabled !== undefined
+    ? Boolean(perfEnabled)
+    : isPerfEnabled(win.location?.search ?? '');
+  const frameStats = samplingEnabled ? (injectedFrameStats ?? createFrameStats()) : null;
+  const readWorkClock = samplingEnabled ? (injectedPerfNow ?? defaultPerfNow(win)) : null;
 
   // Single reused view object for the loop's whole lifetime — zero per-frame allocations.
   const view = {
@@ -111,6 +145,8 @@ export function createCanvasLoop({
   let rafId = 0;
   let hasTimeBase = false;
   let lastFrameTime = 0;
+  let hasPerfPublishBase = false;
+  let lastPerfPublishTime = 0;
   let needsResize = false;
   let currentMql = null;
 
@@ -184,6 +220,7 @@ export function createCanvasLoop({
 
   const resetTimeBase = () => {
     hasTimeBase = false;
+    if (frameStats) frameStats.markHidden();
   };
 
   const onVisibilityChange = () => {
@@ -208,19 +245,24 @@ export function createCanvasLoop({
       return;
     }
 
+    const workStart = samplingEnabled ? readWorkClock() : 0;
+
     if (needsResize) {
       needsResize = false;
       syncCanvasSize();
     }
 
+    const hasFiniteNow = typeof now === 'number' && Number.isFinite(now);
+    let rawIntervalMs = EXCLUDED_INTERVAL_MS;
     let clampedDtMs = 0;
-    if (hasTimeBase && typeof now === 'number' && Number.isFinite(now)) {
-      const rawDtMs = now - lastFrameTime;
+
+    if (hasTimeBase && hasFiniteNow) {
+      rawIntervalMs = now - lastFrameTime;
       lastFrameTime = now;
-      if (rawDtMs > 0) {
-        clampedDtMs = rawDtMs <= MAX_FRAME_DT_MS ? rawDtMs : MAX_FRAME_DT_MS;
+      if (rawIntervalMs > 0) {
+        clampedDtMs = rawIntervalMs <= MAX_FRAME_DT_MS ? rawIntervalMs : MAX_FRAME_DT_MS;
       }
-    } else if (typeof now === 'number' && Number.isFinite(now)) {
+    } else if (hasFiniteNow) {
       lastFrameTime = now;
       hasTimeBase = true;
     }
@@ -233,6 +275,21 @@ export function createCanvasLoop({
       renderFrame(ctx, worldRef?.current ?? null, view);
     } else {
       drawFrame(ctx, staticLayer, view, worldRef?.current ?? null, labelCache);
+    }
+
+    if (samplingEnabled) {
+      const workMs = Math.max(0, readWorkClock() - workStart);
+      frameStats.record(rawIntervalMs, workMs);
+
+      if (perfElement && hasFiniteNow) {
+        if (!hasPerfPublishBase) {
+          lastPerfPublishTime = now;
+          hasPerfPublishBase = true;
+        } else if (now - lastPerfPublishTime >= PERF_READOUT_INTERVAL_MS) {
+          lastPerfPublishTime = now;
+          perfElement.textContent = formatPerfReadout(frameStats.snapshot());
+        }
+      }
     }
 
     scheduleNextFrame();
@@ -261,6 +318,7 @@ export function createCanvasLoop({
     if (running) return;
     running = true;
     hasTimeBase = false;
+    hasPerfPublishBase = false;
     needsResize = false;
     syncCanvasSize();
     win.addEventListener?.('resize', onResize);
@@ -283,6 +341,7 @@ export function createCanvasLoop({
     canvas.removeEventListener?.('click', handleClick);
     staticLayer.destroy();
     labelCache.clear();
+    if (frameStats) frameStats.reset();
   };
 
   return {
@@ -290,6 +349,7 @@ export function createCanvasLoop({
     stop,
     getStaticLayer: () => staticLayer,
     getLabelCache: () => labelCache,
+    getFrameStats: () => frameStats,
   };
 }
 
