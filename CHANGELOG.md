@@ -853,22 +853,28 @@ covered and unchanged.
 
 ## Week 3 (Day 18) — 2026-10-29 — steady 60 FPS Canvas rendering pipeline (Company Plan Week 4)
 
-*Commits: `bdad57b`, `9c92896`, `8c04f3e`, `b36feef`, `cccdac2`, `7656ef8`, `7c5544e`, `0a0ce6d` (this documentation commit follows them and is not self-listed)*
+*Commits: `bdad57b`, `9c92896`, `8c04f3e`, `b36feef`, `cccdac2`, `7656ef8`, `7c5544e`, `0a0ce6d`, `6eac3e3`, `085e705`, `df00b49`, `a776b21` (this documentation commit follows them and is not self-listed)*
 
 **Added**
 
 * Pure rolling frame-statistics ring buffer (`client/src/perf/frameStats.js`): preallocated `Float64Array(240)` buffers (`DEFAULT_RING_CAPACITY = 240`) for frame `intervalMs` and callback `workMs`, nearest-rank `p50` / `p95` / `max` (`ceil(q * n) - 1`, matching `server/src/services/spatialAudit.js`), `DROPPED_FRAME_MS = 25` (`strict >`), first-frame sentinel (`EXCLUDED_INTERVAL_MS = -1`), post-hidden exclusion (`markHidden()`), and `MAX_VALID_INTERVAL_MS = 1000`.
 * Offscreen static room canvas cache (`client/src/canvas/staticLayer.js`): `createStaticLayer` caches the letterbox backdrop, room floor, grid, border, obstacles, and obstacle type labels on an offscreen `<canvas>`, rebuilding ONLY when backing dimensions, effective DPR, `room.roomId`, or `room.layoutRevision` changes (`MAX_BACKING_PIXELS = 16,000,000` budget; `destroy()` releases backing memory via `width = 0; height = 0`).
-* Lifecycle-managed Canvas 2D frame loop (`client/src/canvas/frameLoop.js`): single `requestAnimationFrame` subscription, timestamp-driven `dt` clamped to `MAX_FRAME_DT_MS = 50` ms, `document.hidden` draw skipping + `visibilitychange` time-base reset, coalesced `resize` handling (at most one rebuild per frame), and a re-arming `matchMedia('(resolution: <dpr>dppx)')` watcher across monitors.
+* Lifecycle-managed Canvas 2D frame loop (`client/src/canvas/frameLoop.js`): single `requestAnimationFrame` subscription, timestamp-driven `dt` clamped to `MAX_FRAME_DT_MS = 50` ms, `document.hidden` draw skipping + `visibilitychange` time-base reset, coalesced `resize` handling (at most one rebuild per frame), a re-arming `matchMedia('(resolution: <dpr>dppx)')` watcher across monitors, and `try/catch/finally` callback isolation so a thrown exception cannot kill the rAF loop.
 * Opt-in `?perf=1` performance readout (`client/src/perf/perfReadout.js`, `WorldCanvas.jsx`, `styles.css`): read-only line `fps 60 | frame p95 16.9 ms | work p95 0.8 ms | dropped 0` written via `perfElement.textContent` at `<= 1 Hz` with zero React state; completely disabled and unsampled when `?perf=1` is absent.
-* Tests (`client/test/frameStats.test.js`, `client/test/staticLayer.test.js`, `client/test/renderEquivalence.test.js`, `client/test/frameLoop.test.js`): ring wrap-around, percentiles, `25.0` vs `25.1 ms` dropped boundary, `--expose-gc` 100k `record()` check, `1,000`-frame static cache hit, single rebuild per invalidation trigger, `MAX_BACKING_PIXELS` checks on `3840x2160@3` / `390x844@3` / `1440x900@2`, exact 2D operation-list equivalence on seeded `lobby` + 200 obstacles and `1 / 10 / 60` avatars, 50 join/leave label-cache pruning + rename updates, 50 mount/unmount zero-leak cycle check, 100-event resize burst coalescing, 5s hidden-tab clamp, 60 Hz vs 144 Hz movement equivalence, and `?perf=1` gating.
+* Tests (`client/test/frameStats.test.js`, `client/test/staticLayer.test.js`, `client/test/renderEquivalence.test.js`, `client/test/frameLoop.test.js`): ring wrap-around, percentiles, `25.0` vs `25.1 ms` dropped boundary, `--expose-gc` 100k `record()` check, `1,000`-frame static cache hit, single rebuild per invalidation trigger, `MAX_BACKING_PIXELS` checks on `3840x2160@3` / `390x844@3` / `1440x900@2` + 10k-pair off-by-one sweep, exact 2D operation-list equivalence on seeded `lobby` + 200 obstacles and `1 / 10 / 60` avatars, 50 join/leave label-cache pruning + rename updates, 50 mount/unmount zero-leak cycle check, 100-event resize burst coalescing, 5s hidden-tab clamp, 60 Hz vs 144 Hz movement equivalence, `?perf=1` gating, and rAF callback throw recovery.
 * Reproducible report (`client/scripts/render-report.js`) and full pipeline documentation (`docs/RENDERING.md`, preserving the Step 0 pre-optimization baseline intact).
 
 **Changed**
 
-* `client/src/canvas/renderer.js` and `client/src/canvas/coords.js`: split `drawStatic` and `drawDynamic`, added `drawFrame` (`1 × drawImage` + `drawDynamic`) and `createLabelCache()` (per-user cached colour, initial, truncated label, and optional `measureText` width with `O(1)` steady-state pruning), kept `centreX`/`centreY` in stack locals to avoid V8 `HeapNumber` boxing, added zero-allocation `updateCanvasSize` / `updateViewport` / `screenToWorldInto`, and preserved compatible `drawRoom`, `drawAvatars`, and `drawWorld` exports.
+* `client/src/canvas/renderer.js` and `client/src/canvas/coords.js`: split `drawStatic` and `drawDynamic`, added `drawFrame` (`1 × drawImage` + `drawDynamic`) and `createLabelCache()` (per-user cached colour, initial, truncated label, and optional `measureText` width with `O(1)` steady-state pruning), kept `centreX`/`centreY` in stack locals to avoid V8 `HeapNumber` boxing, added zero-allocation `updateCanvasSize` / `updateViewport` / `screenToWorldInto` with strict `<= MAX_BACKING_PIXELS` rounding clamp, and preserved compatible `drawRoom`, `drawAvatars`, and `drawWorld` exports.
 * `client/src/components/WorldCanvas.jsx` and `client/src/App.jsx`: switched `<WorldCanvas>` to `createCanvasLoop` on the cached `drawFrame` pipeline with zero per-frame React state.
-* `docs/REQUIREMENTS_TRACE.md` and `README.md`: updated Week 3 (Day 18) status, commit evidence, and verification records.
+* `docs/LIMITATIONS.md`, `docs/REQUIREMENTS_TRACE.md`, and `README.md`: synced Week 3 (Day 18) status, explicit `Company plan week` + `Delivered in calendar week` columns, panning/rendering limitations, and verification records.
+
+**Fixed**
+
+* `client/src/canvas/frameLoop.js`: isolated `updateFrame` and `renderFrame` inside `try/catch/finally` so an uncaught callback exception cannot skip `scheduleNextFrame()` and halt the loop (`085e705`).
+* `client/src/canvas/coords.js`, `client/src/canvas/staticLayer.js`: prevented `Math.round` off-by-one overflow above `MAX_BACKING_PIXELS = 16,000,000` on capped viewports (`df00b49`).
+* `client/src/perf/perfReadout.js`, `client/src/perf/frameStats.js`, `client/src/canvas/frameLoop.js`, `client/src/canvas/staticLayer.js`, `client/src/canvas/renderer.js`: removed unreferenced Day 18 exports (`a776b21`).
 
 **Measured (`node --expose-gc client/scripts/render-report.js`, Node v22.22.3, Linux x64)**
 
@@ -880,8 +886,8 @@ covered and unchanged.
 
 * Fresh `npm ci --prefix server` and `npm ci --prefix client` succeeded; `npm run build --prefix client` succeeded (Vite 6.4.4, 86 modules).
 * `npm audit`: client 0 vulnerabilities; server 1 moderate (`qs` DoS, transitive), 0 high, 0 critical (server lockfile untouched, out of scope).
-* Without `REDIS_URL_TEST`: server **191 passed / 77 skipped** (268); client **223 passed / 0 skipped**.
-* With real `redis-server` 6.2.14 (`REDIS_URL_TEST=redis://127.0.0.1:6379`): server **228 passed / 40 skipped** (268); client **223 passed / 0 skipped**. All 40 skips are MongoDB-only.
+* Without `REDIS_URL_TEST`: server **191 passed / 77 skipped** (268); client **224 passed / 0 skipped**.
+* With real `redis-server` 6.2.14 (`REDIS_URL_TEST=redis://127.0.0.1:6379`): server **228 passed / 40 skipped** (268); client **224 passed / 0 skipped**. All 40 skips are MongoDB-only.
 
 **NOT VERIFIED here**
 

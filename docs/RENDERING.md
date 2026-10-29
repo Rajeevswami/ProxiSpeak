@@ -120,7 +120,7 @@ requestAnimationFrame(timestamp)   [client/src/canvas/frameLoop.js]
 | `client/src/canvas/coords.js` | `MAX_BACKING_PIXELS = 16_000_000`, `MIN_CANVAS_SIZE_PX = 1`, zero-allocation `updateCanvasSize`, `updateViewport`, and `screenToWorldInto` (plus compatible allocating helpers). |
 | `client/src/canvas/staticLayer.js` | Offscreen static `<canvas>` cache (`createStaticLayer`, `resolveBackingMetrics`) with injectable canvas factory and `destroy()` backing-store release. |
 | `client/src/canvas/renderer.js` | `drawStatic`, `drawDynamic`, `drawFrame`, and per-user `createLabelCache()` (plus compatible `drawRoom`, `drawAvatars`, `drawWorld` wrappers). |
-| `client/src/canvas/frameLoop.js` | Single `requestAnimationFrame` controller (`createCanvasLoop`, `MAX_FRAME_DT_MS = 50`, `resolutionMediaQuery`) owning resize coalescing, DPR `matchMedia` re-arming, `visibilitychange`, click-to-walk translation, and `<= 1 Hz` `?perf=1` DOM writes. |
+| `client/src/canvas/frameLoop.js` | Single `requestAnimationFrame` controller (`createCanvasLoop`, `MAX_FRAME_DT_MS = 50`) owning resize coalescing, DPR `matchMedia` re-arming, `visibilitychange`, click-to-walk translation, callback error isolation, and `<= 1 Hz` `?perf=1` DOM writes. |
 | `client/src/components/WorldCanvas.jsx` | Thin React mount/unmount wrapper delegating the canvas lifecycle to `createCanvasLoop` with zero per-frame React state. |
 
 ---

@@ -157,8 +157,8 @@ The Mongo suites create and drop isolated databases derived from the test base U
 
 On 2026-10-29 (**Week 3 (Day 18)**), after clean lockfile installs:
 
-- Without services: server **191 passed / 77 skipped** (268 tests), client **223 passed / 0 skipped**.
-- With real Redis (`redis-server` 6.2.14): server **228 passed / 40 skipped** (268 tests), client **223 passed / 0 skipped**. All remaining skips require MongoDB.
+- Without services: server **191 passed / 77 skipped** (268 tests), client **224 passed / 0 skipped**.
+- With real Redis (`redis-server` 6.2.14): server **228 passed / 40 skipped** (268 tests), client **224 passed / 0 skipped**. All remaining skips require MongoDB.
 - `npm run build`: passed (86 modules). `npm audit`: client 0 vulnerabilities; server 1 moderate (transitive `qs`), 0 high/critical.
 - Render report (`node --expose-gc client/scripts/render-report.js`, 60 avatars × 200 obstacles, fake 2D context — JS cost only, not GPU/compositing): per-frame 2D ops reduced from `1,075` to `424` (constant across `0..200` obstacles after 1 static build); JS work `p50 = 3.12 µs` / `p95 = 3.42 µs` (vs `8.52 µs` / `9.90 µs` before); retained heap delta over 50,000 frames `+272 B` (`0.0054 B/frame`).
 - Panning report (`node --expose-gc client/scripts/panning-report.js`, 8 peers × 200 obstacles per tick): full mixer tick `p50 = 12.87 µs` / `p95 = 15.07 µs`; panning alone `p50 = 0.57 µs`; heap delta over 50,000 ticks `-61,352 B`.
