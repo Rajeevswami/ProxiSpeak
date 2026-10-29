@@ -4,7 +4,6 @@ import WorldCanvas from './components/WorldCanvas.jsx';
 import AudioStatus from './components/AudioStatus.jsx';
 import { useSocket } from './hooks/useSocket.js';
 import { useMovement } from './hooks/useMovement.js';
-import { drawWorld } from './canvas/renderer.js';
 import { describeServerError } from './join/joinForm.js';
 
 export default function App() {
@@ -40,7 +39,6 @@ export default function App() {
     <>
       <WorldCanvas
         world={world}
-        renderFrame={drawWorld}
         updateFrame={updateFrame}
         onWorldClick={movement.handleWorldClick}
       />

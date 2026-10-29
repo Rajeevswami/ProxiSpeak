@@ -20,7 +20,7 @@
  *    (1440x900 @ DPR 2 = 5.18M px) at their full native ratio.
  */
 import { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX } from './coords.js';
-import { drawRoom } from './renderer.js';
+import { drawStatic as defaultDrawStatic } from './renderer.js';
 
 export { MAX_BACKING_PIXELS, MIN_CANVAS_SIZE_PX };
 
@@ -29,10 +29,6 @@ function defaultCreateCanvas() {
     throw new Error('createStaticLayer requires document.createElement or an injected createCanvas factory');
   }
   return document.createElement('canvas');
-}
-
-function defaultDrawStatic(ctx, view, room) {
-  drawRoom(ctx, { room }, view);
 }
 
 function sanitizeCssLength(value) {
