@@ -2,7 +2,7 @@
 
 ProxiSpeak is a browser-based spatial voice chat prototype: each person moves an avatar on a 2D map, WebRTC connects nearby participants, and a Web Audio `GainNode` makes remote voice fade with distance. **Proximity is the volume knob.**
 
-The current scope includes room layout persistence (`layoutRevision`, guarded REST/CLI saves, live `room:layout` broadcast) **Week 3 (Day 16)** client-side sound-blocking obstacles in the Web Audio path (`gainForDistance(d) × T`), and **Week 3 (Day 17)** left/right stereo panning from each peer's relative position on the 2D map. It is not a deployed or production-hardened service.
+The current scope includes room layout persistence (`layoutRevision`, guarded REST/CLI saves, live `room:layout` broadcast), **Week 3 (Day 16)** client-side sound-blocking obstacles in the Web Audio path (`gainForDistance(d) × T`), **Week 3 (Day 17)** left/right stereo panning from each peer's relative position on the 2D map, and **Week 3 (Day 18)** a two-layer Canvas 2D rendering pipeline (cached offscreen static room layer, zero-allocation dynamic avatar loop, coalesced resize & `matchMedia` DPR watcher, and opt-in `?perf=1` frame telemetry). It is not a deployed or production-hardened service.
 
 ## How it works
 
@@ -28,6 +28,7 @@ Node.js + Express + Socket.io
 - Blocking room obstacles (`blocksAudio === true`) multiply line-of-sight transmission `T` (`attenuation` in `[0, 1]`) into each peer's target gain (`gainForDistance(d) × T`) on the client with `0.08` s `setTargetAtTime` smoothing across obstacle edges (`docs/OCCLUSION.md`).
 - Each remote peer is panned left/right by its position on the screen (larger `x` is heard in the right ear; `pan = 0.85 · dx / max(dist, 30)`). The chain is `source → StereoPannerNode → GainNode → destination`, and panning is smoothed with a `0.05` s time constant. Facing is not used, and this is not HRTF or 3D audio (`docs/PANNING.md`).
 - The audio overlay is sampled separately from the render loop (at most once per second) and shows per-peer distance, output volume, obstacle transmission percentage, and stereo side and strength (`pan R 62%`, `pan C`); avatar positions do not create per-frame React state.
+- Canvas rendering splits the static room (letterbox backdrop, floor, grid, border, obstacles) onto a cached offscreen `<canvas>` rebuilt only when backing size, effective DPR, `roomId`, or `layoutRevision` changes (`MAX_BACKING_PIXELS = 16,000,000`), blits it with a single `drawImage` per frame, and draws moving avatars with cached labels/colours and zero React state (`docs/RENDERING.md`).
 - Room layouts are versioned with monotonic `layoutRevision` integers. Edits use atomic revision conflict detection (HTTP 409), broadcast `room:layout` to active clients (taking acoustic effect on the very next mixer tick without re-join), and invalidate caches across clustered instances via Redis.
 
 ## Requirements
@@ -150,18 +151,20 @@ The Mongo suites create and drop isolated databases derived from the test base U
 - **Click the floor:** walk toward that position.
 - **Audio overlay:** connected peers, mesh cap, distance, volume + obstacle transmission percentage (for example `volume 4% (blocked 12%)`), connection state, and inbound audio bytes.
 - **Browser-paused audio:** when peers exist and the context is `suspended` or `interrupted`, one line says `Audio is paused by the browser. Click anywhere on the page.` A page pointer gesture and visible-tab resume path attempt recovery.
+- **Opt-in render readout (`?perf=1`):** opening the client with `?perf=1` displays a read-only line (`fps 60 | frame p95 16.9 ms | work p95 0.8 ms | dropped 0`) updated at most once per second via direct `textContent` write; omitted without `?perf=1`.
 
 ## Current verification
 
-On 2026-10-28 (**Week 3 (Day 17)**), after clean lockfile installs:
+On 2026-10-29 (**Week 3 (Day 18)**), after clean lockfile installs:
 
-- Without services: server **191 passed / 77 skipped** (268 tests), client **201 passed / 0 skipped**.
-- With real Redis (`redis-server` 6.2.14): server **228 passed / 40 skipped** (268 tests), client **201 passed / 0 skipped**. All remaining skips require MongoDB.
-- `npm run build`: passed. `npm audit`: client 0 vulnerabilities; server 1 moderate (transitive `qs`), 0 high/critical.
+- Without services: server **191 passed / 77 skipped** (268 tests), client **224 passed / 0 skipped**.
+- With real Redis (`redis-server` 6.2.14): server **228 passed / 40 skipped** (268 tests), client **224 passed / 0 skipped**. All remaining skips require MongoDB.
+- `npm run build`: passed (86 modules). `npm audit`: client 0 vulnerabilities; server 1 moderate (transitive `qs`), 0 high/critical.
+- Render report (`node --expose-gc client/scripts/render-report.js`, 60 avatars × 200 obstacles, fake 2D context — JS cost only, not GPU/compositing): per-frame 2D ops reduced from `1,075` to `424` (constant across `0..200` obstacles after 1 static build); JS work `p50 = 3.12 µs` / `p95 = 3.42 µs` (vs `8.52 µs` / `9.90 µs` before); retained heap delta over 50,000 frames `+272 B` (`0.0054 B/frame`).
 - Panning report (`node --expose-gc client/scripts/panning-report.js`, 8 peers × 200 obstacles per tick): full mixer tick `p50 = 12.87 µs` / `p95 = 15.07 µs`; panning alone `p50 = 0.57 µs`; heap delta over 50,000 ticks `-61,352 B`.
 - Occlusion benchmark (`node client/scripts/occlusion-bench.js`, 8 peers × 200 obstacles per tick): spread room `p50 = 11.04 µs` / `p95 = 12.41 µs` (**99.69%** rejected by bounding-box pre-check), full mixer tick `p50 = 11.21 µs` / `p95 = 13.67 µs`, `20,000`-case 4-edge geometry cross-check with **0 disagreements**.
 
-MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastdl.mongodb.org` unreachable under sandbox egress rules), so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server/CLI commands are **NOT VERIFIED** here. No browser is installed in this sandbox, so live two-browser microphone/hearing, audible occlusion and audible left/right panning checks are **NOT VERIFIED** here. See `docs/PANNING.md`, `docs/OCCLUSION.md`, `docs/WEEK3.md`, and `CHANGELOG.md` for full records.
+MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastdl.mongodb.org` unreachable under sandbox egress rules), so a zero-skip MongoDB+Redis run, the real Mongo spatial audit, and normal Mongo-backed server/CLI commands are **NOT VERIFIED** here. No browser is installed in this sandbox (`cdn.playwright.dev` and `deb.debian.org` unreachable), so live two-browser microphone/hearing, audible occlusion, audible left/right panning, and real-browser 60 FPS GPU compositing checks are **NOT VERIFIED** here. See `docs/RENDERING.md`, `docs/PANNING.md`, `docs/OCCLUSION.md`, `docs/WEEK3.md`, and `CHANGELOG.md` for full records.
 
 ## Documentation
 
@@ -169,6 +172,7 @@ MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastd
 - `docs/ROOM_PERSISTENCE.md` — room layout persistence, revision concurrency, REST API, live sync, and CLI
 - `docs/OCCLUSION.md` — Week 3 (Day 16) sound-blocking obstacle geometry, smoothing, worked table, and benchmark
 - `docs/PANNING.md` — Week 3 (Day 17) stereo panning semantics, pan law, chain, measurements, manual test and limitations
+- `docs/RENDERING.md` — Week 3 (Day 18) Canvas 2D baseline, static/dynamic split, `MAX_BACKING_PIXELS` budget, allocation checks, and manual 60 FPS verification
 - `docs/DEMO_WEEK3.md` — approximately eight-minute, two-instance demo
 - `docs/LIMITATIONS.md` — known technical and verification limits
 - `docs/REQUIREMENTS_TRACE.md` — requirement-to-code/test mapping with company plan weeks and delivered calendar weeks
@@ -176,6 +180,6 @@ MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastd
 
 ## Known limits and next scope
 
-The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible quality is unmeasured. Occlusion is pure 2D straight line-of-sight gain reduction on the client (no diffraction, reflection, thickness-based loss, height, movement collision, or server/network stream cutoff). Panning is left/right stereo only, from the 2D position (no head orientation, HRTF, elevation or reverb). Read `docs/OCCLUSION.md` and `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
+The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible/browser frame-pacing quality is unmeasured in this sandbox. Occlusion is pure 2D straight line-of-sight gain reduction on the client (no diffraction, reflection, thickness-based loss, height, movement collision, or server/network stream cutoff). Panning is left/right stereo only, from the 2D position (no head orientation, HRTF, elevation or reverb). Read `docs/RENDERING.md`, `docs/OCCLUSION.md`, and `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
 
-Next planned task: **60 FPS rendering/performance work** (not started).
+Next planned task: **Week 4 final end-to-end verification, documentation review, and demo polish**.

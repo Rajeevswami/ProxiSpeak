@@ -28,6 +28,50 @@ export const MIN_CANVAS_SIZE_PX = 1;
 export const MAX_BACKING_PIXELS = 16_000_000;
 
 /**
+ * Write sanitised CSS dimensions, capped DPR and backing-store pixel dimensions
+ * into `out` without allocating a new object.
+ *
+ * @param {object} out target object mutated in place
+ * @param {number} cssWidth window width in CSS pixels
+ * @param {number} cssHeight window height in CSS pixels
+ * @param {number} [devicePixelRatio] window.devicePixelRatio
+ * @returns {{width:number,height:number,dpr:number,backingWidth:number,backingHeight:number}}
+ */
+export function updateCanvasSize(out, cssWidth, cssHeight, devicePixelRatio = 1) {
+  const width = sanitizeLength(cssWidth);
+  const height = sanitizeLength(cssHeight);
+  const requestedDpr = typeof devicePixelRatio === 'number' && Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+    ? devicePixelRatio
+    : 1;
+  // sqrt keeps the *area* inside the budget while preserving the aspect ratio.
+  const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (width * height));
+  const dpr = Math.min(requestedDpr, budgetDpr);
+
+  let backingWidth = Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr));
+  let backingHeight = Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr));
+  if (backingWidth * backingHeight > MAX_BACKING_PIXELS) {
+    backingWidth = Math.min(MAX_BACKING_PIXELS, Math.max(MIN_CANVAS_SIZE_PX, Math.floor(width * dpr)));
+    backingHeight = Math.min(MAX_BACKING_PIXELS, Math.max(MIN_CANVAS_SIZE_PX, Math.floor(height * dpr)));
+    while (backingWidth * backingHeight > MAX_BACKING_PIXELS) {
+      if (backingWidth >= backingHeight && backingWidth > MIN_CANVAS_SIZE_PX) {
+        backingWidth -= 1;
+      } else if (backingHeight > MIN_CANVAS_SIZE_PX) {
+        backingHeight -= 1;
+      } else {
+        break;
+      }
+    }
+  }
+
+  out.width = width;
+  out.height = height;
+  out.dpr = dpr;
+  out.backingWidth = backingWidth;
+  out.backingHeight = backingHeight;
+  return out;
+}
+
+/**
  * Translate the browser's window/DPR numbers into a canvas backing store.
  *
  * `window.innerWidth` / `innerHeight` are not guaranteed to be usable numbers:
@@ -49,20 +93,7 @@ export const MAX_BACKING_PIXELS = 16_000_000;
  * @returns {{width:number,height:number,dpr:number,backingWidth:number,backingHeight:number}}
  */
 export function computeCanvasSize(cssWidth, cssHeight, devicePixelRatio = 1) {
-  const width = sanitizeLength(cssWidth);
-  const height = sanitizeLength(cssHeight);
-  const requestedDpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
-  // sqrt keeps the *area* inside the budget while preserving the aspect ratio.
-  const budgetDpr = Math.sqrt(MAX_BACKING_PIXELS / (width * height));
-  const dpr = Math.min(requestedDpr, budgetDpr);
-
-  return {
-    width,
-    height,
-    dpr,
-    backingWidth: Math.max(MIN_CANVAS_SIZE_PX, Math.round(width * dpr)),
-    backingHeight: Math.max(MIN_CANVAS_SIZE_PX, Math.round(height * dpr)),
-  };
+  return updateCanvasSize({}, cssWidth, cssHeight, devicePixelRatio);
 }
 
 /** A window dimension that is finite and positive, else the 1 px minimum. */
@@ -80,14 +111,10 @@ function requireFinite(value, label) {
 
 /**
  * Fit a room of (roomWidth x roomHeight) into a canvas of
- * (canvasWidth x canvasHeight) CSS pixels.
- *
- * @returns {{ scale: number, offsetX: number, offsetY: number,
- *             drawnWidth: number, drawnHeight: number,
- *             roomWidth: number, roomHeight: number,
- *             canvasWidth: number, canvasHeight: number }}
+ * (canvasWidth x canvasHeight) CSS pixels, writing into `out` without
+ * allocating a fresh object.
  */
-export function computeViewport(roomWidth, roomHeight, canvasWidth, canvasHeight) {
+export function updateViewport(out, roomWidth, roomHeight, canvasWidth, canvasHeight) {
   requirePositiveFinite(roomWidth, 'roomWidth');
   requirePositiveFinite(roomHeight, 'roomHeight');
   requirePositiveFinite(canvasWidth, 'canvasWidth');
@@ -97,17 +124,29 @@ export function computeViewport(roomWidth, roomHeight, canvasWidth, canvasHeight
   const drawnWidth = roomWidth * scale;
   const drawnHeight = roomHeight * scale;
 
-  return {
-    scale,
-    offsetX: (canvasWidth - drawnWidth) / 2,
-    offsetY: (canvasHeight - drawnHeight) / 2,
-    drawnWidth,
-    drawnHeight,
-    roomWidth,
-    roomHeight,
-    canvasWidth,
-    canvasHeight,
-  };
+  out.scale = scale;
+  out.offsetX = (canvasWidth - drawnWidth) / 2;
+  out.offsetY = (canvasHeight - drawnHeight) / 2;
+  out.drawnWidth = drawnWidth;
+  out.drawnHeight = drawnHeight;
+  out.roomWidth = roomWidth;
+  out.roomHeight = roomHeight;
+  out.canvasWidth = canvasWidth;
+  out.canvasHeight = canvasHeight;
+  return out;
+}
+
+/**
+ * Fit a room of (roomWidth x roomHeight) into a canvas of
+ * (canvasWidth x canvasHeight) CSS pixels.
+ *
+ * @returns {{ scale: number, offsetX: number, offsetY: number,
+ *             drawnWidth: number, drawnHeight: number,
+ *             roomWidth: number, roomHeight: number,
+ *             canvasWidth: number, canvasHeight: number }}
+ */
+export function computeViewport(roomWidth, roomHeight, canvasWidth, canvasHeight) {
+  return updateViewport({}, roomWidth, roomHeight, canvasWidth, canvasHeight);
 }
 
 /** World (room pixel) coordinates -> screen (canvas CSS pixel) coordinates. */
@@ -120,14 +159,18 @@ export function worldToScreen(point, viewport) {
   };
 }
 
+/** Screen (canvas CSS pixel) coordinates -> world (room pixel) coordinates, into `out`. */
+export function screenToWorldInto(x, y, viewport, out = {}) {
+  requireFinite(x, 'point.x');
+  requireFinite(y, 'point.y');
+  out.x = (x - viewport.offsetX) / viewport.scale;
+  out.y = (y - viewport.offsetY) / viewport.scale;
+  return out;
+}
+
 /** Screen (canvas CSS pixel) coordinates -> world (room pixel) coordinates. Inverse of worldToScreen. */
 export function screenToWorld(point, viewport) {
-  requireFinite(point?.x, 'point.x');
-  requireFinite(point?.y, 'point.y');
-  return {
-    x: (point.x - viewport.offsetX) / viewport.scale,
-    y: (point.y - viewport.offsetY) / viewport.scale,
-  };
+  return screenToWorldInto(point?.x, point?.y, viewport, {});
 }
 
 export default computeViewport;
