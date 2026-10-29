@@ -9,6 +9,10 @@
  *    teleports avatars.
  *  - When `document.hidden` is true, drawing and simulation work are skipped
  *    and the time base is reset so returning to the tab starts cleanly.
+ *  - `resize` events and `matchMedia('(resolution: Ndppx)')` DPR changes are
+ *    coalesced via `needsResize` so the canvas and static layer rebuild at most
+ *    once per animation frame; the DPR watcher re-arms after every monitor/zoom
+ *    transition and tears down completely on `stop()`.
  *  - Owns one `staticLayer` and one `labelCache` per mounted canvas and
  *    releases both on `stop()`.
  */
@@ -22,6 +26,18 @@ import { createStaticLayer } from './staticLayer.js';
  * slow frame or a returning hidden tab from teleporting avatars.
  */
 export const MAX_FRAME_DT_MS = 50;
+
+/**
+ * Build the CSS media query string for watching `devicePixelRatio` changes
+ * (for example when dragging the window to another monitor or zooming).
+ *
+ * @param {number} dpr
+ * @returns {string}
+ */
+export function resolutionMediaQuery(dpr) {
+  const safeDpr = typeof dpr === 'number' && Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  return `(resolution: ${safeDpr}dppx)`;
+}
 
 const scratchClickPoint = { x: 0, y: 0 };
 const scratchClickViewport = {
@@ -95,6 +111,8 @@ export function createCanvasLoop({
   let rafId = 0;
   let hasTimeBase = false;
   let lastFrameTime = 0;
+  let needsResize = false;
+  let currentMql = null;
 
   let appliedBackingWidth = 0;
   let appliedBackingHeight = 0;
@@ -131,6 +149,39 @@ export function createCanvasLoop({
     return true;
   };
 
+  const onResize = () => {
+    needsResize = true;
+  };
+
+  const disarmDprWatcher = () => {
+    if (!currentMql) return;
+    if (typeof currentMql.removeEventListener === 'function') {
+      currentMql.removeEventListener('change', onDprChange);
+    } else if (typeof currentMql.removeListener === 'function') {
+      currentMql.removeListener(onDprChange);
+    }
+    currentMql = null;
+  };
+
+  const armDprWatcher = () => {
+    disarmDprWatcher();
+    if (!running || typeof win.matchMedia !== 'function') return;
+    const mql = win.matchMedia(resolutionMediaQuery(win.devicePixelRatio));
+    if (!mql) return;
+    currentMql = mql;
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', onDprChange);
+    } else if (typeof mql.addListener === 'function') {
+      mql.addListener(onDprChange);
+    }
+  };
+
+  function onDprChange() {
+    if (!running) return;
+    needsResize = true;
+    armDprWatcher();
+  }
+
   const resetTimeBase = () => {
     hasTimeBase = false;
   };
@@ -155,6 +206,11 @@ export function createCanvasLoop({
       resetTimeBase();
       scheduleNextFrame();
       return;
+    }
+
+    if (needsResize) {
+      needsResize = false;
+      syncCanvasSize();
     }
 
     let clampedDtMs = 0;
@@ -186,6 +242,10 @@ export function createCanvasLoop({
     if (!onWorldClick || event?.button !== 0) return;
     const room = worldRef?.current?.room;
     if (!room) return;
+    if (needsResize) {
+      needsResize = false;
+      syncCanvasSize();
+    }
     const rect = canvas.getBoundingClientRect();
     updateViewport(scratchClickViewport, room.width, room.height, view.width, view.height);
     screenToWorldInto(
@@ -201,9 +261,11 @@ export function createCanvasLoop({
     if (running) return;
     running = true;
     hasTimeBase = false;
+    needsResize = false;
     syncCanvasSize();
-    win.addEventListener?.('resize', syncCanvasSize);
+    win.addEventListener?.('resize', onResize);
     doc?.addEventListener?.('visibilitychange', onVisibilityChange);
+    armDprWatcher();
     canvas.addEventListener?.('click', handleClick);
     scheduleNextFrame();
   };
@@ -215,8 +277,9 @@ export function createCanvasLoop({
       hasPendingRaf = false;
       win.cancelAnimationFrame(rafId);
     }
-    win.removeEventListener?.('resize', syncCanvasSize);
+    win.removeEventListener?.('resize', onResize);
     doc?.removeEventListener?.('visibilitychange', onVisibilityChange);
+    disarmDprWatcher();
     canvas.removeEventListener?.('click', handleClick);
     staticLayer.destroy();
     labelCache.clear();
