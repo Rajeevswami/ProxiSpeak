@@ -73,6 +73,7 @@ function defaultPerfNow(win) {
  * @param {((deltaSeconds: number) => void)|null} [options.updateFrame]
  * @param {((ctx: CanvasRenderingContext2D, world: object, view: object) => void)|null} [options.renderFrame]
  * @param {((point: { x: number, y: number }) => void)|null} [options.onWorldClick]
+ * @param {((error: unknown) => void)|null} [options.onError] optional error observer for callback throws
  * @param {HTMLElement|null} [options.perfElement] DOM node whose `textContent` receives the <= 1 Hz `?perf=1` line
  * @param {boolean} [options.perfEnabled] override URL detection in tests
  * @param {object|null} [options.frameStats] injectable `createFrameStats()` instance
@@ -87,6 +88,7 @@ export function createCanvasLoop({
   updateFrame = null,
   renderFrame = null,
   onWorldClick = null,
+  onError = null,
   perfElement = null,
   perfEnabled,
   frameStats: injectedFrameStats = null,
@@ -110,6 +112,7 @@ export function createCanvasLoop({
       getStaticLayer: () => null,
       getLabelCache: () => null,
       getFrameStats: () => null,
+      getErrorCount: () => 0,
     };
   }
 
@@ -149,6 +152,7 @@ export function createCanvasLoop({
   let lastPerfPublishTime = 0;
   let needsResize = false;
   let currentMql = null;
+  let errorCount = 0;
 
   let appliedBackingWidth = 0;
   let appliedBackingHeight = 0;
@@ -245,54 +249,67 @@ export function createCanvasLoop({
       return;
     }
 
-    const workStart = samplingEnabled ? readWorkClock() : 0;
+    try {
+      const workStart = samplingEnabled ? readWorkClock() : 0;
 
-    if (needsResize) {
-      needsResize = false;
-      syncCanvasSize();
-    }
-
-    const hasFiniteNow = typeof now === 'number' && Number.isFinite(now);
-    let rawIntervalMs = EXCLUDED_INTERVAL_MS;
-    let clampedDtMs = 0;
-
-    if (hasTimeBase && hasFiniteNow) {
-      rawIntervalMs = now - lastFrameTime;
-      lastFrameTime = now;
-      if (rawIntervalMs > 0) {
-        clampedDtMs = rawIntervalMs <= MAX_FRAME_DT_MS ? rawIntervalMs : MAX_FRAME_DT_MS;
+      if (needsResize) {
+        needsResize = false;
+        syncCanvasSize();
       }
-    } else if (hasFiniteNow) {
-      lastFrameTime = now;
-      hasTimeBase = true;
-    }
 
-    if (updateFrame) {
-      updateFrame(clampedDtMs / 1000);
-    }
+      const hasFiniteNow = typeof now === 'number' && Number.isFinite(now);
+      let rawIntervalMs = EXCLUDED_INTERVAL_MS;
+      let clampedDtMs = 0;
 
-    if (renderFrame) {
-      renderFrame(ctx, worldRef?.current ?? null, view);
-    } else {
-      drawFrame(ctx, staticLayer, view, worldRef?.current ?? null, labelCache);
-    }
+      if (hasTimeBase && hasFiniteNow) {
+        rawIntervalMs = now - lastFrameTime;
+        lastFrameTime = now;
+        if (rawIntervalMs > 0) {
+          clampedDtMs = rawIntervalMs <= MAX_FRAME_DT_MS ? rawIntervalMs : MAX_FRAME_DT_MS;
+        }
+      } else if (hasFiniteNow) {
+        lastFrameTime = now;
+        hasTimeBase = true;
+      }
 
-    if (samplingEnabled) {
-      const workMs = Math.max(0, readWorkClock() - workStart);
-      frameStats.record(rawIntervalMs, workMs);
+      if (updateFrame) {
+        updateFrame(clampedDtMs / 1000);
+      }
 
-      if (perfElement && hasFiniteNow) {
-        if (!hasPerfPublishBase) {
-          lastPerfPublishTime = now;
-          hasPerfPublishBase = true;
-        } else if (now - lastPerfPublishTime >= PERF_READOUT_INTERVAL_MS) {
-          lastPerfPublishTime = now;
-          perfElement.textContent = formatPerfReadout(frameStats.snapshot());
+      if (renderFrame) {
+        renderFrame(ctx, worldRef?.current ?? null, view);
+      } else {
+        drawFrame(ctx, staticLayer, view, worldRef?.current ?? null, labelCache);
+      }
+
+      if (samplingEnabled) {
+        const workMs = Math.max(0, readWorkClock() - workStart);
+        frameStats.record(rawIntervalMs, workMs);
+
+        if (perfElement && hasFiniteNow) {
+          if (!hasPerfPublishBase) {
+            lastPerfPublishTime = now;
+            hasPerfPublishBase = true;
+          } else if (now - lastPerfPublishTime >= PERF_READOUT_INTERVAL_MS) {
+            lastPerfPublishTime = now;
+            perfElement.textContent = formatPerfReadout(frameStats.snapshot());
+          }
         }
       }
+    } catch (err) {
+      errorCount += 1;
+      if (typeof onError === 'function') {
+        try {
+          onError(err);
+        } catch {
+          // Never allow an error observer to break the rAF callback.
+        }
+      }
+    } finally {
+      if (running) {
+        scheduleNextFrame();
+      }
     }
-
-    scheduleNextFrame();
   }
 
   const handleClick = (event) => {
@@ -350,6 +367,7 @@ export function createCanvasLoop({
     getStaticLayer: () => staticLayer,
     getLabelCache: () => labelCache,
     getFrameStats: () => frameStats,
+    getErrorCount: () => errorCount,
   };
 }
 

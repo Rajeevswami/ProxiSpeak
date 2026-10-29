@@ -525,3 +525,50 @@ test('?perf=1 readout is strictly gated and writes textContent at <= 1 Hz withou
 
   enabledLoop.stop();
 });
+
+test('an exception inside updateFrame or renderFrame never escapes rAF or kills the loop', () => {
+  const env = createFakeEnvironment({ width: 1280, height: 720, dpr: 1 });
+  const worldRef = { current: makeWorld() };
+  const caught = [];
+  let frameIndex = 0;
+  let successfulRenders = 0;
+
+  const loop = createCanvasLoop({
+    canvas: env.canvas,
+    worldRef,
+    updateFrame: () => {
+      frameIndex += 1;
+      if (frameIndex === 2) {
+        throw new Error('simulated updateFrame failure');
+      }
+    },
+    renderFrame: (ctx) => {
+      if (frameIndex === 3) {
+        throw new Error('simulated renderFrame failure');
+      }
+      ctx.fillRect(0, 0, 10, 10);
+      successfulRenders += 1;
+    },
+    onError: (err) => {
+      caught.push(err.message);
+    },
+    window: env.win,
+    document: env.doc,
+    perfNow: env.perfNow,
+    createCanvas: env.createOffscreenCanvas,
+  });
+
+  loop.start();
+  // Frame 1: normal; Frame 2: updateFrame throws; Frame 3: renderFrame throws; Frame 4: normal recovery.
+  for (let i = 0; i < 4; i += 1) {
+    assert.doesNotThrow(() => env.stepFrame(16.67));
+    assert.equal(env.pendingRaf.size, 1, `loop must keep 1 pending rAF after frame ${i + 1}`);
+  }
+
+  assert.equal(loop.getErrorCount(), 2);
+  assert.deepEqual(caught, ['simulated updateFrame failure', 'simulated renderFrame failure']);
+  assert.equal(successfulRenders, 2);
+
+  loop.stop();
+  assert.equal(env.pendingRaf.size, 0);
+});
