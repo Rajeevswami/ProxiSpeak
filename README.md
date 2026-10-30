@@ -177,9 +177,3 @@ MongoDB was unavailable in the verification sandbox (`deb.debian.org` and `fastd
 - `docs/LIMITATIONS.md` — known technical and verification limits
 - `docs/REQUIREMENTS_TRACE.md` — requirement-to-code/test mapping with company plan weeks and delivered calendar weeks
 - `CHANGELOG.md` — dated history and commit hashes
-
-## Known limits and next scope
-
-The peer cap does not evict an existing peer for a closer newcomer, the default ICE configuration is STUN-only, rate limits are instance-local, and live audible/browser frame-pacing quality is unmeasured in this sandbox. Occlusion is pure 2D straight line-of-sight gain reduction on the client (no diffraction, reflection, thickness-based loss, height, movement collision, or server/network stream cutoff). Panning is left/right stereo only, from the 2D position (no head orientation, HRTF, elevation or reverb). Read `docs/RENDERING.md`, `docs/OCCLUSION.md`, and `docs/LIMITATIONS.md` before treating the prototype as more than a demo.
-
-Next planned task: **Week 4 final end-to-end verification, documentation review, and demo polish**.
