@@ -6,6 +6,9 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import config from './config/index.js';
 import logger from './utils/logger.js';
 import { runSpatialAudit, validateAuditParams } from './services/spatialAudit.js';
@@ -13,7 +16,47 @@ import * as defaultRoomService from './services/roomService.js';
 import { TokenBucket } from './utils/rateLimiter.js';
 import { AppError } from './utils/errors.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const DEFAULT_CLIENT_DIST = path.resolve(__dirname, '..', '..', 'client', 'dist');
+
 const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+const HASHED_ASSET_PATTERN = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
+
+function isReservedBackendPath(pathname) {
+  return (
+    pathname === '/api' ||
+    pathname.startsWith('/api/') ||
+    pathname === '/health' ||
+    pathname.startsWith('/health/') ||
+    pathname === '/socket.io' ||
+    pathname.startsWith('/socket.io/')
+  );
+}
+
+function hasPathTraversal(req, rootDir) {
+  const raw = String(req.originalUrl || req.url || '').split('?')[0];
+  if (raw.includes('\0') || raw.includes('\\')) return true;
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(raw)) return true;
+  if (/%2e/i.test(raw) || /%2f/i.test(raw) || /%5c/i.test(raw) || /%00/i.test(raw)) {
+    return true;
+  }
+
+  let decoded;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return true;
+  }
+  if (decoded.includes('\0') || decoded.includes('\\')) return true;
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(decoded)) return true;
+
+  if (rootDir) {
+    const candidate = path.resolve(rootDir, `.${decoded.startsWith('/') ? decoded : `/${decoded}`}`);
+    const rel = path.relative(rootDir, candidate);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return true;
+  }
+  return false;
+}
 
 /**
  * Constant-time string comparison preventing timing side-channel attacks on secret tokens.
@@ -73,7 +116,28 @@ export function createApp({
   scaleState = null,
   roomService: roomSvc = defaultRoomService,
   layoutRateLimiter = createIpRateLimiter({ capacity: 10, refillPerSec: 2 }),
+  clientDistDir,
+  staticDir,
+  distDir,
 } = {}) {
+  const configuredDist = clientDistDir !== undefined
+    ? clientDistDir
+    : staticDir !== undefined
+      ? staticDir
+      : distDir !== undefined
+        ? distDir
+        : DEFAULT_CLIENT_DIST;
+  const resolvedDist = typeof configuredDist === 'string' && configuredDist.trim() !== ''
+    ? path.resolve(configuredDist)
+    : null;
+  const indexHtmlPath = resolvedDist ? path.join(resolvedDist, 'index.html') : null;
+  const hasClientBuild = Boolean(indexHtmlPath && fs.existsSync(indexHtmlPath));
+  if (resolvedDist && !hasClientBuild) {
+    log.warn(
+      `Client build not found at ${resolvedDist} — run "npm run build" to serve the frontend; API and Socket.io remain active`,
+    );
+  }
+
   const app = express();
   app.disable('x-powered-by');
   // Reverse proxies (Nginx, PaaS routers) terminate TLS and forward
@@ -223,6 +287,59 @@ export function createApp({
       return res.status(200).json({ ok: report.ok, audit: report });
     } catch (err) { return next(err); } finally { auditRunning = false; }
   });
+
+  // ---------------------------------------------- Static SPA serving ---
+  if (hasClientBuild) {
+    const staticMiddleware = express.static(resolvedDist, {
+      index: 'index.html',
+      fallthrough: true,
+      redirect: false,
+      dotfiles: 'ignore',
+      setHeaders(res, filePath) {
+        const rel = path.relative(resolvedDist, filePath).split(path.sep).join('/');
+        const base = path.basename(filePath);
+        if (base === 'index.html') {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (rel.startsWith('assets/') || HASHED_ASSET_PATTERN.test(base)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        }
+      },
+    });
+
+    app.use((req, res, next) => {
+      if (isReservedBackendPath(req.path)) return next();
+      if (hasPathTraversal(req, resolvedDist)) {
+        return res.status(400).json({ ok: false, error: 'Invalid path' });
+      }
+      return staticMiddleware(req, res, next);
+    });
+
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (isReservedBackendPath(req.path)) return next();
+      if (hasPathTraversal(req, resolvedDist)) {
+        return res.status(400).json({ ok: false, error: 'Invalid path' });
+      }
+      const segments = req.path.split('/').filter(Boolean);
+      if (segments.some((seg) => seg.startsWith('.'))) return next();
+      const ext = path.posix.extname(req.path);
+      if (ext !== '' && req.path !== '/index.html') return next();
+
+      res.setHeader('Cache-Control', 'no-cache');
+      return res.sendFile(indexHtmlPath, (err) => {
+        if (err) next(err);
+      });
+    });
+  } else {
+    app.use((req, res, next) => {
+      if (!isReservedBackendPath(req.path) && hasPathTraversal(req, resolvedDist)) {
+        return res.status(400).json({ ok: false, error: 'Invalid path' });
+      }
+      return next();
+    });
+  }
 
   app.use((req, res) => {
     res.status(404).json({ ok: false, error: `No route for ${req.method} ${req.path}` });
