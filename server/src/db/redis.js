@@ -16,7 +16,7 @@ import Redis from 'ioredis';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 
-export const VALID_SCALE_MODES = new Set(['single', 'redis', 'redis-degraded']);
+const VALID_SCALE_MODES = new Set(['single', 'redis', 'redis-degraded']);
 
 /**
  * Redact every credential form from a Redis connection string:

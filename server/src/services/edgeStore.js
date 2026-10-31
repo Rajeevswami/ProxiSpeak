@@ -26,9 +26,9 @@
 
 import config from '../config/index.js';
 
-export const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
-export const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-export const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
+const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
 
 export function validateRoomId(roomId) {
   if (typeof roomId !== 'string' || !ROOM_ID_PATTERN.test(roomId)) {

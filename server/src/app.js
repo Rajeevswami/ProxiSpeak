@@ -17,7 +17,7 @@ import { TokenBucket } from './utils/rateLimiter.js';
 import { AppError } from './utils/errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_CLIENT_DIST = path.resolve(__dirname, '..', '..', 'client', 'dist');
+const DEFAULT_CLIENT_DIST = path.resolve(__dirname, '..', '..', 'client', 'dist');
 
 const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const HASHED_ASSET_PATTERN = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
@@ -101,7 +101,7 @@ export function createIpRateLimiter({ capacity = 10, refillPerSec = 2, maxIps = 
  * Non-browser callers (curl, health probes) send no Origin and are always
  * served regardless — CORS is a browser protection, not authentication.
  */
-export function httpCorsOrigin(cfg = config) {
+function httpCorsOrigin(cfg = config) {
   const origins = cfg.server.clientOrigins;
   if (origins.includes('*')) return true;
   if (origins.length > 0) return origins;

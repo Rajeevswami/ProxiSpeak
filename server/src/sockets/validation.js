@@ -17,7 +17,7 @@ const ROOM_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 /** Control characters would end up echoed to other clients — never allow them. */
 const SAFE_NAME = /^[^\u0000-\u001f\u007f]+$/;
 
-export const MAX_ROOM_ID_LENGTH = 48;
+const MAX_ROOM_ID_LENGTH = 48;
 export const MAX_NAME_LENGTH = 24;
 
 /** `join` -> { roomId, name }. Both fields are required. */
@@ -89,7 +89,7 @@ export default validateJoinPayload;
  * is relayed. Nothing here inspects or interprets media.
  */
 export const MAX_SIGNAL_BYTES = 16 * 1024;
-export const MAX_SIGNAL_STRING_LENGTH = MAX_SIGNAL_BYTES;
+const MAX_SIGNAL_STRING_LENGTH = MAX_SIGNAL_BYTES;
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'candidate']);

@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 
 import { distanceBetween, gainForDistance } from '../src/audio/attenuation.js';
 import {
-  createObstacleCache,
   derivePeerVolume,
   prepareObstacles,
   segmentIntersectsRect,

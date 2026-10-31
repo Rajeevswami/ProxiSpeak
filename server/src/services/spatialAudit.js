@@ -81,7 +81,7 @@ export const bruteNearby = (users, center, radiusPx) => users
   .map((u) => ({ id: u.sessionId, distancePx: distancePx(center.x, center.y, u.x, u.y) }))
   .filter((u) => u.distancePx <= radiusPx)
   .sort((a, b) => a.distancePx - b.distancePx || a.id.localeCompare(b.id));
-export const bruteCount = (users, center, radiusPx) =>
+const bruteCount = (users, center, radiusPx) =>
   users.filter((u) => distancePx(center.x, center.y, u.x, u.y) <= radiusPx).length;
 export function bruteClusters(users, radiusPx) {
   const sorted = [...users].sort((a, b) => a.sessionId.localeCompare(b.sessionId));
@@ -121,7 +121,7 @@ async function explainUsesIndex(query) {
   return { uses2dsphere: /2dsphere/.test(plan), collscan: /COLLSCAN/.test(plan), plan: plan.slice(0, 500) };
 }
 
-export async function cleanupAuditRoom(roomId) {
+async function cleanupAuditRoom(roomId) {
   await UserPresence.deleteMany({ roomId });
   return UserPresence.countDocuments({ roomId });
 }

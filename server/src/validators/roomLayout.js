@@ -6,14 +6,14 @@ import { ValidationError } from '../utils/errors.js';
 import { isPlainObject } from '../utils/validate.js';
 
 export const OBSTACLE_TYPES = Object.freeze(['wall', 'desk', 'plant', 'pillar', 'screen']);
-export const OBSTACLE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const OBSTACLE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const DEFAULT_MAX_OBSTACLES = 200;
 
-export const ALLOWED_OBSTACLE_KEYS = Object.freeze(
+const ALLOWED_OBSTACLE_KEYS = Object.freeze(
   new Set(['id', 'type', 'x', 'y', 'w', 'h', 'blocksAudio', 'attenuation']),
 );
 
-export const ALLOWED_LAYOUT_KEYS = Object.freeze(
+const ALLOWED_LAYOUT_KEYS = Object.freeze(
   new Set(['expectedRevision', 'obstacles', 'name', 'description']),
 );
 

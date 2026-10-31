@@ -50,7 +50,7 @@ async function handleShow(roomId) {
   console.log(JSON.stringify(room, null, 2));
 }
 
-async function handleSave(roomId, filePath, dryRun) {
+async function handleSave(roomId, filePath) {
   const resolvedPath = path.resolve(process.cwd(), filePath);
   const raw = fs.readFileSync(resolvedPath, 'utf8');
   const fileContent = JSON.parse(raw);
@@ -127,7 +127,7 @@ async function main() {
     if (action === 'show') {
       await handleShow(roomId);
     } else {
-      await handleSave(roomId, filePath, dryRun);
+      await handleSave(roomId, filePath);
     }
   } finally {
     await disconnectMongo().catch(() => {});
