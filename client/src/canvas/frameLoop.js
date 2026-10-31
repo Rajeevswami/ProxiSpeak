@@ -159,9 +159,12 @@ export function createCanvasLoop({
   let appliedCssWidth = 0;
   let appliedCssHeight = 0;
   let appliedDpr = 0;
+  let appliedRawDpr = 0;
 
   const syncCanvasSize = () => {
-    updateCanvasSize(view, win.innerWidth, win.innerHeight, win.devicePixelRatio || 1);
+    const rawDpr = win.devicePixelRatio || 1;
+    updateCanvasSize(view, win.innerWidth, win.innerHeight, rawDpr);
+    appliedRawDpr = rawDpr;
     if (
       view.backingWidth === appliedBackingWidth
       && view.backingHeight === appliedBackingHeight
@@ -218,6 +221,7 @@ export function createCanvasLoop({
 
   function onDprChange() {
     if (!running) return;
+    appliedRawDpr = win.devicePixelRatio || 1;
     needsResize = true;
     armDprWatcher();
   }
@@ -252,9 +256,14 @@ export function createCanvasLoop({
     try {
       const workStart = samplingEnabled ? readWorkClock() : 0;
 
-      if (needsResize) {
+      const currentRawDpr = win.devicePixelRatio || 1;
+      const silentDprChange = appliedRawDpr > 0 && currentRawDpr !== appliedRawDpr;
+      if (needsResize || silentDprChange) {
         needsResize = false;
         syncCanvasSize();
+        if (silentDprChange) {
+          armDprWatcher();
+        }
       }
 
       const hasFiniteNow = typeof now === 'number' && Number.isFinite(now);
