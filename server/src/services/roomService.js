@@ -57,7 +57,7 @@ const prettyRoomName = (roomId) =>
     .join(' ') || 'Lobby';
 
 /** Normalise a mongoose doc / plain object into the wire format used by clients. */
-export function toRoomWire(doc) {
+function toRoomWire(doc) {
   return {
     roomId: doc.roomId,
     name: doc.name,

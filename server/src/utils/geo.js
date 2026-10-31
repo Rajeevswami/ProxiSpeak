@@ -12,7 +12,7 @@
  *   => 100 px of "earshot" is exactly 10 m to MongoDB.
  */
 
-export const EARTH_RADIUS_M = 6378138.1;
+const EARTH_RADIUS_M = 6378138.1;
 const DEG = Math.PI / 180;
 
 export const distancePx = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);

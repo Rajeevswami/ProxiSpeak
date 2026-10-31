@@ -342,6 +342,16 @@ test('watches DPR changes via matchMedia, re-arms after each change, and cleans 
   assert.equal(env.canvas.height, 1000);
   assert.equal(loop.getStaticLayer().getBuildCount(), 2);
 
+  // Silent DPR change (e.g. Chromium CDP Emulation.setDeviceMetricsOverride) where
+  // window.devicePixelRatio changes without firing MediaQueryList 'change'.
+  env.win.devicePixelRatio = 1.5;
+  env.stepFrame(16.67);
+  assert.equal(env.canvas.width, 1500);
+  assert.equal(env.canvas.height, 750);
+  assert.equal(loop.getStaticLayer().getBuildCount(), 3);
+  assert.equal(env.mediaQueries.length, 3, 're-armed MediaQueryList on silent DPR change');
+  assert.equal(env.mediaQueries[2].media, '(resolution: 1.5dppx)');
+
   loop.stop();
   assert.equal(env.countMediaQueryListeners(), 0);
 });

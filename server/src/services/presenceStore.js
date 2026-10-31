@@ -13,7 +13,7 @@ import { livePresenceFilter } from './proximityService.js';
 import UserPresence from '../models/UserPresence.js';
 
 /** Everything needed to rebuild a MongoDB document for one user. */
-export function toPresenceDocument(user, transform) {
+function toPresenceDocument(user, transform) {
   const [lon, lat] = transform.pixelToGeo(user.x, user.y);
   return {
     sessionId: user.id,

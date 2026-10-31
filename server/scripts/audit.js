@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /** CLI: npm run audit [-- --users=50 --samples=25 --seed=1]. Exit 1 on FAIL. */
 import mongoose from 'mongoose';
-import config from '../src/config/index.js';
 import { connectMongo, disconnectMongo, ensureIndexes } from '../src/db/mongo.js';
 import { runSpatialAudit } from '../src/services/spatialAudit.js';
 

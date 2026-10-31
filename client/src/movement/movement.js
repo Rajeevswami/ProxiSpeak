@@ -166,7 +166,7 @@ export function moveTowardTarget(position, target, deltaSeconds, speedPxPerSec, 
 }
 
 /** Distance between a position and a point. */
-export function distanceTo(position, x, y) {
+function distanceTo(position, x, y) {
   return Math.hypot(x - position.x, y - position.y);
 }
 

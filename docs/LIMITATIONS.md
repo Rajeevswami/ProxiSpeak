@@ -1,6 +1,6 @@
 # Known Limitations
 
-Scope: end of **Week 3 (Day 18)** (`2026-10-29`, covering Company Plan Weeks 1–4 deliverables built through Day 18). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
+Scope: **Final Project Review** (`2026-10-31`, covering the complete ProxiSpeak ecosystem through 60 FPS Canvas Rendering, Single-Origin Production Serving, Deployment Preparation, and Hardening). These are limits of the current implementation and of the checks actually run in this environment—not claims about what a browser or another deployment must do.
 
 ## Audio and browser behavior
 
@@ -12,7 +12,7 @@ The scale and mesh checks use Socket.io clients and signaling payloads; they do 
 
 ### STUN-only default; no provisioned TURN
 
-The example ICE configuration contains public STUN only (`stun:stun.l.google.com:19302`). Restrictive or symmetric NATs can prevent direct peer connections. No TURN service or SFU is provisioned or tested.
+The example ICE configuration contains public STUN only (`stun:stun.l.google.com:19302`). Restrictive or symmetric NATs (such as college/university Wi-Fi, corporate firewalls, or mobile carrier NATs) can prevent direct peer connections. No TURN relay service or SFU media server is provisioned or tested (outside the project specification).
 
 ### No custom ICE restart policy
 
@@ -24,7 +24,7 @@ The hint covers `suspended` and `interrupted`; Join, page pointer, and visible-t
 
 ### Line-of-sight-only occlusion; no movement collision or frequency filtering
 
-In **Week 3 (Days 15–16, company plan Week 4)**, room layouts and furniture/wall obstacles are persisted in MongoDB with optimistic concurrency (`layoutRevision`), validated schemas, real-time `room:layout` live sync, and client-side straight-line `GainNode` sound occlusion (`docs/OCCLUSION.md`). Remaining limits:
+Room layouts and furniture/wall obstacles are persisted in MongoDB with optimistic concurrency (`layoutRevision`), validated schemas, real-time `room:layout` live sync, and client-side straight-line `GainNode` sound occlusion (`docs/OCCLUSION.md`). Remaining limits:
 
 - **Line-of-sight ray only**: Occlusion tests a single 2D straight line segment between peer centers using multiplicative `GainNode` transmission (`gainForDistance(d) * T`); there is no wave diffraction around corners, thickness-dependent attenuation, height/elevation, frequency-dependent low-pass filtering (`BiquadFilterNode`), or acoustic reflection/reverb.
 - **Client-side gain only**: Blocked peers inside `PEER_DISCONNECT_RADIUS_PX` remain WebRTC-connected so unblocking is instant without ICE renegotiation; network bandwidth is still consumed while occluded.
@@ -32,7 +32,7 @@ In **Week 3 (Days 15–16, company plan Week 4)**, room layouts and furniture/wa
 
 ### Stereo panning without head orientation or HRTF
 
-In **Week 3 (Day 17, company plan Week 4)**, each peer's audio chain (`MediaStreamAudioSourceNode -> StereoPannerNode -> GainNode -> destination`) pans left/right from relative 2D screen coordinates (`pan = 0.85 * dx / max(dist, 30)`, `docs/PANNING.md`). Remaining limits:
+Each peer's audio chain (`MediaStreamAudioSourceNode -> StereoPannerNode -> GainNode -> destination`) pans left/right from relative 2D screen coordinates (`pan = 0.85 * dx / max(dist, 30)`, `docs/PANNING.md`). Remaining limits:
 
 - **No head orientation / avatar facing**: Avatars have no facing angle in the protocol; larger world `x` is always heard toward the right ear and smaller `x` toward the left ear.
 - **No HRTF, elevation, or front/back cues**: Uses Web Audio `StereoPannerNode` equal-power stereo panning, not a 3D HRTF `PannerNode`, vertical elevation, Doppler, or room reverb. When `createStereoPanner` is unavailable, audio falls back cleanly to centred mono attenuation.
@@ -41,7 +41,7 @@ In **Week 3 (Day 17, company plan Week 4)**, each peer's audio chain (`MediaStre
 
 ### `requestAnimationFrame` follows the display refresh rate
 
-In **Week 3 (Day 18, company plan Week 4)**, `createCanvasLoop` (`client/src/canvas/frameLoop.js`, `docs/RENDERING.md`) caches the static room on an offscreen `<canvas>` and runs a single `requestAnimationFrame` callback:
+`createCanvasLoop` (`client/src/canvas/frameLoop.js`, `docs/RENDERING.md`) caches the static room on an offscreen `<canvas>` and runs a single `requestAnimationFrame` callback:
 
 - **Display-governed cadence (`rAF` follows the panel)**: Browser `requestAnimationFrame` fires at the display's native refresh rate (e.g., `60 Hz` on standard panels, `120 Hz` / `144 Hz` on ProMotion/high-refresh displays, or `30 Hz` under OS low-power throttling). The loop neither synthesizes frames faster than the display nor artificially throttles `120/144 Hz` panels down to `60 Hz`; movement uses elapsed rAF timestamps (`dt` clamped to `MAX_FRAME_DT_MS = 50` ms) so world speed is identical across refresh rates.
 - **Dropped-frame threshold calibration**: `DROPPED_FRAME_MS = 25` assumes a `>= 60 Hz` panel (`16.67 ms` refresh). On a `30 Hz` power-saving display (`33.3 ms` refresh), every interval exceeds `25 ms` even without missed refreshes.
@@ -72,11 +72,11 @@ Each joined Socket.io session and its local socket state belong to the Node proc
 
 ### Redis is optional, but normal operation still needs MongoDB
 
-An empty `REDIS_URL` selects in-memory single-instance edge state. It does not replace MongoDB presence/geospatial/room storage. If MongoDB is unavailable, the normal server does not accept traffic.
+An empty `REDIS_URL` selects in-memory single-instance edge state. It does not replace MongoDB presence/geospatial/room storage. If MongoDB is unavailable, the normal server (`npm start`) does not accept traffic.
 
 ### Degraded Redis mode and full Redis wipes
 
-During Redis failure, already-established WebRTC media is peer-to-peer in principle, while cross-instance broadcasts and shared edge mutations degrade until reconnect reconciliation runs. A full Redis wipe (`FLUSHALL`) rebuilds current edges with monotonic generations above surviving floors rather than restoring historical Redis records.
+During Redis failure, already-established WebRTC media is peer-to-peer in principle, while cross-instance broadcasts and shared edge mutations degrade until reconnect reconciliation runs (moves during a Redis outage log a `WARN` on the server and emit a `server_error` notice to the client without dropping the socket). A full Redis wipe (`FLUSHALL`) rebuilds current edges with monotonic generations above surviving floors rather than restoring historical Redis records.
 
 ### Crash cleanup, position fencing, and Redis key / RSS growth watch items
 
@@ -100,15 +100,16 @@ Origin checks (`CLIENT_URL`) restrict browser cross-origin requests (same-origin
 
 ### Dependency audit status
 
-On `2026-10-29`, `npm audit --prefix client` reports `0` vulnerabilities, and `npm audit --prefix server` reports `1` **moderate** advisory in transitive `qs` (`6.7.0 - 6.16.0`, `GHSA-6pq8-jhm2-2vcw`, `0` high/critical; `npm audit fix` without `--force` resolves `qs` `6.16.0 -> 6.16.2`, left untouched during client-only Days 16–18 scope).
+On `2026-10-31`, both `npm audit --prefix server` and `npm audit --prefix client` report **`0` vulnerabilities** (`qs` patched to `6.16.2` and `vite` patched to `6.4.5` via `npm audit fix` without `--force`).
 
-### No deployment configuration or static bundle hosting
+### Single-origin hosting vs. excluded infrastructure
 
-There is no Dockerfile, cloud manifest, Express static serving of `client/dist/`, SFU, or TURN server in this repository.
+Express serves `client/dist/` directly on the same origin as `/api/*`, `/health`, and `/socket.io`, with `railway.json` and `docs/DEPLOY.md` provided for cloud deployment. Dockerfiles, Kubernetes manifests, SFU media servers, and TURN relay servers are intentionally excluded per the project specification.
 
-## Verification limits in this sandbox (`2026-10-29`)
+## Verification limits in this sandbox (`2026-10-31`)
 
-- Without services: server **191 passed / 77 skipped** (`268` tests); client **224 passed / 0 skipped** (`224` tests).
-- With real Redis (`redis-server` `6.2.14`): server **228 passed / 40 skipped** (`268` tests); client **224 passed / 0 skipped**.
+- Without services: server **197 passed / 77 skipped** (`274` tests); client **224 passed / 0 skipped** (`224` tests).
+- With real Redis (`redis-server` `6.2.14`): server **234 passed / 40 skipped** (`274` tests); client **224 passed / 0 skipped** (`224` tests).
 - Embedded two-instance Redis `mesh-check` passed **37/37**.
-- All `40` remaining server skips require MongoDB (`mongod` unavailable under sandbox egress rules). Real MongoDB spatial audits, Mongo-backed server/CLI runs, two-browser audible audio, and real-browser 60 FPS GPU compositing remain **NOT VERIFIED** here. See `docs/ROOM_PERSISTENCE.md`, `docs/OCCLUSION.md`, `docs/PANNING.md`, `docs/RENDERING.md`, and `docs/REQUIREMENTS_TRACE.md`.
+- Single-origin production-mode HTTP + static + SPA + Socket.io smoke test passed on `0.0.0.0`.
+- All `40` remaining server skips require MongoDB (`mongod` unavailable under sandbox egress rules). Real MongoDB spatial audits, Mongo-backed `npm start` / `npm run seed` / `room-layout` CLI runs, two-browser audible audio, and real-browser 60 FPS GPU compositing remain **NOT VERIFIED** here. See `docs/DEPLOY.md`, `docs/DEMO_FINAL.md`, `docs/ROOM_PERSISTENCE.md`, `docs/OCCLUSION.md`, `docs/PANNING.md`, `docs/RENDERING.md`, and `docs/REQUIREMENTS_TRACE.md`.

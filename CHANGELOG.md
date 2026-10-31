@@ -898,3 +898,50 @@ covered and unchanged.
 
 * Client Canvas render path only. `server/`, `client/src/audio/`, WebRTC modules, Socket.io protocol, and environment variables are completely untouched. No new dependencies, no WebGL/OffscreenCanvas workers, no dirty-flag frame skipping, and no visual look changes.
 
+
+
+## 2026-10-31 — Single-Origin Production Serving, Deployment Preparation, Hardening, and Final Documentation
+
+*Commits: `b50c235`, `13e7fdf`, `4feb253`, `a7371c8`, `dae4910`, `8b16239`, `7fff589`, `a04cb33`, `cd8c22b`, `f3fde00`, `4d9e24e`, `3f530ea` (this documentation commit follows them and is not self-listed)*
+
+**Added**
+
+* Single-origin static bundle serving and SPA fallback in `server/src/app.js` (`b50c235`):
+  - Serves `client/dist/` (`DEFAULT_CLIENT_DIST`, configurable via `clientDistDir`/`staticDir`/`distDir` in tests) from the Express process.
+  - Sends `Cache-Control: public, max-age=31536000, immutable` for Vite hashed assets under `/assets/*` and `Cache-Control: no-cache` for `index.html`.
+  - Registers a `GET`/`HEAD` SPA fallback *after* `/health` and `/api/*` routes that never swallows `/api/*`, `/health`, `/socket.io`, or dotfile/extension asset paths (unknown `/api/*` paths continue returning JSON `404`).
+  - Blocks raw and URL-encoded path traversal (`..`, `%2e%2e`, backslashes, NUL bytes) before touching `express.static` or `sendFile`.
+  - Logs one concise warning when `client/dist/index.html` is absent while keeping `/health`, `/api/*`, and Socket.io fully operational.
+* Root build orchestration and Railway deployment config (`13e7fdf`):
+  - Updated root `npm run build` (`npm run install:all && npm --prefix client run build`) so a clean clone builds in one command, adding `npm run build:client` for client-only rebuilds.
+  - Added minimal `railway.json` (`buildCommand: "npm run build"`, `startCommand: "npm start"`, `healthcheckPath: "/health"`, `restartPolicyType: "ON_FAILURE"`).
+* Static-serving and SPA fallback test coverage in `server/test/app.test.js` (`4feb253`):
+  - Added tests covering `GET /` (`index.html` + `no-cache`), hashed asset immutable headers, deep-link SPA fallback (`/rooms/lobby/deep-link`), `HEAD` requests on `/` and deep links, `/api/unknown` JSON `404` preservation, `/socket.io` WebSocket handshake on the shared port, path traversal blocking, and missing-`dist` fallback + single warning log.
+* Deployment & final review documentation (`a7371c8` and this commit):
+  - `docs/DEPLOY.md`: step-by-step free-tier deployment guide (MongoDB Atlas `M0`, GitHub push, Railway service, required/optional env vars, local `npm run seed` against Atlas, `/health`, local production mode, HTTPS requirement for `getUserMedia`, free-tier sleep/cost notes, single-instance vs. Redis/sticky sessions, STUN-only NAT limits, rollback, and troubleshooting table).
+  - `docs/DEMO_FINAL.md`: 10-minute Final Project Review live demonstration script mapped to both final review targets.
+  - `docs/INDEX.md`: complete documentation index.
+
+**Changed & Fixed (Hardening)**
+
+* Dependency audit remediation (`dae4910`): ran `npm audit fix` (without `--force`) in `server/` and `client/`, updating transitive `qs` (`6.16.0 -> 6.16.2`) and `vite` (`6.4.4 -> 6.4.5`); both `npm audit --prefix server` and `npm audit --prefix client` now report `0` vulnerabilities.
+* Concise Mongoose `Room.obstacles` validation errors (`8b16239`): replaced `{VALUE}` in `server/src/models/Room.js` custom validator with `this?._obstaclesValidationMessage || 'Room obstacles failed validation'` so validation errors report the exact offending field without dumping the entire obstacle array (`server/test/roomLayout.validation.test.js`).
+* Redis-outage move log severity (`7fff589`): lowered the server log level for a failed `move` / peer sync during a Redis outage in `server/src/sockets/index.js` from `ERROR` to `WARN` while keeping sockets connected and preserving the client `error` (`server_error`) event (`server/test/redis.failure.test.js`).
+* Dead-code and unused-export cleanup (`a04cb33`): removed 18 unused internal exports across `server/src/` and `client/src/` and 2 unused script imports after verifying no module or test referenced them.
+* Silent `devicePixelRatio` change detection (`3f530ea`): `client/src/canvas/frameLoop.js` now also compares `win.devicePixelRatio` against the last applied raw DPR on each frame so environments (such as Chromium DevTools / CDP `Emulation.setDeviceMetricsOverride`) that mutate `window.devicePixelRatio` without firing `MediaQueryList` `'change'` still resize the canvas backing store, rebuild the offscreen static layer, and re-arm the `matchMedia` watcher (`client/test/frameLoop.test.js`).
+* Rewrote `README.md` as one coherent reference document and synced `docs/LIMITATIONS.md` and `docs/REQUIREMENTS_TRACE.md`.
+
+**Verified in this environment (2026-10-31)**
+
+* `npm run build` (`npm run install:all && npm --prefix client run build`) succeeded cleanly (Vite `6.4.5`, 86 modules).
+* `npm audit --prefix server` and `npm audit --prefix client`: **0 vulnerabilities** in both packages.
+* Without external services: server **197 passed / 77 skipped** (`274` tests); client **224 passed / 0 skipped** (`224` tests).
+* With real `redis-server` `6.2.14` (`REDIS_URL_TEST="redis://127.0.0.1:6399"`): server **234 passed / 40 skipped** (`274` tests); client **224 passed / 0 skipped** (`224` tests); embedded two-instance Redis `mesh-check` **37/37 passed**.
+* Single-origin production-mode smoke test (`NODE_ENV=production CLIENT_URL=` bound to `0.0.0.0`): verified `GET /` (`200 text/html`, `no-cache`), `GET /assets/index-*.js` (`200`, `immutable`), `GET /health` (`200 application/json`), `GET /api/unknown` (`404 application/json`), and real `socket.io-client` connection on the same port.
+
+**NOT VERIFIED here**
+
+* MongoDB (`mongod`) is unavailable under sandbox egress rules, so the `40` MongoDB-backed server tests, `npm run seed`, `npm run audit`, and MongoDB-backed `npm start` remain **NOT VERIFIED** here.
+* No browser binary or audio hardware is available in this sandbox, so two-browser audible WebRTC playback, wall occlusion hearing checks, stereo headphone separation, and 60-second GPU 60 FPS frame pacing remain **NOT VERIFIED** here.
+
+

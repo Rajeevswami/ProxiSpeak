@@ -7,7 +7,7 @@
  */
 import { ValidationError } from './errors.js';
 
-export const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 export const isPlainObject = (value) =>
   typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
 

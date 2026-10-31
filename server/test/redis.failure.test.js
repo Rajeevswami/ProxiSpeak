@@ -174,18 +174,22 @@ test('mid-run Redis kill enters "redis-degraded", never drops sockets, and autom
   let redisDaemon = await spawnEphemeralRedisServer(redisPort);
 
   const backing = createSharedClusterBacking();
+  const logA = createMemoryLogger();
+  const logB = createMemoryLogger();
   const keyPrefix = `outage_${process.pid}`;
   const nodeA = await startClusterNode({
     instanceId: 'outage-a',
     redisUrl: `redis://127.0.0.1:${redisPort}`,
     keyPrefix,
     backing,
+    logger: logA,
   });
   const nodeB = await startClusterNode({
     instanceId: 'outage-b',
     redisUrl: `redis://127.0.0.1:${redisPort}`,
     keyPrefix,
     backing,
+    logger: logB,
   });
   t.after(async () => {
     await nodeA.close();
@@ -259,13 +263,37 @@ test('mid-run Redis kill enters "redis-degraded", never drops sockets, and autom
   assert.equal(healthB.scaleMode, 'redis-degraded');
 
   // Move Carol & Dan within 40 px WHILE Redis is completely dead:
-  // neither server crashes, no socket drops, and no partial edge forms yet.
+  // neither server crashes, no socket drops, the error event to the client stays,
+  // and the failed move is logged at WARN level rather than ERROR.
+  const carolMoveError = waitEvent(carol, 'error');
+  const danMoveError = waitEvent(dan, 'error');
   carol.emit('move', { x: 500, y: 800 });
   dan.emit('move', { x: 540, y: 800 });
-  await delay(150);
+  const [errCarol, errDan] = await Promise.all([carolMoveError, danMoveError]);
+  assert.equal(errCarol.code, 'server_error');
+  assert.equal(errDan.code, 'server_error');
+  await delay(100);
   assert.equal(anyDisconnected, false, 'zero sockets disconnect during Redis outage');
   assert.equal(carolConnects.length, 0, 'no cross-instance edge formed while Redis is dead');
   assert.equal(danConnects.length, 0);
+  assert.ok(
+    logA.entries.some((e) => e.level === 'warn' && e.text.includes('move failed:')),
+    'nodeA logs failed move during Redis outage at WARN level',
+  );
+  assert.ok(
+    logB.entries.some((e) => e.level === 'warn' && e.text.includes('move failed:')),
+    'nodeB logs failed move during Redis outage at WARN level',
+  );
+  assert.equal(
+    logA.entries.filter((e) => e.level === 'error').length,
+    0,
+    'nodeA emits zero ERROR logs for failed move during Redis outage',
+  );
+  assert.equal(
+    logB.entries.filter((e) => e.level === 'error').length,
+    0,
+    'nodeB emits zero ERROR logs for failed move during Redis outage',
+  );
 
   // RESTART REDIS ON THE SAME PORT -> automatic reconnect + reconcileLocalUsers()!
   const reconciledConnect = Promise.all([

@@ -20,7 +20,7 @@ const ObstacleSchema = new mongoose.Schema(
     /** Fraction of sound amplitude that survives crossing this obstacle (0.12 = heavy wall). */
     attenuation: { type: Number, default: 0.2, min: 0, max: 1, cast: false },
   },
-  { _id: false, strict: 'throw' },
+  { _id: false, strict: false },
 );
 
 const RoomSchema = new mongoose.Schema(
@@ -41,36 +41,39 @@ const RoomSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false },
 );
 
-RoomSchema.path('obstacles').validate(function validateRoomObstacles(obstacles) {
-  if (!Array.isArray(obstacles)) return false;
+RoomSchema.path('obstacles').validate(
+  function validateRoomObstacles(obstacles) {
+    if (!Array.isArray(obstacles)) return false;
 
-  const plainObstacles = obstacles.map((obs) => (
-    obs && typeof obs.toObject === 'function' ? obs.toObject() : obs
-  ));
+    const plainObstacles = obstacles.map((obs) => (
+      obs && typeof obs.toObject === 'function' ? obs.toObject({ minimize: false }) : obs
+    ));
 
-  let width = this?.width;
-  let height = this?.height;
-  if ((!Number.isFinite(width) || !Number.isFinite(height)) && typeof this?.getUpdate === 'function') {
-    const update = this.getUpdate() ?? {};
-    const setObj = update.$set ?? update;
-    if (Number.isFinite(setObj.width)) width = setObj.width;
-    if (Number.isFinite(setObj.height)) height = setObj.height;
-  }
+    let width = this?.width;
+    let height = this?.height;
+    if ((!Number.isFinite(width) || !Number.isFinite(height)) && typeof this?.getUpdate === 'function') {
+      const update = this.getUpdate() ?? {};
+      const setObj = update.$set ?? update;
+      if (Number.isFinite(setObj.width)) width = setObj.width;
+      if (Number.isFinite(setObj.height)) height = setObj.height;
+    }
 
-  const roomBounds = Number.isFinite(width) && Number.isFinite(height)
-    ? { width, height }
-    : null;
+    const roomBounds = Number.isFinite(width) && Number.isFinite(height)
+      ? { width, height }
+      : null;
 
-  validateLayoutPayload(
-    { obstacles: plainObstacles },
-    {
-      room: roomBounds,
-      maxObstacles: config.room.maxObstacles,
-      requireExpectedRevision: false,
-    },
-  );
-  return true;
-});
+    validateLayoutPayload(
+      { obstacles: plainObstacles },
+      {
+        room: roomBounds,
+        maxObstacles: config.room.maxObstacles,
+        requireExpectedRevision: false,
+      },
+    );
+    return true;
+  },
+  (props) => props.reason?.message || 'Invalid room obstacles layout',
+);
 
 export const Room = mongoose.models.Room || mongoose.model('Room', RoomSchema);
 

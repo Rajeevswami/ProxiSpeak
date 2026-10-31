@@ -214,7 +214,7 @@ export function avatarLabel(user, selfId) {
 }
 
 /** Cap on drawn label length: server names run to 24 chars, plus " (you)". */
-export const MAX_AVATAR_LABEL_CHARS = 18;
+const MAX_AVATAR_LABEL_CHARS = 18;
 
 /** Truncate a drawn label with an ellipsis so long names cannot sprawl. */
 export function truncateLabel(text, maxChars = MAX_AVATAR_LABEL_CHARS) {

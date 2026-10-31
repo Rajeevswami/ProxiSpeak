@@ -439,5 +439,10 @@ test('Room Mongoose model enforces shared layout validator rules on validateSync
     const doc = new Room({ roomId: 'lobby', width: 1920, height: 1080, obstacles: c.obstacles });
     const err = doc.validateSync();
     assert.ok(err, `Expected Room.validateSync() to reject case: ${c.label}`);
+    assert.doesNotMatch(
+      err.message,
+      /Validator failed for path|attenuation:\s*0\.2/,
+      `Model validation error for "${c.label}" must not dump whole obstacle objects: ${err.message}`,
+    );
   }
 });
