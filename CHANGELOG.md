@@ -902,7 +902,7 @@ covered and unchanged.
 
 ## 2026-10-31 — Single-Origin Production Serving, Deployment Preparation, Hardening, and Final Documentation
 
-*Commits: `b50c235`, `13e7fdf`, `4feb253`, `a7371c8`, `dae4910`, `8b16239`, `7fff589`, `a04cb33` (this documentation commit follows them and is not self-listed)*
+*Commits: `b50c235`, `13e7fdf`, `4feb253`, `a7371c8`, `dae4910`, `8b16239`, `7fff589`, `a04cb33`, `cd8c22b`, `f3fde00`, `4d9e24e`, `3f530ea` (this documentation commit follows them and is not self-listed)*
 
 **Added**
 
@@ -928,6 +928,7 @@ covered and unchanged.
 * Concise Mongoose `Room.obstacles` validation errors (`8b16239`): replaced `{VALUE}` in `server/src/models/Room.js` custom validator with `this?._obstaclesValidationMessage || 'Room obstacles failed validation'` so validation errors report the exact offending field without dumping the entire obstacle array (`server/test/roomLayout.validation.test.js`).
 * Redis-outage move log severity (`7fff589`): lowered the server log level for a failed `move` / peer sync during a Redis outage in `server/src/sockets/index.js` from `ERROR` to `WARN` while keeping sockets connected and preserving the client `error` (`server_error`) event (`server/test/redis.failure.test.js`).
 * Dead-code and unused-export cleanup (`a04cb33`): removed 18 unused internal exports across `server/src/` and `client/src/` and 2 unused script imports after verifying no module or test referenced them.
+* Silent `devicePixelRatio` change detection (`3f530ea`): `client/src/canvas/frameLoop.js` now also compares `win.devicePixelRatio` against the last applied raw DPR on each frame so environments (such as Chromium DevTools / CDP `Emulation.setDeviceMetricsOverride`) that mutate `window.devicePixelRatio` without firing `MediaQueryList` `'change'` still resize the canvas backing store, rebuild the offscreen static layer, and re-arm the `matchMedia` watcher (`client/test/frameLoop.test.js`).
 * Rewrote `README.md` as one coherent reference document and synced `docs/LIMITATIONS.md` and `docs/REQUIREMENTS_TRACE.md`.
 
 **Verified in this environment (2026-10-31)**
