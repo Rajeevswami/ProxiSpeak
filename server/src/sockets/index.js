@@ -363,15 +363,26 @@ export function createSocketServer({
   }
 
   io.on('connection', (socket) =>
-    registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft }),
+    registerHandlers(socket, { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft, redis }),
   );
 
   log.info(`Socket.io attached to the HTTP server (CORS: ${describeCorsOrigin(cfg)})`);
   return io;
 }
 
+function isRedisOutageError(err, redis) {
+  if (
+    redis?.enabled &&
+    (redis.scaleState?.mode === 'redis-degraded' || (typeof redis.isReady === 'function' && !redis.isReady()))
+  ) {
+    return true;
+  }
+  const msg = String(err?.message ?? err ?? '');
+  return /Stream isn't writeable|enableOfflineQueue|Connection is closed|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(msg);
+}
+
 function registerHandlers(socket, ctx) {
-  const { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft } = ctx;
+  const { io, cfg, log, presence, rooms, geo, track, peers, announcePeerLeft, redis } = ctx;
   const clientId = socket.id;
   const socketLog = log.child(clientId.slice(0, 6));
 
@@ -400,7 +411,11 @@ function registerHandlers(socket, ctx) {
         fail(err.code, err.message, err.details?.field);
         return;
       }
-      socketLog.error(`${event} failed:`, err?.message ?? err);
+      if (event === 'move' && isRedisOutageError(err, redis)) {
+        socketLog.warn(`${event} failed:`, err?.message ?? err);
+      } else {
+        socketLog.error(`${event} failed:`, err?.message ?? err);
+      }
       fail('server_error', 'the server could not process that request');
     }
   };
@@ -577,7 +592,11 @@ function registerHandlers(socket, ctx) {
         try {
           await peers.sync(current.roomId, clientId);
         } catch (err) {
-          socketLog.error('peer graph sync failed:', err?.message ?? err);
+          if (isRedisOutageError(err, redis)) {
+            socketLog.warn('peer graph sync failed:', err?.message ?? err);
+          } else {
+            socketLog.error('peer graph sync failed:', err?.message ?? err);
+          }
         }
         if (socket.disconnected || session !== current) return;
         socket.to(current.roomId).emit('user:moved', { id: clientId, x, y });
