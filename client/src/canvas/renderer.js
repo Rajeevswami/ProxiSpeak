@@ -12,6 +12,17 @@
  *    compatibility and tests.
  */
 import { updateViewport } from './coords.js';
+import { drawRealisticDynamic, drawRealisticStatic } from './realisticScene.js';
+
+function isFullBrowserCanvas(ctx) {
+  return (
+    typeof ctx?.createRadialGradient === 'function'
+    && typeof ctx?.createLinearGradient === 'function'
+    && typeof ctx?.ellipse === 'function'
+    && typeof ctx?.quadraticCurveTo === 'function'
+    && typeof ctx?.save === 'function'
+  );
+}
 
 /** Distinct colour per obstacle type, straight from the server's data. */
 export const OBSTACLE_COLORS = Object.freeze({
@@ -93,6 +104,18 @@ export function drawStatic(ctx, view, room) {
   const width = view?.width ?? view?.canvasWidth ?? 0;
   const height = view?.height ?? view?.canvasHeight ?? 0;
   ctx.clearRect(0, 0, width, height);
+
+  if (isFullBrowserCanvas(ctx)) {
+    if (!room) {
+      ctx.fillStyle = '#05070d';
+      ctx.fillRect(0, 0, width, height);
+      return null;
+    }
+    const viewport = resolveViewViewport(view, room);
+    drawRealisticStatic(ctx, viewport, room, width, height);
+    return viewport;
+  }
+
   ctx.fillStyle = '#05070d';
   ctx.fillRect(0, 0, width, height);
 
@@ -414,6 +437,11 @@ export function drawDynamic(ctx, view, world, labelCache = defaultLabelCache) {
   if (!world || !view || !world.users) return;
   const viewport = resolveDynamicViewport(view, world);
   if (!viewport) return;
+
+  if (isFullBrowserCanvas(ctx)) {
+    drawRealisticDynamic(ctx, viewport, world, labelCache);
+    return;
+  }
 
   const { offsetX, offsetY, scale } = viewport;
   const radius = Math.max(7, 18 * scale);

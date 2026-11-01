@@ -1,201 +1,1020 @@
-* { box-sizing: border-box; }
-html, body, #root { margin: 0; height: 100%; }
-body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #0b1020;
-  color: #e5e9f0;
+* {
+  box-sizing: border-box;
 }
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #060913;
+  color: #f8fafc;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   JOIN SCREEN — 3D PERSPECTIVE STAGE & INTERACTIVE ISOMETRIC PREVIEW
+   ========================================================================== */
+
 .join-screen {
-  min-height: 100vh;
+  position: relative;
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
-  padding: 1.5rem;
+  padding: 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  perspective: 1200px;
+  background: radial-gradient(circle at 50% 18%, #13203d 0%, #070b16 62%, #03050a 100%);
+  transition: background 0.6s ease;
 }
+
+.join-screen.join-theme-lobby {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.22), transparent 45%),
+    radial-gradient(circle at 80% 75%, rgba(245, 158, 11, 0.16), transparent 50%),
+    radial-gradient(circle at 50% 20%, #142238 0%, #070b14 68%, #030509 100%);
+}
+
+.join-screen.join-theme-studio {
+  background:
+    radial-gradient(circle at 22% 22%, rgba(192, 132, 252, 0.26), transparent 46%),
+    radial-gradient(circle at 78% 75%, rgba(56, 189, 248, 0.20), transparent 50%),
+    radial-gradient(circle at 50% 20%, #1d1536 0%, #090716 68%, #040309 100%);
+}
+
+.join-screen.join-theme-lounge {
+  background:
+    radial-gradient(circle at 22% 24%, rgba(52, 211, 153, 0.24), transparent 46%),
+    radial-gradient(circle at 80% 72%, rgba(251, 146, 60, 0.18), transparent 50%),
+    radial-gradient(circle at 50% 20%, #122929 0%, #071114 68%, #030709 100%);
+}
+
+/* 3D Ambient Background Layer */
+.join-bg-stage {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+  perspective: 900px;
+}
+
+.join-aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+  animation: auroraFloat 14s ease-in-out infinite alternate;
+}
+
+.join-aurora-1 {
+  width: 520px;
+  height: 520px;
+  top: -140px;
+  left: -100px;
+  background: radial-gradient(circle, #38bdf8 0%, rgba(56, 189, 248, 0) 70%);
+}
+
+.join-aurora-2 {
+  width: 580px;
+  height: 580px;
+  bottom: -180px;
+  right: -120px;
+  background: radial-gradient(circle, #a855f7 0%, rgba(168, 85, 247, 0) 70%);
+  animation-delay: -5s;
+}
+
+.join-aurora-3 {
+  width: 440px;
+  height: 440px;
+  top: 35%;
+  left: 55%;
+  background: radial-gradient(circle, #10b981 0%, rgba(16, 185, 129, 0) 70%);
+  animation-delay: -9s;
+}
+
+/* 3D Perspective Scrolling Floor Grid */
+.join-perspective-grid {
+  position: absolute;
+  left: -25%;
+  right: -25%;
+  bottom: -32%;
+  height: 78%;
+  background-image:
+    linear-gradient(to right, rgba(56, 189, 248, 0.18) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(56, 189, 248, 0.18) 1px, transparent 1px);
+  background-size: 56px 56px;
+  transform: rotateX(66deg) translateZ(0);
+  transform-origin: center top;
+  mask-image: radial-gradient(ellipse at 50% 30%, rgba(0, 0, 0, 0.95) 10%, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 30%, rgba(0, 0, 0, 0.95) 10%, transparent 72%);
+  animation: gridMarch 6s linear infinite;
+}
+
+/* 3D Rotating Acoustic Sonar Rings */
+.join-sonar-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(56, 189, 248, 0.22);
+  transform: translate(-50%, -50%) rotateX(62deg) rotateZ(0deg);
+  animation: sonarSpin 28s linear infinite;
+}
+
+.join-sonar-1 {
+  width: 640px;
+  height: 640px;
+}
+
+.join-sonar-2 {
+  width: 880px;
+  height: 880px;
+  border-color: rgba(192, 132, 252, 0.18);
+  animation-direction: reverse;
+  animation-duration: 38s;
+}
+
+.join-sonar-3 {
+  width: 1120px;
+  height: 1120px;
+  border-color: rgba(52, 211, 153, 0.14);
+  animation-duration: 48s;
+}
+
+/* Floating 3D Spheres */
+.join-orb {
+  position: absolute;
+  border-radius: 50%;
+  box-shadow:
+    inset -8px -10px 20px rgba(0, 0, 0, 0.55),
+    inset 6px 6px 16px rgba(255, 255, 255, 0.45),
+    0 16px 36px rgba(56, 189, 248, 0.35);
+  animation: orbFloat 8s ease-in-out infinite;
+}
+
+.join-orb-1 {
+  width: 48px;
+  height: 48px;
+  top: 16%;
+  left: 14%;
+  background: radial-gradient(circle at 32% 30%, #bae6fd, #0284c7 65%, #082f49);
+}
+
+.join-orb-2 {
+  width: 36px;
+  height: 36px;
+  bottom: 20%;
+  left: 18%;
+  background: radial-gradient(circle at 32% 30%, #f5d0fe, #9333ea 65%, #3b0764);
+  animation-delay: -2.8s;
+}
+
+.join-orb-3 {
+  width: 54px;
+  height: 54px;
+  top: 20%;
+  right: 14%;
+  background: radial-gradient(circle at 32% 30%, #a7f3d0, #059669 65%, #064e3b);
+  animation-delay: -5.2s;
+}
+
+/* ==========================================================================
+   3D GLASSMORPHIC JOIN CARD
+   ========================================================================== */
+
 .join-card {
-  width: min(420px, 100%);
-  background: #121a2e;
-  border: 1px solid #26314d;
-  border-radius: 16px;
-  padding: 2rem;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 14px;
+  padding: 26px 28px;
+  background: linear-gradient(155deg, rgba(17, 25, 44, 0.86) 0%, rgba(10, 15, 29, 0.92) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 22px;
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  box-shadow:
+    0 30px 70px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(56, 189, 248, 0.14),
+    0 0 48px rgba(56, 189, 248, 0.12);
+  transform-style: preserve-3d;
+  transform: perspective(1100px) rotateX(var(--card-rx, 0deg)) rotateY(var(--card-ry, 0deg));
+  transition: transform 0.16s ease-out, box-shadow 0.3s ease, border-color 0.3s ease;
 }
-.join-card h1 { margin: 0; font-size: 1.8rem; }
-.join-subtitle, .join-hint { margin: 0; color: #9aa7c2; }
-.field { display: flex; flex-direction: column; gap: 0.4rem; }
-.field span { font-size: 0.9rem; color: #c3cbdd; }
-.field input, .field select {
-  padding: 0.65rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid #33415e;
-  background: #0b1020;
-  color: inherit;
-  font: inherit;
+
+.join-card:hover {
+  border-color: rgba(56, 189, 248, 0.42);
+  box-shadow:
+    0 36px 84px rgba(0, 0, 0, 0.72),
+    0 0 0 1px rgba(56, 189, 248, 0.28),
+    0 0 64px rgba(56, 189, 248, 0.20);
 }
-.join-card button {
-  padding: 0.7rem 1rem;
-  border: 0;
+
+.join-card-glow {
+  position: absolute;
+  inset: -1px;
+  border-radius: 22px;
+  background: radial-gradient(450px circle at 80% 15%, rgba(56, 189, 248, 0.16), transparent 65%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Header + 3D Isometric Mini Room Stage */
+.join-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.join-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.join-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+  background: rgba(14, 165, 233, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.join-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 10px #34d399;
+  animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+.join-card h1 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(120deg, #ffffff 0%, #bae6fd 48%, #c084fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.join-subtitle {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+/* ==========================================================================
+   3D ISOMETRIC MINIATURE ROOM PREVIEW (PURE CSS 3D)
+   ========================================================================== */
+
+.iso-scene {
+  position: relative;
+  width: 146px;
+  height: 112px;
+  flex-shrink: 0;
+  perspective: 500px;
+  display: grid;
+  place-items: center;
+}
+
+.iso-floor {
+  position: relative;
+  width: 108px;
+  height: 82px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6d4c33 0%, #432c1c 100%);
+  border: 2px solid rgba(251, 191, 36, 0.45);
+  box-shadow:
+    -8px 10px 0 #23160d,
+    -12px 18px 26px rgba(0, 0, 0, 0.72),
+    0 0 24px rgba(56, 189, 248, 0.25);
+  transform-style: preserve-3d;
+  transform: rotateX(54deg) rotateZ(-32deg);
+  animation: isoHover 5s ease-in-out infinite;
+}
+
+.iso-room-studio .iso-floor {
+  background: linear-gradient(135deg, #2e294e 0%, #17152b 100%);
+  border-color: rgba(192, 132, 252, 0.55);
+  box-shadow:
+    -8px 10px 0 #100e20,
+    -12px 18px 26px rgba(0, 0, 0, 0.72),
+    0 0 26px rgba(192, 132, 252, 0.32);
+}
+
+.iso-room-lounge .iso-floor {
+  background: linear-gradient(135deg, #5c3a24 0%, #362012 100%);
+  border-color: rgba(52, 211, 153, 0.55);
+  box-shadow:
+    -8px 10px 0 #1e120a,
+    -12px 18px 26px rgba(0, 0, 0, 0.72),
+    0 0 26px rgba(52, 211, 153, 0.32);
+}
+
+.iso-grid {
+  position: absolute;
+  inset: 0;
   border-radius: 8px;
-  background: #4f8cff;
-  color: #fff;
-  font: inherit;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.iso-rug {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 72px;
+  height: 48px;
+  border-radius: 6px;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.35), rgba(30, 58, 138, 0.45));
+  border: 1px solid rgba(125, 211, 252, 0.4);
+}
+
+/* 3D Miniature Wall */
+.iso-wall {
+  position: absolute;
+  left: 44px;
+  top: 12px;
+  width: 10px;
+  height: 36px;
+  background: #334155;
+  border-radius: 2px;
+  transform: translateZ(8px);
+  box-shadow: -4px 4px 0 #1e293b, -6px 7px 10px rgba(0, 0, 0, 0.55);
+}
+
+.iso-wall-top {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #94a3b8, #475569);
+  border-radius: 2px;
+}
+
+/* 3D Miniature Wooden Table/Desk with Monitor */
+.iso-desk {
+  position: absolute;
+  left: 12px;
+  top: 14px;
+  width: 24px;
+  height: 16px;
+  background: linear-gradient(135deg, #d97706, #92400e);
+  border: 1px solid #fbbf24;
+  border-radius: 3px;
+  transform: translateZ(6px);
+  box-shadow: -3px 4px 0 #451a03, -5px 6px 8px rgba(0, 0, 0, 0.5);
+}
+
+.iso-desk-monitor {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 15px;
+  height: 4px;
+  background: #38bdf8;
+  border-radius: 2px;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+/* 3D Miniature Plant */
+.iso-plant {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #6ee7b7, #059669 70%, #064e3b);
+  transform: translateZ(7px);
+  box-shadow: -2px 3px 0 #7c2d12, 0 0 8px rgba(16, 185, 129, 0.5);
+}
+
+/* 3D Animated Miniature Human Avatars */
+.iso-avatar {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  transform-style: preserve-3d;
+  transform: translateZ(10px);
+}
+
+.iso-avatar-a {
+  left: 18px;
+  bottom: 14px;
+  animation: avatarWalkA 4.2s ease-in-out infinite alternate;
+}
+
+.iso-avatar-b {
+  right: 16px;
+  bottom: 18px;
+  animation: avatarWalkB 4.2s ease-in-out infinite alternate;
+}
+
+.iso-sonar {
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(52, 211, 153, 0.75);
+  background: radial-gradient(circle, rgba(52, 211, 153, 0.28), transparent 70%);
+  animation: isoPulse 2s ease-out infinite;
+}
+
+.iso-avatar-b .iso-sonar {
+  border-color: rgba(56, 189, 248, 0.75);
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.28), transparent 70%);
+  animation-delay: -1s;
+}
+
+.iso-body {
+  position: absolute;
+  inset: 2px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #34d399, #059669);
+  box-shadow: -2px 3px 0 #064e3b;
+}
+
+.iso-avatar-b .iso-body {
+  background: linear-gradient(135deg, #38bdf8, #0284c7);
+  box-shadow: -2px 3px 0 #0c4a6e;
+}
+
+.iso-head {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fde68a, #d97706);
+  transform: translateZ(5px);
+  box-shadow: -1px 2px 3px rgba(0, 0, 0, 0.5);
+}
+
+.iso-sound-beam {
+  position: absolute;
+  left: 34px;
+  right: 30px;
+  bottom: 24px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #34d399, #38bdf8);
+  box-shadow: 0 0 10px #38bdf8;
+  transform: translateZ(8px);
+  animation: beamPulse 1.4s ease-in-out infinite alternate;
+}
+
+/* ==========================================================================
+   FORM FIELDS, ROOM THEME CARDS & SHIMMER CTA BUTTON
+   ========================================================================== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.84rem;
   font-weight: 600;
-  cursor: pointer;
+  color: #cbd5e1;
 }
-.join-card button:disabled { opacity: 0.6; cursor: wait; }
+
+.field input,
+.field select {
+  padding: 10px 13px;
+  font-size: 0.96rem;
+  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.field input:focus,
+.field select:focus {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.22);
+}
+
+/* Quick 3D Room Preset Cards */
+.room-QuickCards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.room-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: #e2e8f0;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.room-chip:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(30, 41, 59, 0.78);
+}
+
+.room-chip-active {
+  background: linear-gradient(145deg, rgba(14, 165, 233, 0.24), rgba(30, 41, 59, 0.88));
+  border-color: #38bdf8;
+  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.room-chip-title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.room-chip-sub {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.room-chip-active .room-chip-sub {
+  color: #7dd3fc;
+}
+
+.room-theme-caption {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+/* Shimmer 3D Submit Button */
+.join-submit-btn {
+  position: relative;
+  overflow: hidden;
+  margin-top: 4px;
+  padding: 13px 18px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #041019;
+  background: linear-gradient(110deg, #38bdf8 0%, #34d399 52%, #a855f7 100%);
+  background-size: 200% 100%;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow:
+    0 10px 24px rgba(56, 189, 248, 0.35),
+    inset 0 1px 1px rgba(255, 255, 255, 0.65);
+  transition: transform 0.16s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  animation: gradientShift 5s ease infinite;
+}
+
+.join-submit-btn:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow:
+    0 14px 30px rgba(56, 189, 248, 0.48),
+    inset 0 1px 1px rgba(255, 255, 255, 0.8);
+  filter: brightness(1.05);
+}
+
+.join-submit-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.join-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.btn-shimmer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -120%;
+  width: 65%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  transform: skewX(-22deg);
+  animation: shimmerSweep 3.4s ease-in-out infinite;
+}
+
+.btn-label {
+  position: relative;
+  z-index: 1;
+}
+
 .form-error {
   margin: 0;
-  padding: 0.7rem 0.8rem;
-  border-radius: 8px;
-  background: #3a1620;
-  border: 1px solid #7f2438;
-  color: #ffb4c0;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.52);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 10px;
 }
-/* Microphone denial / missing-device notice (Day 9): informational, the join
-   continues in listen-only mode. */
+
 .form-notice {
   margin: 0;
-  padding: 0.7rem 0.8rem;
-  border-radius: 8px;
-  background: #1c2740;
-  border: 1px solid #3a4a72;
-  color: #c3d4f5;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.52);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 10px;
+}
+
+.join-hint {
+  margin: 2px 0 0;
+  font-size: 0.76rem;
+  color: #94a3b8;
+  text-align: center;
+}
+
+/* ==========================================================================
+   3D WORLD STAGE & GLASSMORPHIC HUD OVERLAYS
+   ========================================================================== */
+
+.world-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 .world-canvas {
   display: block;
-  position: fixed;
-  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
 }
+
 .world-hud {
   position: fixed;
-  top: 1rem;
-  left: 1rem;
-  z-index: 1;
-  padding: 0.6rem 0.8rem;
-  border-radius: 10px;
-  background: rgba(11, 16, 32, 0.82);
-  border: 1px solid #26314d;
-  color: #c3cbdd;
-  font-size: 0.9rem;
-  pointer-events: none;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  font-size: 0.85rem;
+  background: rgba(10, 16, 30, 0.78);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 12px;
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
-/* Connection state / server rejection, in the HUD — the join screen is gone
-   once you are in the world, so this is the only place left to say it. */
-.hud-notice {
-  display: block;
-  margin-top: 0.4rem;
-  color: #ffb4c0;
+
+.hud-room {
+  font-weight: 700;
+  color: #38bdf8;
+  text-transform: capitalize;
+}
+
+.hud-sep {
+  color: #475569;
+}
+
+.hud-you {
+  color: #f1f5f9;
   font-weight: 600;
 }
 
-/* Remote <audio> elements (Day 9). Hidden, but not display:none — some
-   browsers refuse to play media in a display:none subtree. */
-.remote-audio {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
+.hud-count {
+  color: #34d399;
+  font-weight: 600;
 }
 
-/* Audio connection status overlay (Day 9): mic state + one row per nearby
-   peer with connection state and received audio bytes. Read-only, top right,
-   refreshed at most once per second. */
+.hud-leave {
+  margin-left: 6px;
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #f8fafc;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(30, 41, 59, 0.9));
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.hud-leave:hover {
+  transform: translateY(-1px);
+  border-color: #f87171;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.45), rgba(30, 41, 59, 0.95));
+}
+
 .audio-status {
   position: fixed;
-  top: 1rem;
-  right: 1rem;
-  z-index: 1;
-  min-width: 220px;
-  max-width: min(440px, 50vw);
-  padding: 0.6rem 0.8rem;
-  border-radius: 10px;
-  background: rgba(11, 16, 32, 0.82);
-  border: 1px solid #26314d;
-  color: #c3cbdd;
-  font-size: 0.85rem;
-  pointer-events: none;
+  top: 14px;
+  right: 14px;
+  min-width: 248px;
+  max-width: 340px;
+  padding: 12px 14px;
+  font-size: 0.8rem;
+  background: rgba(10, 16, 30, 0.8);
+  border: 1px solid rgba(56, 189, 248, 0.26);
+  border-radius: 12px;
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.audio-status-mic {
+
+.audio-mic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mic-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #64748b;
+  flex-shrink: 0;
+}
+
+.mic-live {
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.85);
+}
+
+.mic-muted,
+.mic-blocked {
+  background: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
+}
+
+.mic-listen {
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+}
+
+.mic-label {
+  color: #f1f5f9;
   font-weight: 600;
-  color: #e5e9f0;
+  flex: 1;
 }
-.audio-status-notice {
-  display: block;
-  margin-top: 0.35rem;
-  font-weight: 400;
-  color: #9aa7c2;
+
+.mic-toggle {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #f8fafc;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 7px;
+  cursor: pointer;
 }
-.audio-status-empty {
-  margin-top: 0.35rem;
-  color: #9aa7c2;
+
+.mic-toggle:hover {
+  border-color: #38bdf8;
 }
-.audio-status-list {
+
+.audio-error {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 0.75rem;
+}
+
+.audio-empty {
+  margin: 0;
+  color: #94a3b8;
+}
+
+.audio-peers {
   list-style: none;
-  margin: 0.45rem 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 5px;
 }
-.audio-status-list li {
+
+.audio-peer {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 7px;
+  color: #e2e8f0;
 }
-.audio-status .peer-name {
+
+.peer-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+  flex-shrink: 0;
+}
+
+.peer-connected {
+  background: #34d399;
+  box-shadow: 0 0 6px #34d399;
+}
+
+.peer-connecting,
+.peer-new {
+  background: #fbbf24;
+}
+
+.peer-failed,
+.peer-disconnected,
+.peer-closed {
+  background: #f87171;
+}
+
+.peer-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
 }
-.audio-status .peer-state {
-  color: #9aa7c2;
-  font-variant-numeric: tabular-nums;
-}
-.audio-status .peer-state-connected {
-  color: #6fd68a;
-}
-.audio-status .peer-state-failed,
-.audio-status .peer-state-closed,
-.audio-status .peer-state-disconnected {
-  color: #ffb4c0;
-}
-.audio-status .peer-distance,
-.audio-status .peer-volume,
-.audio-status .peer-pan {
-  color: #a8b6d2;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.audio-status .peer-bytes {
-  min-width: 4.5rem;
-  text-align: right;
-  color: #c3d4f5;
+
+.peer-state {
+  color: #94a3b8;
   font-variant-numeric: tabular-nums;
 }
 
-/* Opt-in ?perf=1 frame timing readout (Week 3, Day 18): read-only, <= 1 Hz
-   direct textContent updates, no controls and no React state. */
+.peer-bytes {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+}
+
+/* Bottom-left readouts (?perf=1, ?net=1) */
 .perf-readout {
   position: fixed;
-  bottom: 0.75rem;
-  left: 1rem;
-  z-index: 1;
-  padding: 0.35rem 0.6rem;
-  border-radius: 8px;
-  background: rgba(11, 16, 32, 0.82);
-  border: 1px solid #26314d;
-  color: #a8b6d2;
+  bottom: 14px;
+  left: 14px;
+  padding: 7px 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
+  color: #e2e8f0;
+  background: rgba(10, 16, 30, 0.82);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
-.perf-readout:empty {
-  display: none;
+
+.perf-readout-net {
+  bottom: 48px;
+}
+
+/* ==========================================================================
+   KEYFRAME ANIMATIONS
+   ========================================================================== */
+
+@keyframes auroraFloat {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(40px, -30px, 0) scale(1.12);
+  }
+}
+
+@keyframes gridMarch {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 56px;
+  }
+}
+
+@keyframes sonarSpin {
+  0% {
+    transform: translate(-50%, -50%) rotateX(62deg) rotateZ(0deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotateX(62deg) rotateZ(360deg);
+  }
+}
+
+@keyframes orbFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -18px, 20px);
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.65;
+  }
+}
+
+@keyframes isoHover {
+  0%,
+  100% {
+    transform: rotateX(54deg) rotateZ(-32deg) translateZ(0px);
+  }
+  50% {
+    transform: rotateX(51deg) rotateZ(-28deg) translateZ(6px);
+  }
+}
+
+@keyframes avatarWalkA {
+  0% {
+    transform: translate3d(0, 0, 10px);
+  }
+  100% {
+    transform: translate3d(12px, -4px, 12px);
+  }
+}
+
+@keyframes avatarWalkB {
+  0% {
+    transform: translate3d(0, 0, 10px);
+  }
+  100% {
+    transform: translate3d(-12px, 4px, 12px);
+  }
+}
+
+@keyframes isoPulse {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+@keyframes beamPulse {
+  0% {
+    opacity: 0.45;
+    transform: translateZ(8px) scaleY(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: translateZ(10px) scaleY(1.35);
+  }
+}
+
+@keyframes gradientShift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes shimmerSweep {
+  0% {
+    left: -120%;
+  }
+  45%,
+  100% {
+    left: 140%;
+  }
 }

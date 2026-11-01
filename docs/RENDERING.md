@@ -268,7 +268,25 @@ Run these steps on a developer workstation with MongoDB, Node.js, and a hardware
 
 ---
 
-## 9. Scope Boundary & Known Limitations
+## 9. 2.5D/3D Architectural Room, Realistic Furniture & Animated Human Avatars
+
+When running in a full browser 2D context (`isFullBrowserCanvas(ctx)` in `client/src/canvas/renderer.js`), `drawStatic` and `drawDynamic` delegate to `client/src/canvas/realisticScene.js`:
+
+- **Static Offscreen Architectural Layer (`drawRealisticStatic`)**:
+  - Renders once per room/layout/resize onto `staticLayer` with zero per-frame CPU overhead.
+  - Draws room-themed hardwood parquet / slate flooring (`lobby`, `studio`, `lounge`), woven area rugs with geometric inlays, ambient ceiling spotlight pools, perimeter walls with skylight windows, and 2.5D/3D-extruded obstacles:
+    - `desk`: 3D hardwood table with walnut edge skirt, ergonomic swivel chairs tucked around the table, widescreen glowing monitor, mechanical keyboard, wireless mouse, notepad, coffee mug, and warm golden desk lamp.
+    - `wall`: 3D extruded partition wall with directional floor shadow, front elevation face, top architectural cap, and acoustic slat ribs.
+    - `screen`: 3D presentation display with floor light cone and glass reflection stripe.
+    - `pillar`: Stepped stone plinth, marble column cap, and warm sconce lighting halo.
+    - `plant`: Terracotta planter pot with potting soil and 9 layered tropical leaves.
+- **Dynamic 60 FPS Layer (`drawRealisticDynamic`)**:
+  - Renders animated 2.5D human avatars with walking stride (`walkPhase`, `speed`, `heading` cached directly on `labelCache` entries with zero per-frame heap allocations), stepping shoes, swinging arms and hands, 3D shaded jacket torso, collar, 3D head, styled hair, directional eyes with catchlights, wireless spatial audio headset, and floating glassmorphic nameplate pill.
+  - Renders the local user's 3D proximity earshot aura (`100 px` radius), rotating sonar ring, and live sine-wave acoustic tethers (`clear` emerald vs. `muffled` amber when occluded by a wall) to nearby peers.
+
+---
+
+## 10. Scope Boundary & Known Limitations
 
 - **Client Canvas 2D only**: `server/`, `client/src/audio/`, WebRTC signaling/media, Socket.io payloads, and environment variables are completely untouched.
 - **Plain Canvas 2D API**: Uses standard main-thread 2D contexts (`document.createElement('canvas')`); does not introduce WebGL, PixiJS/Three.js, TypeScript, or `OffscreenCanvas` worker threads.

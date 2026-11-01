@@ -944,4 +944,19 @@ covered and unchanged.
 * MongoDB (`mongod`) is unavailable under sandbox egress rules, so the `40` MongoDB-backed server tests, `npm run seed`, `npm run audit`, and MongoDB-backed `npm start` remain **NOT VERIFIED** here.
 * No browser binary or audio hardware is available in this sandbox, so two-browser audible WebRTC playback, wall occlusion hearing checks, stereo headphone separation, and 60-second GPU 60 FPS frame pacing remain **NOT VERIFIED** here.
 
+---
+
+## 2.5D/3D Architectural Room, Realistic Furniture, Animated Human Avatars & 3D Join Stage
+
+**Added**
+
+* **Realistic 2.5D/3D Room & Furniture Renderer (`client/src/canvas/realisticScene.js`, `client/src/canvas/renderer.js`)**:
+  - Added `drawRealisticStatic` on the cached offscreen static layer for full browser 2D contexts: renders room-themed hardwood/slate floors (`lobby`, `studio`, `lounge`), decorative woven area rugs, ceiling spotlight pools, 3D perimeter walls with skylight windows, and realistic 2.5D/3D furniture (`desk` rendered as a real hardwood table with ergonomic chairs, glowing widescreen monitor, keyboard, mouse, notepad, coffee mug, and warm desk lamp; `wall` with 3D top cap and acoustic slats; `screen` with cyan floor light cone; `pillar` with marble cap and sconce glow; `plant` with terracotta pot and 9 layered tropical leaves).
+  - Added `drawRealisticDynamic` for 60 FPS animated 2.5D human avatars (stepping shoes, swinging arms/hands, 3D jacket torso, head, hair, directional eyes, wireless spatial headset, and floating glassmorphic nameplate) plus 3D proximity earshot sonar rings and live sine-wave acoustic tethers (`clear` vs. `muffled` wall occlusion indicator) between nearby peers.
+  - Preserved minimal recording-context compatibility in `renderer.js` so all unit and equivalence tests pass without change, and added `client/test/realisticScene.test.js`.
+* **3D Animated Starting Page (`client/src/components/JoinScreen.jsx`, `client/src/styles.css`)**:
+  - Upgraded `JoinScreen` with a 3D perspective scrolling floor grid, floating 3D spheres, rotating sonar rings, mouse-reactive 3D card tilt, room theme preset cards, and an interactive 3D isometric miniature room preview with animated miniature avatars and sound beam.
+  - Enhanced in-room HUD overlays (`.world-hud`, `.audio-status`, `.perf-readout`) with glassmorphic styling.
+
+
 
