@@ -12,6 +12,163 @@ const cache = new Map(); // roomId -> room document (plain object)
 /** Deterministic blueprint so every instance builds the same default room. */
 export function buildDefaultRoom(roomId, world = config.world) {
   const { width: w, height: h } = world;
+  
+  // If room is 'image-room', use the layout from image-1.png analysis
+  if (roomId === 'image-room') {
+    const obstacles = [
+      {
+        "id": "wall-top",
+        "type": "wall",
+        "x": 0,
+        "y": 0,
+        "w": 1920,
+        "h": 108,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "wall-bottom",
+        "type": "wall",
+        "x": 0,
+        "y": 972,
+        "w": 1920,
+        "h": 108,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "wall-left",
+        "type": "wall",
+        "x": 0,
+        "y": 0,
+        "w": 192,
+        "h": 1080,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "wall-right",
+        "type": "wall",
+        "x": 1728,
+        "y": 0,
+        "w": 192,
+        "h": 1080,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "inner-partition-1",
+        "type": "wall",
+        "x": 576,
+        "y": 324,
+        "w": 192,
+        "h": 432,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "inner-partition-2",
+        "type": "wall",
+        "x": 1152,
+        "y": 324,
+        "w": 192,
+        "h": 432,
+        "blocksAudio": true,
+        "attenuation": 0.12
+      },
+      {
+        "id": "central-pillar",
+        "type": "pillar",
+        "x": 960,
+        "y": 540,
+        "w": 96,
+        "h": 96,
+        "blocksAudio": true,
+        "attenuation": 0.25
+      },
+      {
+        "id": "corner-plant-1",
+        "type": "plant",
+        "x": 192,
+        "y": 108,
+        "w": 48,
+        "h": 48,
+        "blocksAudio": true,
+        "attenuation": 0.65
+      },
+      {
+        "id": "corner-plant-2",
+        "type": "plant",
+        "x": 1680,
+        "y": 864,
+        "w": 48,
+        "h": 48,
+        "blocksAudio": true,
+        "attenuation": 0.65
+      },
+      {
+        "id": "desk-cluster-1",
+        "type": "desk",
+        "x": 384,
+        "y": 324,
+        "w": 192,
+        "h": 108,
+        "blocksAudio": true,
+        "attenuation": 0.5
+      },
+      {
+        "id": "desk-cluster-2",
+        "type": "desk",
+        "x": 1344,
+        "y": 648,
+        "w": 192,
+        "h": 108,
+        "blocksAudio": true,
+        "attenuation": 0.5
+      },
+      {
+        "id": "screen-1",
+        "type": "screen",
+        "x": 768,
+        "y": 108,
+        "w": 384,
+        "h": 16,
+        "blocksAudio": true,
+        "attenuation": 0.45
+      },
+      {
+        "id": "screen-2",
+        "type": "screen",
+        "x": 768,
+        "y": 864,
+        "w": 384,
+        "h": 16,
+        "blocksAudio": true,
+        "attenuation": 0.45
+      }
+    ];
+
+    const spawnPoints = Array.from({ length: 24 }, (_, i) => {
+      const cols = 6;
+      return {
+        x: Math.round(w * 0.12 + (i % cols) * (w * 0.15)),
+        y: Math.round(h * 0.12 + Math.floor(i / cols) * (h * 0.2)),
+      };
+    }).map((p) => ({ x: Math.min(p.x, w - 40), y: Math.min(p.y, h - 40) }));
+
+    return {
+      roomId,
+      name: prettyRoomName(roomId),
+      description: 'Image Room (Auto-Generated)',
+      width: w,
+      height: h,
+      layoutRevision: 1,
+      obstacles,
+      spawnPoints,
+    };
+  }
+
+  // Original default room logic for other rooms
   const obstacles = [
     // Heavy concrete spine across the middle of the floor.
     { id: 'wall-core', type: 'wall', x: w / 2 - 20, y: h / 2 - 150, w: 40, h: 300, blocksAudio: true, attenuation: 0.12 },
@@ -164,7 +321,7 @@ export function notifyLayoutBroadcast(io, roomWire) {
 export async function saveLayout(roomId, payload, { io = null } = {}) {
   const key = String(roomId ?? '').trim().toLowerCase();
   if (!key) {
-    throw new ValidationError('"roomId" is required', { path: 'roomId' });
+    throw new ValidationError('\"roomId\" is required', { path: 'roomId' });
   }
 
   // 1. Verify existence and retrieve immutable room dimensions
@@ -250,4 +407,3 @@ export async function backfillLegacyRoomRevisions() {
   );
   return { modifiedCount: result.modifiedCount ?? 0 };
 }
-

@@ -1,0 +1,137 @@
+{
+  "name": "Image Room (Auto-Generated)",
+  "description": "Room layout automatically generated from image-1.png structure analysis",
+  "expectedRevision": 1,
+  "obstacles": [
+    {
+      "id": "wall-top",
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "w": 1920,
+      "h": 108,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "wall-bottom",
+      "type": "wall",
+      "x": 0,
+      "y": 972,
+      "w": 1920,
+      "h": 108,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "wall-left",
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "w": 192,
+      "h": 1080,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "wall-right",
+      "type": "wall",
+      "x": 1728,
+      "y": 0,
+      "w": 192,
+      "h": 1080,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "inner-partition-1",
+      "type": "wall",
+      "x": 576,
+      "y": 324,
+      "w": 192,
+      "h": 432,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "inner-partition-2",
+      "type": "wall",
+      "x": 1152,
+      "y": 324,
+      "w": 192,
+      "h": 432,
+      "blocksAudio": true,
+      "attenuation": 0.12
+    },
+    {
+      "id": "central-pillar",
+      "type": "pillar",
+      "x": 960,
+      "y": 540,
+      "w": 96,
+      "h": 96,
+      "blocksAudio": true,
+      "attenuation": 0.25
+    },
+    {
+      "id": "corner-plant-1",
+      "type": "plant",
+      "x": 192,
+      "y": 108,
+      "w": 48,
+      "h": 48,
+      "blocksAudio": true,
+      "attenuation": 0.65
+    },
+    {
+      "id": "corner-plant-2",
+      "type": "plant",
+      "x": 1680,
+      "y": 864,
+      "w": 48,
+      "h": 48,
+      "blocksAudio": true,
+      "attenuation": 0.65
+    },
+    {
+      "id": "desk-cluster-1",
+      "type": "desk",
+      "x": 384,
+      "y": 324,
+      "w": 192,
+      "h": 108,
+      "blocksAudio": true,
+      "attenuation": 0.5
+    },
+    {
+      "id": "desk-cluster-2",
+      "type": "desk",
+      "x": 1344,
+      "y": 648,
+      "w": 192,
+      "h": 108,
+      "blocksAudio": true,
+      "attenuation": 0.5
+    },
+    {
+      "id": "screen-1",
+      "type": "screen",
+      "x": 768,
+      "y": 108,
+      "w": 384,
+      "h": 16,
+      "blocksAudio": true,
+      "attenuation": 0.45
+    },
+    {
+      "id": "screen-2",
+      "type": "screen",
+      "x": 768,
+      "y": 864,
+      "w": 384,
+      "h": 16,
+      "blocksAudio": true,
+      "attenuation": 0.45
+    }
+  ]
+}

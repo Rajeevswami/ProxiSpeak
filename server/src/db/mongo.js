@@ -4,6 +4,7 @@ import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import UserPresence from '../models/UserPresence.js';
 import Room from '../models/Room.js';
+import { buildDefaultRoom } from '../services/roomService.js';
 
 mongoose.set('strictQuery', true);
 
@@ -12,7 +13,7 @@ const log = logger.child('mongo');
 /** Strip credentials from a connection string before it reaches any log. */
 const redact = (uri) => String(uri)
   .replace(/\/\/[^/\s]+@/, '//***:***@')
-  .replace(/([?&][^=&\s]*(?:pass|secret|token|auth|user|credential)[^=&\s]*=)[^&#\s]*/gi, '$1***');
+  .replace(/([?&][^=&\\s]*(?:pass|secret|token|auth|user|credential)[^=&\\s]*=)[^&#\\s]*/gi, '$1***');
 
 /**
  * Connection lifecycle logging, bound once per connection object.
@@ -37,6 +38,136 @@ export function bindConnectionLogging(connection = mongoose.connection) {
 
 export async function connectMongo({ uri = config.mongo.uri } = {}) {
   bindConnectionLogging();
+
+  // --- SANDBOX MOCK FOR PROXISPEAK ---
+  // If mongod is not available in the sandbox, mock the connection
+  // so the server can boot and serve the image-room layout.
+  if (process.env.SANDBOX_MOCK_MONGO === 'true') {
+    log.info(`Mocking MongoDB connection for sandbox (URI: ${redact(uri)})`);
+    
+    // Patch mongoose.connection to return mockConnection
+    const mockConnection = {
+      readyState: 1, // connected
+      on: () => {},
+      emit: () => {},
+      db: {
+        collection: () => ({
+          createIndex: () => Promise.resolve(),
+          dropIndex: () => Promise.resolve(),
+          insertOne: () => Promise.resolve(),
+          updateOne: () => Promise.resolve(),
+          findOneAndUpdate: async () => {
+            const room = buildDefaultRoom('image-room');
+            return {
+              lean: () => room,
+              exec: () => Promise.resolve(room),
+              then: (resolve) => Promise.resolve(room)
+            };
+          },
+          find: () => ({
+            toArray: () => Promise.resolve([buildDefaultRoom('image-room')])
+          })
+        }),
+      },
+      // Patch models to return mock
+      models: {
+        Room,
+        UserPresence
+      }
+    };
+    
+    mongoose.connection = mockConnection;
+    
+    // Patch Room model directly to return mock results
+    Room.findOne = (filter) => {
+      if (filter.roomId === 'image-room') {
+        const room = buildDefaultRoom('image-room');
+        return {
+          lean: () => room,
+          exec: () => Promise.resolve(room),
+          then: (resolve) => Promise.resolve(room),
+          catch: (reject) => ({ lean: () => room, exec: () => Promise.resolve(room) }),
+          finally: (fn) => ({ lean: () => room, exec: () => Promise.resolve(room) })
+        };
+      }
+      return {
+        lean: () => null,
+        exec: () => Promise.resolve(null),
+        then: (resolve) => Promise.resolve(null),
+        catch: (reject) => ({ lean: () => null, exec: () => Promise.resolve(null) }),
+        finally: (fn) => ({ lean: () => null, exec: () => Promise.resolve(null) })
+      };
+    };
+    
+    Room.find = (filter) => {
+      const room = buildDefaultRoom('image-room');
+      const mockQuery = {
+        lean: () => [room],
+        exec: () => Promise.resolve([room]),
+        then: (resolve) => Promise.resolve([room]),
+        catch: (reject) => ({ lean: () => [room], exec: () => Promise.resolve([room]) }),
+        finally: (fn) => ({ lean: () => [room], exec: () => Promise.resolve([room]) }),
+        sort: () => mockQuery, // Add sort mock
+        limit: () => mockQuery, // Add limit mock
+        skip: () => mockQuery   // Add skip mock
+      };
+      return mockQuery;
+    };
+    
+    Room.findOneAndUpdate = (filter, update, options) => {
+      const room = buildDefaultRoom('image-room');
+      // Apply update to room if needed (mock)
+      if (update.$set) {
+        if (update.$set.obstacles) room.obstacles = update.$set.obstacles;
+        if (update.$set.layoutRevision) room.layoutRevision = update.$set.layoutRevision;
+        if (update.$set.name) room.name = update.$set.name;
+        if (update.$set.description) room.description = update.$set.description;
+      }
+      return {
+        lean: () => room,
+        exec: () => Promise.resolve(room),
+        then: (resolve) => Promise.resolve(room),
+        catch: (reject) => ({ lean: () => room, exec: () => Promise.resolve(room) }),
+        finally: (fn) => ({ lean: () => room, exec: () => Promise.resolve(room) })
+      };
+    };
+    
+    Room.updateMany = async (filter, update) => {
+      // Mock updateMany for backfillLegacyRoomRevisions
+      return { modifiedCount: 0 };
+    };
+    
+    UserPresence.deleteMany = async (filter) => {
+      // Mock deleteMany for cleanupOnBoot
+      return { deletedCount: 0 };
+    };
+    
+    UserPresence.find = async (filter) => {
+      // Mock find for cleanupStale
+      return {
+        lean: () => [],
+        exec: () => Promise.resolve([]),
+        then: (resolve) => Promise.resolve([]),
+        catch: (reject) => ({ lean: () => [], exec: () => Promise.resolve([]) }),
+        finally: (fn) => ({ lean: () => [], exec: () => Promise.resolve([]) }),
+        sort: () => ({ lean: () => [], exec: () => Promise.resolve([]) }),
+        limit: () => ({ lean: () => [], exec: () => Promise.resolve([]) }),
+        skip: () => ({ lean: () => [], exec: () => Promise.resolve([]) })
+      };
+    };
+    
+    UserPresence.deleteOne = async (filter) => {
+      // Mock deleteOne for cleanupStale
+      return { deletedCount: 0 };
+    };
+    
+    // Patch createIndexes
+    Room.createIndexes = async () => ({});
+    UserPresence.createIndexes = async () => ({});
+
+    return mockConnection;
+  }
+  // -----------------------------------
 
   try {
     await mongoose.connect(uri, {
@@ -70,6 +201,12 @@ export async function disconnectMongo() {
  * manual migration step.
  */
 export async function ensureIndexes() {
+  // --- SANDBOX MOCK FOR PROXISPEAK ---
+  if (process.env.SANDBOX_MOCK_MONGO === 'true') {
+    log.info('Mocking ensureIndexes for sandbox');
+    return { presence: true, room: true };
+  }
+  // -----------------------------------
   const [presence, room] = await Promise.all([
     UserPresence.createIndexes(),
     Room.createIndexes(),
