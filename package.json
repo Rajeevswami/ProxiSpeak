@@ -1,0 +1,28 @@
+{
+  "name": "proxispeak",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based spatial voice chat with proximity-attenuated WebRTC audio",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "seed": "npm --prefix server run seed",
+    "audit": "npm --prefix server run audit --",
+    "scale-check": "npm --prefix server run scale-check --",
+    "room:show": "node server/scripts/room-layout.js show",
+    "room:save": "node server/scripts/room-layout.js save",
+    "install:all": "npm run install:server && npm run install:client",
+    "install:server": "npm install --prefix server",
+    "install:client": "npm install --prefix client",
+    "test": "node scripts/run-tests.mjs",
+    "test:server": "npm --prefix server test",
+    "test:client": "npm --prefix client test",
+    "build": "npm run install:all && npm --prefix client run build",
+    "build:client": "npm --prefix client run build",
+    "mesh-check": "npm --prefix server run mesh-check --"
+  }
+}

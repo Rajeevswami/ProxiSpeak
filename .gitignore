@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment files — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Client build output (npm run build --prefix client)
+client/dist/
+dist/
+
+# Vite cache
+client/.vite/
+
+# Test / tooling output
+coverage/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# OS junk
+.DS_Store
